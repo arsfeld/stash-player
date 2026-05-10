@@ -1,6 +1,7 @@
 /target
 /result
 /.direnv
+/.envrc.local
 *.swp
 .DS_Store
 .env
