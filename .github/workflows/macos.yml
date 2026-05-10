@@ -98,12 +98,18 @@ jobs:
             EXTRA_FLAGS=""
           fi
 
+          # ARCHS=arm64 / ONLY_ACTIVE_ARCH=NO restricts to arm64 — Release
+          # would otherwise build a universal binary, but the xcframework
+          # only ships an aarch64-apple-darwin staticlib so x86_64 linking
+          # fails. Drop these once the build script lipos in x86_64.
           xcodebuild \
             -project apps/macos/StashPlayer.xcodeproj \
             -scheme StashPlayer \
             -configuration Release \
             -derivedDataPath build-aux/macos-derived \
             -destination 'generic/platform=macOS' \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
