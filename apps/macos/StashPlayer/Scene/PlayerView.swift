@@ -3,27 +3,31 @@ import AVKit
 import AVFoundation
 import AppKit
 
-/// SwiftUI wrapper around `AVPlayerView` that adds mpv-style keyboard
-/// shortcuts (Space/k = play-pause, ←/→ = ∓5s, j/l = ∓10s, ↑/↓ = ±60s,
-/// m = mute, f = fullscreen, 9/0 = volume).
+/// SwiftUI wrapper around `AVPlayerView` with the native chrome stripped
+/// (`controlsStyle = .none`) — the custom `OSDOverlay` provides the only
+/// playback UI.
 ///
-/// AVPlayerView already handles single-click play/pause, has its own
-/// fullscreen button, and gives us PiP for free, so we just layer the
-/// custom keys on top rather than rebuilding the chrome from scratch.
+/// Keyboard shortcuts (Space/k = play/pause, ←/→ = ∓5s, j/l = ∓10s,
+/// ↑/↓ = ±60s, m = mute, f = fullscreen, 9/0 = volume, i = info popover)
+/// are handled here so they keep working when the OSD is hidden. Click
+/// handling is split: a double-click `NSClickGestureRecognizer` toggles
+/// fullscreen, while single-click + drag flow through the responder chain
+/// to `mouseDown` / `mouseDragged` so a small drag promotes to
+/// `window.performDrag(_:)` for window-move-from-anywhere.
 struct PlayerView: NSViewRepresentable {
     let player: AVPlayer
+    /// Any user input → bump the OSD's auto-hide timer.
+    var onActivity: () -> Void = {}
+    /// Called when the user presses `i` — opens the info popover.
+    var onToggleInfo: () -> Void = {}
 
     func makeNSView(context: Context) -> KeyCapturingPlayerView {
         let view = KeyCapturingPlayerView()
         view.player = player
-        // Keep controlsStyle pinned to `.floating` and let AVKit manage
-        // its own auto-hide. Switching this from `.floating` to `.none`
-        // mid-fade is what left a translucent pill on screen after the
-        // controls disappeared — letting AVKit own the full animation
-        // cycle avoids that.
-        view.controlsStyle = .floating
-        view.showsFullScreenToggleButton = true
-        view.allowsPictureInPicturePlayback = true
+        // We render our own OSD on top, so hide the native chrome entirely.
+        view.controlsStyle = .none
+        view.onActivity = onActivity
+        view.onToggleInfo = onToggleInfo
         return view
     }
 
@@ -31,41 +35,47 @@ struct PlayerView: NSViewRepresentable {
         if nsView.player !== player {
             nsView.player = player
         }
+        // SwiftUI rebuilds the closures on every render — refresh the
+        // captured copies so the AppKit side calls into the latest state.
+        nsView.onActivity = onActivity
+        nsView.onToggleInfo = onToggleInfo
     }
 }
 
-/// AVPlayerView subclass that captures arrow keys / space / etc. before
-/// the system view's own handling steals them, and lets the user drag
-/// the window from anywhere on the video surface (matches IINA / mpv /
-/// Quicktime behaviour).
+/// `AVPlayerView` subclass that captures keyboard, click, and drag events.
+/// Double-clicks go through an NSClickGestureRecognizer (which doesn't
+/// hold up the responder chain for single clicks); single clicks fall
+/// through to mouseDown/mouseDragged so the user can drag the window
+/// from any non-button area of the video.
 final class KeyCapturingPlayerView: AVPlayerView {
+    var onActivity: () -> Void = {}
+    var onToggleInfo: () -> Void = {}
+
     override var acceptsFirstResponder: Bool { true }
 
-    /// Where the current mouse-down landed. We defer the decision
-    /// "click vs window-drag" until either the user moves enough
-    /// (drag) or releases (click — currently a no-op since we let
-    /// AVPlayerView's chrome handle its own button clicks).
+    /// Where the current mouse-down landed. Cleared by mouseDragged when
+    /// promoted to a window drag — that null state suppresses the click
+    /// handler in mouseUp.
     private var mouseDownLocation: NSPoint?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let window {
             window.makeFirstResponder(self)
-            // Required for NSEvent's local mouseMoved monitor (used by
-            // SceneView for chrome auto-hide) to receive events while
-            // the cursor sits over the player surface.
+            // mouseMoved events flow to the local NSEvent monitor in
+            // SceneView; AppKit only delivers them when the window opts in.
             window.acceptsMouseMovedEvents = true
         }
         installDoubleClickRecognizer()
     }
 
+    /// We use a recognizer for double-click instead of `event.clickCount`
+    /// in `mouseUp` because AVPlayerView's own super-mouseUp can swallow
+    /// the second event in subtle ways (the user could double-click and
+    /// nothing happened). The recognizer is only watching for two clicks
+    /// in quick succession — it neither delays single clicks nor blocks
+    /// `mouseDragged`, so window-drag still works.
     private func installDoubleClickRecognizer() {
-        // Gesture recognizers run ahead of the responder chain, so this
-        // sees the second click of a double-click even when AVPlayerView
-        // would otherwise consume mouseDown for play/pause toggle. Using
-        // a recognizer here also stops AppKit from delivering the first
-        // click as a single-click action (it correctly gets deferred
-        // until the double-click interval expires).
         guard !(gestureRecognizers.contains(where: { $0 is NSClickGestureRecognizer })) else {
             return
         }
@@ -78,7 +88,25 @@ final class KeyCapturingPlayerView: AVPlayerView {
     }
 
     @objc private func handleDoubleClick(_ sender: NSClickGestureRecognizer) {
+        onActivity()
         window?.toggleFullScreen(nil)
+    }
+
+    /// AVPlayerView binds `←` / `→` to these NSResponder actions by
+    /// default — they advance one frame and pause the player. We want
+    /// arrow keys to do a time-skip and keep playing, so we shadow both
+    /// selectors. AppKit walks the responder chain looking for the first
+    /// view that implements the selector; our override wins.
+    @objc func stepForward(_ sender: Any?) {
+        guard let player = self.player else { return }
+        onActivity()
+        seek(player, by: 5)
+    }
+
+    @objc func stepBackward(_ sender: Any?) {
+        guard let player = self.player else { return }
+        onActivity()
+        seek(player, by: -5)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -88,16 +116,13 @@ final class KeyCapturingPlayerView: AVPlayerView {
         }
     }
 
-    // MARK: - Window dragging
+    // MARK: - Click + drag
 
     override func mouseDown(with event: NSEvent) {
-        // Remember where the click started; if the user keeps the button
-        // down and moves past a small threshold we'll start a window drag.
-        // If a chrome button (play/pause, scrubber, fullscreen) is hit,
-        // AppKit dispatches mouseDown to that subview first and we never
-        // get here — so this only fires for clicks on the bare video.
-        // Double-clicks are handled by the NSClickGestureRecognizer
-        // installed in viewDidMoveToWindow, which runs before this.
+        // Remember where the click started; mouseDragged promotes to a
+        // window drag past a small threshold. Clicks on OSD buttons are
+        // dispatched to SwiftUI before reaching us, so this only fires
+        // for the bare-video area.
         mouseDownLocation = event.locationInWindow
         super.mouseDown(with: event)
     }
@@ -111,8 +136,7 @@ final class KeyCapturingPlayerView: AVPlayerView {
         let dx = cur.x - start.x
         let dy = cur.y - start.y
         // 4pt threshold so a tiny shake during a click doesn't whisk the
-        // window away. Once we hand off to performDrag, AppKit owns the
-        // event stream until mouseUp.
+        // window away. Once handed off, AppKit owns the event stream.
         if dx * dx + dy * dy > 16 {
             mouseDownLocation = nil
             window.performDrag(with: event)
@@ -122,28 +146,33 @@ final class KeyCapturingPlayerView: AVPlayerView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        let dragged = (mouseDownLocation == nil)
         mouseDownLocation = nil
         super.mouseUp(with: event)
+        if !dragged {
+            onActivity()
+        }
     }
 
     private func handle(event: NSEvent, player: AVPlayer) -> Bool {
         if let c = event.charactersIgnoringModifiers?.lowercased().first {
             switch c {
-            case " ", "k": togglePlayPause(player); return true
-            case "j": seek(player, by: -10); return true
-            case "l": seek(player, by: 10); return true
-            case "m": player.isMuted.toggle(); return true
-            case "f": window?.toggleFullScreen(nil); return true
-            case "9": player.volume = max(0, player.volume - 0.1); return true
-            case "0": player.volume = min(1, player.volume + 0.1); return true
+            case " ", "k": onActivity(); togglePlayPause(player); return true
+            case "j": onActivity(); seek(player, by: -10); return true
+            case "l": onActivity(); seek(player, by: 10); return true
+            case "m": onActivity(); player.isMuted.toggle(); return true
+            case "f": onActivity(); window?.toggleFullScreen(nil); return true
+            case "9": onActivity(); player.volume = max(0, player.volume - 0.1); return true
+            case "0": onActivity(); player.volume = min(1, player.volume + 0.1); return true
+            case "i": onActivity(); onToggleInfo(); return true
             default: break
             }
         }
         switch Int(event.keyCode) {
-        case 123: seek(player, by: -5); return true   // left
-        case 124: seek(player, by: 5); return true    // right
-        case 125: seek(player, by: -60); return true  // down
-        case 126: seek(player, by: 60); return true   // up
+        case 123: onActivity(); seek(player, by: -5); return true   // left
+        case 124: onActivity(); seek(player, by: 5); return true    // right
+        case 125: onActivity(); seek(player, by: -60); return true  // down
+        case 126: onActivity(); seek(player, by: 60); return true   // up
         default: return false
         }
     }
@@ -156,14 +185,20 @@ final class KeyCapturingPlayerView: AVPlayerView {
         }
     }
 
+    /// Seek with a 1s tolerance window. `.zero` tolerance forces the
+    /// decoder to land on an exact frame, which can stall the player for
+    /// half a second on H.264/HEVC and trip the `timeControlStatus`
+    /// observer into the "paused" state. 1s of slop is invisible to the
+    /// user for skip-by-time and keeps the rate steady.
     private func seek(_ player: AVPlayer, by delta: Double) {
         let cur = player.currentTime().seconds
         guard cur.isFinite else { return }
         let target = max(0, cur + delta)
+        let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
         player.seek(
             to: CMTime(seconds: target, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
+            toleranceBefore: tolerance,
+            toleranceAfter: tolerance
         )
     }
 }
