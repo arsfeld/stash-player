@@ -92,10 +92,16 @@ jobs:
             SIGN_IDENTITY="Developer ID Application"
             TEAM_ID="$DEVELOPMENT_TEAM_ID"
             EXTRA_FLAGS="--timestamp"
+            # An explicit (empty) entitlements file is required for
+            # notarization — without one xcodebuild auto-injects
+            # `com.apple.security.get-task-allow=YES`, which the notary
+            # service rejects ("debugger-attachable" apps can't ship).
+            ENTITLEMENTS="$PWD/apps/macos/StashPlayer/StashPlayer.Release.entitlements"
           else
             SIGN_IDENTITY="-"
             TEAM_ID=""
             EXTRA_FLAGS=""
+            ENTITLEMENTS=""
           fi
 
           # ARCHS=arm64 / ONLY_ACTIVE_ARCH=NO restricts to arm64 — Release
@@ -113,6 +119,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS" \
             OTHER_CODE_SIGN_FLAGS="$EXTRA_FLAGS" \
             build
 
