@@ -12,6 +12,8 @@ Both frontends share the `stash-api` GraphQL client and `stash-player-core`
 config/secret/cache crates, so feature work lands once and shows up on both
 platforms.
 
+![Library view](docs/screenshots/library.png)
+
 ## Features
 
 - Browse your library with search, sort (title / date / rating / random / …),
