@@ -10,6 +10,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: clippy
+
+      # The UI crate links gtk4 + libadwaita + gstreamer, so clippy on the
+      # full workspace needs the system libs the dev shell provides.
+      - name: Install GTK / libadwaita / GStreamer dev libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev
+
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   test:
     name: cargo test + coverage
     runs-on: ubuntu-latest

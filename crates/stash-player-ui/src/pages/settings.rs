@@ -10,13 +10,13 @@ use adw::prelude::*;
 use stash_player_core::Config;
 
 #[derive(Debug)]
-pub struct SettingsInit {
+pub(crate) struct SettingsInit {
     pub config: Config,
     /// Pre-fill the API key field (e.g. from a `.env` override or the keyring).
     pub api_key: String,
 }
 
-pub struct SettingsPage {
+pub(crate) struct SettingsPage {
     config: Config,
     api_key: String,
     status: Status,
@@ -31,20 +31,26 @@ enum Status {
 }
 
 #[derive(Debug)]
-pub enum SettingsMsg {
+pub(crate) enum SettingsMsg {
     UrlChanged(String),
     ApiKeyChanged(String),
     TestConnection,
 }
 
 #[derive(Debug)]
-pub enum SettingsCmd {
-    Connection(Result<(stash_api::Client, String), String>),
+pub(crate) struct ConnectionEstablished {
+    pub(crate) client: stash_api::Client,
+    pub(crate) version: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum SettingsCmd {
+    Connection(Result<Box<ConnectionEstablished>, String>),
     Saved(Result<(), String>),
 }
 
 #[derive(Debug)]
-pub enum SettingsOutput {
+pub(crate) enum SettingsOutput {
     /// Server reachable. The root component should adopt this client and
     /// navigate to the library.
     Configured {
@@ -54,7 +60,7 @@ pub enum SettingsOutput {
     },
 }
 
-#[relm4::component(pub)]
+#[relm4::component(pub(crate))]
 impl Component for SettingsPage {
     type Init = SettingsInit;
     type Input = SettingsMsg;
@@ -168,7 +174,7 @@ impl Component for SettingsPage {
                 sender.oneshot_command(async move {
                     let result = match stash_api::Client::new(&url, &key) {
                         Ok(client) => match client.version().await {
-                            Ok(version) => Ok((client, version)),
+                            Ok(version) => Ok(Box::new(ConnectionEstablished { client, version })),
                             Err(e) => Err(e.to_string()),
                         },
                         Err(e) => Err(e.to_string()),
@@ -186,7 +192,8 @@ impl Component for SettingsPage {
         _root: &Self::Root,
     ) {
         match msg {
-            SettingsCmd::Connection(Ok((client, version))) => {
+            SettingsCmd::Connection(Ok(established)) => {
+                let ConnectionEstablished { client, version } = *established;
                 self.status = Status::Connected(version);
                 if let Err(e) = self.config.save() {
                     tracing::warn!("config save failed: {e}");

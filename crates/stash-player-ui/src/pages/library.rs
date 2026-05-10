@@ -37,11 +37,11 @@ const THUMB_HEIGHT: i32 = 135;
 const THUMB_BYTES: usize = (THUMB_WIDTH as usize) * (THUMB_HEIGHT as usize) * 4;
 
 #[derive(Debug)]
-pub struct LibraryInit {
-    pub client: Option<stash_api::Client>,
+pub(crate) struct LibraryInit {
+    pub(crate) client: Option<stash_api::Client>,
 }
 
-pub struct LibraryPage {
+pub(crate) struct LibraryPage {
     client: Option<stash_api::Client>,
     filter: SceneFilter,
     page: u32,
@@ -52,11 +52,15 @@ pub struct LibraryPage {
     /// Pictures keyed by scene id so the async thumbnail handler can
     /// patch the right cell when the bytes arrive.
     cells: Rc<RefCell<HashMap<String, gtk::Picture>>>,
+    /// Scene ids in the order they appear in the FlowBox, so the activation
+    /// handler can resolve `FlowBoxChild::index()` back to a scene id without
+    /// stashing user data on the child via gtk-rs's unsafe `set_data` API.
+    scene_ids: Rc<RefCell<Vec<String>>>,
     fetch_sem: Arc<Semaphore>,
 }
 
 #[derive(Debug)]
-pub enum LibraryMsg {
+pub(crate) enum LibraryMsg {
     SetClient(stash_api::Client),
     Refresh,
     LoadMore,
@@ -65,26 +69,28 @@ pub enum LibraryMsg {
     SetDirection(SortDirection),
     OrganizedChanged(bool),
     MinRatingChanged(u32),
-    SceneActivated { id: String, index: u32 },
+    ChildActivatedAt(u32),
     OpenSettings,
     PlayRandom,
 }
 
-pub enum LibraryCmd {
+pub(crate) enum LibraryCmd {
     Page(Result<FindScenesPage, String>),
-    Random(Result<RandomPick, String>),
-    Thumbnail {
-        scene_id: String,
-        rgba: Vec<u8>,
-        width: u32,
-        height: u32,
-    },
+    Random(Result<Box<RandomPick>, String>),
+    Thumbnail(Box<ThumbnailPayload>),
 }
 
-pub struct RandomPick {
-    pub scene: Option<Scene>,
-    pub total: i64,
-    pub filter: SceneFilter,
+pub(crate) struct ThumbnailPayload {
+    pub(crate) scene_id: String,
+    pub(crate) rgba: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+pub(crate) struct RandomPick {
+    pub(crate) scene: Option<Scene>,
+    pub(crate) total: i64,
+    pub(crate) filter: SceneFilter,
 }
 
 impl std::fmt::Debug for LibraryCmd {
@@ -97,22 +103,20 @@ impl std::fmt::Debug for LibraryCmd {
                 .debug_tuple("Random")
                 .field(&res.as_ref().map(|p| p.scene.as_ref().map(|s| &s.id)))
                 .finish(),
-            LibraryCmd::Thumbnail {
-                scene_id,
-                width,
-                height,
-                ..
-            } => f
+            LibraryCmd::Thumbnail(payload) => f
                 .debug_struct("Thumbnail")
-                .field("scene_id", scene_id)
-                .field("size", &format_args!("{width}x{height}"))
+                .field("scene_id", &payload.scene_id)
+                .field(
+                    "size",
+                    &format_args!("{}x{}", payload.width, payload.height),
+                )
                 .finish(),
         }
     }
 }
 
 #[derive(Debug)]
-pub enum LibraryOutput {
+pub(crate) enum LibraryOutput {
     OpenSettings,
     OpenScene {
         id: String,
@@ -323,16 +327,9 @@ impl Component for LibraryPage {
                                 set_halign: gtk::Align::Center,
 
                                 connect_child_activated[sender] => move |_, child| {
-                                    let id = unsafe {
-                                        child.data::<String>("scene-id")
-                                            .map(|n| n.as_ref().clone())
-                                    };
-                                    let index = unsafe {
-                                        child.data::<u32>("scene-index")
-                                            .map(|n| *n.as_ref())
-                                    };
-                                    if let (Some(id), Some(index)) = (id, index) {
-                                        sender.input(LibraryMsg::SceneActivated { id, index });
+                                    let position = child.index();
+                                    if position >= 0 {
+                                        sender.input(LibraryMsg::ChildActivatedAt(position as u32));
                                     }
                                 },
                             },
@@ -373,6 +370,7 @@ impl Component for LibraryPage {
             loading: false,
             error: None,
             cells: Rc::new(RefCell::new(HashMap::new())),
+            scene_ids: Rc::new(RefCell::new(Vec::new())),
             fetch_sem: Arc::new(Semaphore::new(MAX_PARALLEL_THUMBS)),
         };
 
@@ -452,13 +450,20 @@ impl Component for LibraryPage {
                     self.fetch_next_page(&sender);
                 }
             }
-            LibraryMsg::SceneActivated { id, index } => {
-                let _ = sender.output(LibraryOutput::OpenScene {
-                    id,
-                    index,
-                    filter: self.filter.clone(),
-                    total: self.total,
-                });
+            LibraryMsg::ChildActivatedAt(index) => {
+                let id = self
+                    .scene_ids
+                    .borrow()
+                    .get(index as usize)
+                    .cloned();
+                if let Some(id) = id {
+                    let _ = sender.output(LibraryOutput::OpenScene {
+                        id,
+                        index,
+                        filter: self.filter.clone(),
+                        total: self.total,
+                    });
+                }
             }
             LibraryMsg::OpenSettings => {
                 let _ = sender.output(LibraryOutput::OpenSettings);
@@ -474,10 +479,12 @@ impl Component for LibraryPage {
                     let result = client
                         .find_scenes(&req_filter, 1, 1)
                         .await
-                        .map(|p| RandomPick {
-                            scene: p.scenes.into_iter().next(),
-                            total: p.count,
-                            filter: req_filter,
+                        .map(|p| {
+                            Box::new(RandomPick {
+                                scene: p.scenes.into_iter().next(),
+                                total: p.count,
+                                filter: req_filter,
+                            })
                         })
                         .map_err(|e| e.to_string());
                     LibraryCmd::Random(result)
@@ -510,26 +517,29 @@ impl Component for LibraryPage {
                 self.loading = false;
                 self.error = Some(e);
             }
-            LibraryCmd::Random(Ok(RandomPick { scene: Some(scene), total, filter })) => {
-                let _ = sender.output(LibraryOutput::OpenScene {
-                    id: scene.id,
-                    index: 0,
-                    filter,
-                    total,
-                });
-            }
-            LibraryCmd::Random(Ok(RandomPick { scene: None, .. })) => {
-                tracing::debug!("play random: no scenes match current filter");
+            LibraryCmd::Random(Ok(pick)) => {
+                let RandomPick { scene, total, filter } = *pick;
+                if let Some(scene) = scene {
+                    let _ = sender.output(LibraryOutput::OpenScene {
+                        id: scene.id,
+                        index: 0,
+                        filter,
+                        total,
+                    });
+                } else {
+                    tracing::debug!("play random: no scenes match current filter");
+                }
             }
             LibraryCmd::Random(Err(e)) => {
                 tracing::warn!("play random failed: {e}");
             }
-            LibraryCmd::Thumbnail {
-                scene_id,
-                rgba,
-                width,
-                height,
-            } => {
+            LibraryCmd::Thumbnail(payload) => {
+                let ThumbnailPayload {
+                    scene_id,
+                    rgba,
+                    width,
+                    height,
+                } = *payload;
                 if rgba.is_empty() {
                     return;
                 }
@@ -557,6 +567,7 @@ impl LibraryPage {
         self.loaded = 0;
         self.error = None;
         self.cells.borrow_mut().clear();
+        self.scene_ids.borrow_mut().clear();
         // FlowBox::remove_all is the cleanest way to drop every child.
         widgets.grid.remove_all();
         // Reseed shuffle each time the result set is reloaded so a fresh
@@ -681,12 +692,14 @@ impl LibraryPage {
             .hexpand(false)
             .halign(gtk::Align::Start)
             .build();
-        unsafe {
-            child.set_data("scene-id", id.clone());
-            child.set_data::<u32>("scene-index", index);
-        }
         widgets.grid.append(&child);
 
+        // Track scene ids by their FlowBox position so the activation
+        // handler can resolve `FlowBoxChild::index()` back to a scene id.
+        // `index` is the current scene's 0-based position in the result set
+        // and matches the order children are appended; assert in debug.
+        debug_assert_eq!(self.scene_ids.borrow().len() as u32, index);
+        self.scene_ids.borrow_mut().push(id.clone());
         self.cells.borrow_mut().insert(id.clone(), picture);
 
         if let Some(url) = scene.paths.screenshot.clone() {
@@ -702,12 +715,12 @@ impl LibraryPage {
 }
 
 fn empty_thumbnail(scene_id: String) -> LibraryCmd {
-    LibraryCmd::Thumbnail {
+    LibraryCmd::Thumbnail(Box::new(ThumbnailPayload {
         scene_id,
         rgba: Vec::new(),
         width: 0,
         height: 0,
-    }
+    }))
 }
 
 /// Look up a thumbnail in the on-disk cache, falling back to a fetch +
@@ -724,12 +737,12 @@ async fn load_thumbnail(
     if let Ok(bytes) = tokio::fs::read(&cache_path).await
         && bytes.len() == THUMB_BYTES
     {
-        return LibraryCmd::Thumbnail {
+        return LibraryCmd::Thumbnail(Box::new(ThumbnailPayload {
             scene_id,
             rgba: bytes,
             width: THUMB_WIDTH as u32,
             height: THUMB_HEIGHT as u32,
-        };
+        }));
     }
 
     let original = match client.fetch_bytes(url).await {
@@ -757,12 +770,12 @@ async fn load_thumbnail(
                     tracing::debug!("write thumbnail cache: {e}");
                 }
             });
-            LibraryCmd::Thumbnail {
+            LibraryCmd::Thumbnail(Box::new(ThumbnailPayload {
                 scene_id,
                 rgba,
                 width,
                 height,
-            }
+            }))
         }
         Ok(Err(e)) => {
             tracing::debug!("decode thumbnail {scene_id}: {e}");

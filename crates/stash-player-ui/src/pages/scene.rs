@@ -15,7 +15,7 @@ use crate::widgets::video_player::{
 /// Position within a filtered result set so the scene page can fetch
 /// neighbors in the same order the user is browsing.
 #[derive(Debug, Clone)]
-pub struct SceneNavContext {
+pub(crate) struct SceneNavContext {
     pub filter: SceneFilter,
     /// 0-based index of the currently displayed scene.
     pub index: u32,
@@ -24,14 +24,14 @@ pub struct SceneNavContext {
 }
 
 #[derive(Debug)]
-pub struct SceneInit {
+pub(crate) struct SceneInit {
     pub client: stash_api::Client,
     pub scene_id: String,
     pub context: Option<SceneNavContext>,
     pub autoplay: bool,
 }
 
-pub struct ScenePage {
+pub(crate) struct ScenePage {
     client: stash_api::Client,
     scene_id: String,
     state: State,
@@ -48,7 +48,7 @@ enum State {
 }
 
 #[derive(Debug)]
-pub enum SceneMsg {
+pub(crate) enum SceneMsg {
     OpenInBrowser,
     Prev,
     Next,
@@ -66,19 +66,19 @@ pub enum SceneMsg {
 }
 
 #[derive(Debug)]
-pub enum SceneOutput {
+pub(crate) enum SceneOutput {
     /// User flipped the autoplay toggle — persist this in app config.
     SetAutoplay(bool),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum NavDirection {
+pub(crate) enum NavDirection {
     Prev,
     Next,
 }
 
 #[derive(Debug)]
-pub enum SceneCmd {
+pub(crate) enum SceneCmd {
     Loaded(Box<Result<Option<Scene>, String>>),
     Neighbor {
         direction: NavDirection,

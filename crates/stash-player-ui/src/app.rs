@@ -12,14 +12,14 @@ use crate::pages::library::{LibraryInit, LibraryMsg, LibraryOutput, LibraryPage}
 use crate::pages::scene::{SceneInit, SceneNavContext, SceneOutput, ScenePage};
 use crate::pages::settings::{SettingsInit, SettingsOutput, SettingsPage};
 
-pub struct AppInit {
+pub(crate) struct AppInit {
     pub config: Config,
     /// If set (e.g. via `.env` or the keyring), pre-fill the API key field
     /// and skip the secret-service load.
     pub api_key_override: Option<String>,
 }
 
-pub struct AppModel {
+pub(crate) struct AppModel {
     config: Config,
     api_key: String,
     library: Controller<LibraryPage>,
@@ -29,14 +29,14 @@ pub struct AppModel {
 }
 
 #[derive(Debug)]
-pub struct Configured {
+pub(crate) struct Configured {
     pub client: stash_api::Client,
     pub config: Config,
     pub api_key: String,
 }
 
 #[derive(Debug)]
-pub enum AppMsg {
+pub(crate) enum AppMsg {
     OpenSettings,
     OpenScene {
         id: String,
@@ -53,7 +53,7 @@ pub enum AppMsg {
 }
 
 #[derive(Debug)]
-pub enum AppCmd {
+pub(crate) enum AppCmd {
     Secrets(Result<Option<String>, String>),
 }
 

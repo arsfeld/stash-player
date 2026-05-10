@@ -11,3 +11,24 @@ license = "MIT"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# Size & complexity ceilings — the headline rules.
+too_many_lines             = "warn"
+too_many_arguments         = "warn"
+cognitive_complexity       = "warn"
+excessive_nesting          = "warn"
+type_complexity            = "warn"
+fn_params_excessive_bools  = "warn"
+struct_excessive_bools     = "warn"
+large_enum_variant         = "warn"
+
+# Quality guardrails (cherry-picked from clippy::restriction).
+dbg_macro                     = "warn"
+todo                          = "warn"
+unimplemented                 = "warn"
+semicolon_if_nothing_returned = "warn"

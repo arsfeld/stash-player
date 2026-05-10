@@ -73,7 +73,7 @@ fn find_scenes_default_full_shape() {
     assert_eq!(s.performers[0].name, "Performer Alpha");
     assert_eq!(s.duration_seconds(), Some(1800.0));
     assert_eq!(s.files[0].video_codec.as_deref(), Some("h264"));
-    assert_eq!(s.paths.stream.as_deref().unwrap().contains("apikey="), true);
+    assert!(s.paths.stream.as_deref().unwrap().contains("apikey="));
 }
 
 #[test]

@@ -22,8 +22,9 @@ impl SortDirection {
 
 /// Sort keys we expose in the UI. The string Stash expects on the wire is
 /// returned by [`SortKey::as_stash`]; the human label by [`SortKey::label`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortKey {
+    #[default]
     Date,
     Title,
     Rating,
@@ -32,12 +33,6 @@ pub enum SortKey {
     CreatedAt,
     UpdatedAt,
     Random,
-}
-
-impl Default for SortKey {
-    fn default() -> Self {
-        SortKey::Date
-    }
 }
 
 impl SortKey {

@@ -1,1 +1,1 @@
-pub mod video_player;
+pub(crate) mod video_player;

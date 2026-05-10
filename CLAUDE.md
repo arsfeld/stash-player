@@ -34,6 +34,23 @@ cargo test -p stash-api -p stash-player-core
 cargo test -p stash-api version_query_round_trips
 ```
 
+## Lints
+
+Workspace lints live in the root `Cargo.toml` under `[workspace.lints]`; `clippy.toml` holds threshold values. Each crate inherits via `[lints] workspace = true`. CI gates the build on `cargo clippy --workspace --all-targets -- -D warnings`, so any warning fails the pipeline.
+
+```sh
+# What CI enforces:
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Active rules:
+
+- **rust**: `unsafe_code = forbid`, `unreachable_pub = warn`.
+- **clippy size/complexity ceilings**: `too_many_lines` (100/fn), `too_many_arguments` (7), `cognitive_complexity` (25), `excessive_nesting` (5), `type_complexity` (250), `fn_params_excessive_bools` / `struct_excessive_bools` (3), `large_enum_variant` (200 B).
+- **clippy quality guardrails**: `dbg_macro`, `todo`, `unimplemented`, `semicolon_if_nothing_returned`.
+
+**No `#[allow(...)]` exceptions.** When a lint fires, fix the structure: extract helpers for long functions, group related bool flags into an enum or sub-struct, box heavy enum variants, replace nested `if let` chains with let-chains or early returns, swap `pub` for `pub(crate)` in this binary crate. Don't reach for `glib::ObjectExt::set_data` (forbidden by `unsafe_code`) — keep per-widget state on the model side keyed by index.
+
 `stash-api` integration tests use `wiremock` and JSON fixtures under `crates/stash-api/tests/fixtures/`. Live-server examples (`cargo run -p stash-api --example version|scenes`) read `STASH_URL` + `STASH_API_KEY` from the environment.
 
 ## Architecture
