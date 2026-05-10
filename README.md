@@ -45,6 +45,26 @@ through GStreamer.
   once the stream is prepared, so reopening a scene picks up where you left
   off and Stash's play count increments.
 
+## Install
+
+Grab the Flatpak bundle from the latest GitHub release and install it:
+
+```sh
+flatpak remote-add --if-not-exists --user flathub \
+  https://flathub.org/repo/flathub.flatpakrepo
+
+curl -L -o stash-player.flatpak \
+  https://github.com/arsfeld/stash-player/releases/latest/download/stash-player.flatpak
+
+flatpak install --user stash-player.flatpak
+flatpak run one.arsfeld.stash-player
+```
+
+The bundle ships the binary and assets only; the GNOME 50 runtime is pulled
+from Flathub on first install, which is why the Flathub remote is required.
+To upgrade later, repeat the `curl` + `flatpak install` step with the new
+bundle.
+
 ## Repository layout
 
 ```
@@ -93,7 +113,9 @@ cargo run -p stash-player-ui
 VA-API acceleration is picked up automatically when the matching GStreamer
 plugins are installed.
 
-### Flatpak
+### Flatpak (build from source)
+
+For a local Flatpak build (rather than the prebuilt bundle linked above):
 
 ```sh
 flatpak-builder --user --install --force-clean build-dir \
