@@ -1,22 +1,39 @@
 # Stash Player
 
-Native desktop clients for [Stash](https://github.com/stashapp/stash):
+Cross-platform native desktop client for [Stash](https://github.com/stashapp/stash):
 browse your library and play scenes locally with hardware-accelerated video,
 with watch progress and play counts synced back to Stash.
 
 - **Linux** — GTK4 + libadwaita, relm4, GStreamer (`stash-player-ui`).
-- **macOS** — SwiftUI + AVKit driving the same Rust networking layer via
-  UniFFI (`apps/macos/`). Walking-skeleton MVP — see [macOS](#macos) below.
+- **macOS** — SwiftUI + AVKit on top of the same Rust networking layer via
+  UniFFI (`apps/macos/`).
+
+Both frontends share the `stash-api` GraphQL client and `stash-player-core`
+config/secret/cache crates, so feature work lands once and shows up on both
+platforms.
 
 ## Features
 
-- Browse your library with search, sort, rating filter, and a "play random" shortcut.
-- Inline scene player with mpv-style keyboard shortcuts and hardware-accelerated playback.
-- Scene detail pages with performers, metadata, prev/next navigation, and an "Open in Stash" shortcut.
-- Resume where you left off — watch progress and play counts sync back to Stash automatically.
-- API key stored securely in the system keyring.
+- Browse your library with search, sort (title / date / rating / random / …),
+  rating filter, organized filter, and a "hide tracked" switch that defaults to
+  untracked-only so the grid opens to fresh material.
+- "Play random" shortcut from the toolbar.
+- Inline scene player with mpv-style keyboard shortcuts and hardware-accelerated
+  playback (VA-API on Linux, VideoToolbox on macOS).
+- Scene detail pages with performers, metadata, prev/next navigation that
+  honours the library's current filter, and an "Open in Stash" shortcut.
+- Resume where you left off — watch progress and play counts sync back to Stash
+  automatically (`sceneSaveActivity`), throttled and flushed on pause / seek /
+  close.
+- Per-scene "O counter" with increment + reset.
+- API key stored in the system keyring (Secret Service on Linux, Keychain on
+  macOS).
+- macOS extras: PiP, media keys / AirPods controls, and the system Now Playing
+  widget via `MPRemoteCommandCenter` + `MPNowPlayingInfoCenter`.
 
 ## Install
+
+### Linux (Flatpak)
 
 Grab the Flatpak bundle from the latest GitHub release and install it:
 
@@ -36,6 +53,21 @@ from Flathub on first install, which is why the Flathub remote is required.
 To upgrade later, repeat the `curl` + `flatpak install` step with the new
 bundle.
 
+### macOS (Apple Silicon)
+
+Download the notarized `.app` from the latest release:
+
+```sh
+curl -L -o StashPlayer-macos-arm64.zip \
+  https://github.com/arsfeld/stash-player/releases/latest/download/StashPlayer-macos-arm64.zip
+
+unzip StashPlayer-macos-arm64.zip -d /Applications
+open /Applications/StashPlayer.app
+```
+
+Requires macOS 14 (Sonoma) or later on Apple Silicon. Intel Macs aren't built
+in CI yet — see [Build → macOS](#macos) below for a from-source build.
+
 ## Repository layout
 
 ```
@@ -44,6 +76,7 @@ stash-player/
 ├── crates/
 │   ├── stash-api/              # GraphQL client (version, find_scenes,
 │   │                           #   find_scene, save_scene_activity,
+│   │                           #   increment_o, reset_o,
 │   │                           #   authenticated_url, fetch_bytes)
 │   ├── stash-player-core/      # config, secrets, cache paths
 │   ├── stash-player-ui/        # relm4 components — the Linux binary
@@ -57,7 +90,9 @@ stash-player/
 
 ## Build
 
-### With Nix (recommended on NixOS)
+### Linux
+
+#### With Nix (recommended on NixOS)
 
 ```sh
 nix develop
@@ -68,7 +103,7 @@ The flake pins a stable Rust toolchain plus GTK4, libadwaita, the GStreamer
 plugin set (including `gst-plugins-rs` for `gtk4paintablesink`), libsecret,
 and the supporting system libraries.
 
-### Without Nix
+#### Without Nix
 
 System dependencies:
 
@@ -87,7 +122,7 @@ cargo run -p stash-player-ui
 VA-API acceleration is picked up automatically when the matching GStreamer
 plugins are installed.
 
-### Flatpak (build from source)
+#### Flatpak (build from source)
 
 For a local Flatpak build (rather than the prebuilt bundle linked above):
 
@@ -102,19 +137,14 @@ flatpak-builder --user --install --force-clean --install-deps-from=flathub \
   --repo=build-aux/repo build-aux/build-dir build-aux/one.arsfeld.stash-player.yml
 ```
 
-## macOS
+### macOS
 
 The macOS frontend is a SwiftUI app driven by the same Rust crates. UniFFI
 generates a Swift binding to a small wrapper crate (`stash-player-ffi`),
 which is statically linked into the app via an XCFramework. AVKit handles
 playback; the Keychain stores the API key.
 
-This is currently a walking-skeleton MVP: connect → library grid →
-scene detail with AVPlayer, resume position, and `sceneSaveActivity`
-writeback on close. Filters beyond free-text search, fullscreen, mpv-style
-shortcuts, performer chips, and prev/next navigation are not yet ported.
-
-### Prerequisites
+#### Prerequisites
 
 - Xcode 16+ (for SwiftUI on macOS 14)
 - `rustup target add aarch64-apple-darwin` (or `x86_64-apple-darwin` for
@@ -123,7 +153,7 @@ shortcuts, performer chips, and prev/next navigation are not yet ported.
 - [`xcodegen`](https://github.com/yonaskolb/XcodeGen) to (re)generate the
   Xcode project from `apps/macos/project.yml`: `brew install xcodegen`
 
-### Build
+#### Build
 
 The flake exposes a one-liner that does everything (rust → xcframework →
 xcodeproj → xcodebuild → launch):
@@ -153,19 +183,20 @@ On first launch, open **Stash server** and enter:
 - **URL** — e.g. `https://stash.example.tld`
 - **API key** — copy it from Stash's *Settings → Security → API Key*
 
-Click **Test connection** to confirm. The URL persists to
-`~/.config/stash-player/config.toml`; the API key goes to the system
-keyring.
+Click **Test connection** to confirm. The URL persists to the platform's
+config dir (`~/.config/stash-player/config.toml` on Linux,
+`~/Library/Application Support/stash-player/` on macOS); the API key goes to
+the system keyring.
 
 ## Keyboard shortcuts (player)
 
 | Key | Action |
 | --- | --- |
 | `Space` / `k` | Play / pause |
-| `←` / `→` | Seek ∓5s (hold `Shift` for ∓1s) |
+| `←` / `→` | Seek ∓5s (hold `Shift` for ∓1s, Linux only) |
 | `j` / `l` | Seek ∓10s |
 | `↑` / `↓` | Seek ±60s |
-| `Home` / `End` | Seek to start / end |
+| `Home` / `End` | Seek to start / end (Linux) |
 | `9` / `0` | Volume ∓5% |
 | `m` | Mute |
 | `f` | Toggle fullscreen |
