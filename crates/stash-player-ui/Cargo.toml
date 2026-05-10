@@ -8,6 +8,8 @@ license.workspace = true
 adw = { version = "0.9.1", package = "libadwaita", features = ["v1_5"] }
 dotenvy = "0.15.7"
 gtk = { version = "0.11.3", package = "gtk4", features = ["v4_14"] }
+gst = { version = "0.25", package = "gstreamer" }
+gst-video = { version = "0.25", package = "gstreamer-video" }
 image = { version = "0.25.5", default-features = false, features = ["jpeg", "png", "webp"] }
 relm4 = { version = "0.11.0", features = ["libadwaita"] }
 stash-api = { version = "0.1.0", path = "../stash-api" }

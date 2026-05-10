@@ -39,6 +39,8 @@ fn main() {
         tracing::info!("using STASH_API_KEY from environment");
     }
 
+    gst::init().expect("failed to initialize GStreamer");
+
     let app = RelmApp::new("one.arsfeld.stash-player");
     relm4::gtk::Window::set_default_icon_name("one.arsfeld.stash-player");
     install_css();

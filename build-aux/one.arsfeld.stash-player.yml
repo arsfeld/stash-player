@@ -23,6 +23,18 @@ finish-args:
   - --filesystem=xdg-config/stash-player:create
   - --filesystem=xdg-cache/stash-player:create
 
+# The freedesktop 25.08 runtime (which GNOME 50 is built on) ships gst-libav
+# but NOT the patent-encumbered codec libraries it links against (libavcodec,
+# libx264, libx265, libde265, …). Pull them in via the codecs-extra extension
+# so playback works for H.264 / H.265 / AAC / AC-3 / etc.
+add-extensions:
+  org.freedesktop.Platform.codecs-extra:
+    version: '25.08-extra'
+    directory: lib/codecs-extra
+    add-ld-path: lib
+    no-autodownload: false
+    autodelete: true
+
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   build-args:
@@ -40,6 +52,9 @@ modules:
     build-commands:
       - cargo build --release -p stash-player-ui --locked --manifest-path Cargo.toml
       - install -Dm755 target/release/stash-player-ui /app/bin/stash-player
+      # Mountpoint for the codecs-extra extension declared at the top level.
+      # Must exist at install time or flatpak refuses to mount the extension.
+      - install -dm755 /app/lib/codecs-extra
       - install -Dm644 data/one.arsfeld.stash-player.desktop
         /app/share/applications/one.arsfeld.stash-player.desktop
       - install -Dm644 data/one.arsfeld.stash-player.metainfo.xml

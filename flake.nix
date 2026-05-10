@@ -19,11 +19,38 @@
       rustToolchain = pkgs.rust-bin.stable.latest.default.override {
         extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
       };
+
+      manifest = "build-aux/one.arsfeld.stash-player.yml";
+      buildDir = "build-aux/build-dir";
+      repoDir  = "build-aux/repo";
+
+      # `nix run .#flatpak -- [extra flatpak-builder args]` performs a clean
+      # build, exports to build-aux/repo, and installs into the user
+      # installation. appstreamcli must be on PATH for the metainfo step.
+      flatpakBuild = pkgs.writeShellApplication {
+        name = "stash-player-flatpak";
+        runtimeInputs = with pkgs; [ flatpak-builder appstream flatpak ];
+        text = ''
+          set -euo pipefail
+          cd "$(git rev-parse --show-toplevel)"
+          exec flatpak-builder \
+            --user --install-deps-from=flathub \
+            --force-clean --install \
+            --repo=${repoDir} \
+            "$@" \
+            ${buildDir} ${manifest}
+        '';
+      };
     in {
       devShells.${system}.default = pkgs.mkShell {
         nativeBuildInputs = with pkgs; [
           rustToolchain
           pkg-config
+          # Flatpak packaging tools, so `flatpak-builder build-aux/...` works
+          # straight from the dev shell. appstream provides appstreamcli, which
+          # flatpak-builder shells out to during metainfo composition.
+          flatpak-builder
+          appstream
         ];
 
         buildInputs = with pkgs; [
@@ -74,5 +101,12 @@
           export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
         '';
       };
+
+      apps.${system}.flatpak = {
+        type = "app";
+        program = "${flatpakBuild}/bin/stash-player-flatpak";
+      };
+
+      packages.${system}.flatpak-build = flatpakBuild;
     };
 }

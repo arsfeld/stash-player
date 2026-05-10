@@ -88,9 +88,14 @@ plugins are installed.
 For a local Flatpak build (rather than the prebuilt bundle linked above):
 
 ```sh
-flatpak-builder --user --install --force-clean build-dir \
-  build-aux/one.arsfeld.stash-player.yml
+# With the Nix flake — clean build + install in one step:
+nix run .#flatpak
 flatpak run one.arsfeld.stash-player
+
+# Or directly inside `nix develop` (or with flatpak-builder + appstreamcli on
+# PATH):
+flatpak-builder --user --install --force-clean --install-deps-from=flathub \
+  --repo=build-aux/repo build-aux/build-dir build-aux/one.arsfeld.stash-player.yml
 ```
 
 ## Configuration

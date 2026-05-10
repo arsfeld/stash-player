@@ -1,10 +1,10 @@
 //! Inline video player with a custom on-screen display.
 //!
-//! Wraps `gtk::Picture` + `gtk::MediaFile` (which is itself a GdkPaintable
-//! and a GtkMediaStream) and lays a libadwaita-flavoured OSD on top: a seek
-//! bar, transport buttons, time labels, a volume slider, and a fullscreen
-//! toggle. Controls fade out after a short period of pointer / keyboard
-//! inactivity, mpv-style.
+//! Wraps `gtk::Picture` driven by a hand-built GStreamer `playbin3`
+//! pipeline (with `gtk4paintablesink` as the video sink) and lays a
+//! libadwaita-flavoured OSD on top: a seek bar, transport buttons, time
+//! labels, a volume slider, and a fullscreen toggle. Controls fade out
+//! after a short period of pointer / keyboard inactivity, mpv-style.
 //!
 //! Standard mpv shortcuts honoured (when the player has focus):
 //!   Space / k       toggle play/pause
@@ -29,6 +29,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gst::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::gtk;
@@ -39,6 +40,217 @@ const HIDE_DELAY_MS: u32 = 2500;
 /// Wall-clock minimum between activity checkpoints while playing. Matches
 /// the cadence Stash's web UI uses.
 const ACTIVITY_THROTTLE: Duration = Duration::from_secs(10);
+
+/// Owned GStreamer pipeline driving a single stream.
+///
+/// Behaves like `gtk::MediaFile` did: build with a URL, set state
+/// transitions via `play`/`pause`, query timing in microseconds, etc.
+/// Bus messages drive event-flag transitions (`prepared`, `seeking`)
+/// and post a `Tick` to the relm4 sender so the widget refreshes.
+struct PlaybackPipeline {
+    pipeline: gst::Pipeline,
+    playbin: gst::Element,
+    paintable: gtk::gdk::Paintable,
+    bus_watch: Option<gst::bus::BusWatchGuard>,
+    prepared: Rc<Cell<bool>>,
+    seeking: Rc<Cell<bool>>,
+    playing: Rc<Cell<bool>>,
+}
+
+impl PlaybackPipeline {
+    fn new(
+        url: &str,
+        autoplay: bool,
+        sender: &ComponentSender<VideoPlayer>,
+    ) -> Option<Self> {
+        let playbin = match gst::ElementFactory::make("playbin3").build() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("playbin3 unavailable: {e}");
+                return None;
+            }
+        };
+        let sink = match gst::ElementFactory::make("gtk4paintablesink").build() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("gtk4paintablesink unavailable: {e}");
+                return None;
+            }
+        };
+
+        let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
+        playbin.set_property("video-sink", &sink);
+        playbin.set_property("uri", url);
+
+        let pipeline = gst::Pipeline::new();
+        if let Err(e) = pipeline.add(&playbin) {
+            tracing::warn!("failed to add playbin to pipeline: {e}");
+            return None;
+        }
+
+        let prepared = Rc::new(Cell::new(false));
+        let seeking = Rc::new(Cell::new(false));
+        let playing = Rc::new(Cell::new(false));
+
+        let bus = pipeline.bus().expect("pipeline has a bus");
+        let bus_watch = {
+            let sender = sender.clone();
+            let prepared = prepared.clone();
+            let seeking = seeking.clone();
+            let playing = playing.clone();
+            let pipeline_weak = pipeline.downgrade();
+            bus.add_watch_local(move |_, msg| {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Error(err) => {
+                        tracing::warn!(
+                            "gstreamer error from {:?}: {} ({:?})",
+                            err.src().map(|s| s.path_string()),
+                            err.error(),
+                            err.debug()
+                        );
+                    }
+                    MessageView::AsyncDone(_) => {
+                        prepared.set(true);
+                        seeking.set(false);
+                    }
+                    MessageView::AsyncStart(_) => {
+                        seeking.set(true);
+                    }
+                    MessageView::DurationChanged(_) => {}
+                    MessageView::StateChanged(sc) => {
+                        // Only the pipeline's own state changes are
+                        // load-bearing; child elements emit their own.
+                        if let Some(pipe) = pipeline_weak.upgrade()
+                            && sc.src().map(|s| s == pipe.upcast_ref::<gst::Object>()).unwrap_or(false)
+                        {
+                            let current = sc.current();
+                            playing.set(current == gst::State::Playing);
+                            if current == gst::State::Paused
+                                || current == gst::State::Playing
+                            {
+                                prepared.set(true);
+                            } else if current == gst::State::Null
+                                || current == gst::State::Ready
+                            {
+                                prepared.set(false);
+                            }
+                        }
+                    }
+                    MessageView::Eos(_) => {}
+                    _ => {}
+                }
+                sender.input(VideoPlayerMsg::Tick);
+                glib::ControlFlow::Continue
+            })
+            .ok()
+        };
+
+        // Drive directly to the user-visible target state. Going Null →
+        // Paused → Playing as two separate set_state calls races the bus
+        // watch and leaves `self.playing` stuck at false on autoplay.
+        let target = if autoplay {
+            gst::State::Playing
+        } else {
+            gst::State::Paused
+        };
+        if let Err(e) = pipeline.set_state(target) {
+            tracing::warn!("failed to set pipeline to {target:?}: {e}");
+        }
+
+        Some(Self {
+            pipeline,
+            playbin,
+            paintable,
+            bus_watch,
+            prepared,
+            seeking,
+            playing,
+        })
+    }
+
+    fn paintable(&self) -> &gtk::gdk::Paintable {
+        &self.paintable
+    }
+
+    fn play(&self) {
+        let _ = self.pipeline.set_state(gst::State::Playing);
+    }
+
+    fn pause(&self) {
+        let _ = self.pipeline.set_state(gst::State::Paused);
+    }
+
+    fn is_playing(&self) -> bool {
+        self.playing.get()
+    }
+
+    fn is_prepared(&self) -> bool {
+        self.prepared.get()
+    }
+
+    fn is_seeking(&self) -> bool {
+        self.seeking.get()
+    }
+
+    fn duration_us(&self) -> i64 {
+        self.pipeline
+            .query_duration::<gst::ClockTime>()
+            .map(|t| t.useconds() as i64)
+            .unwrap_or(0)
+    }
+
+    fn position_us(&self) -> i64 {
+        self.pipeline
+            .query_position::<gst::ClockTime>()
+            .map(|t| t.useconds() as i64)
+            .unwrap_or(0)
+    }
+
+    fn set_volume(&self, v: f64) {
+        self.playbin.set_property("volume", v);
+    }
+
+    fn volume(&self) -> f64 {
+        self.playbin.property::<f64>("volume")
+    }
+
+    fn set_muted(&self, m: bool) {
+        self.playbin.set_property("mute", m);
+    }
+
+    fn is_muted(&self) -> bool {
+        self.playbin.property::<bool>("mute")
+    }
+
+    fn seek(&self, target_us: i64) {
+        if !self.prepared.get() {
+            return;
+        }
+        let pos = gst::ClockTime::from_useconds(target_us.max(0) as u64);
+        // SNAP_BEFORE lands on the keyframe at-or-before the target so a
+        // single HTTP range request preceeds frame delivery — matches the
+        // smoother GtkMediaFile behaviour the user noticed regressing.
+        if let Err(e) = self.pipeline.seek_simple(
+            gst::SeekFlags::FLUSH
+                | gst::SeekFlags::KEY_UNIT
+                | gst::SeekFlags::SNAP_BEFORE,
+            pos,
+        ) {
+            tracing::warn!("seek failed: {e}");
+        }
+    }
+}
+
+impl Drop for PlaybackPipeline {
+    fn drop(&mut self) {
+        if let Some(watch) = self.bus_watch.take() {
+            // Dropping the guard removes the watch.
+            drop(watch);
+        }
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct VideoPlayerInit {
@@ -104,7 +316,7 @@ pub enum VideoPlayerMsg {
 }
 
 pub struct VideoPlayer {
-    media: Option<gtk::MediaFile>,
+    media: Option<PlaybackPipeline>,
     url: Option<String>,
     duration_us: i64,
     position_us: i64,
@@ -516,49 +728,31 @@ impl Component for VideoPlayer {
                 // re-seek to 0 every load.
                 self.resume_pending = resume_secs.filter(|s| *s > 0.0);
 
+                // Tear down any existing pipeline before creating a new one
+                // so audio doesn't leak between scenes.
+                self.media = None;
+
                 if let Some(url) = url {
-                    let file = gtk::gio::File::for_uri(&url);
-                    let media = gtk::MediaFile::for_file(&file);
-                    media.set_loop(false);
-                    media.set_volume(self.volume);
-                    media.set_muted(self.muted);
-
-                    // Refresh on prepared / duration / playing changes —
-                    // they fire once, well after construction.
-                    let s_prepared = sender.clone();
-                    media.connect_prepared_notify(move |_| {
-                        s_prepared.input(VideoPlayerMsg::Tick);
-                    });
-                    let s_dur = sender.clone();
-                    media.connect_duration_notify(move |_| {
-                        s_dur.input(VideoPlayerMsg::Tick);
-                    });
-                    let s_play = sender.clone();
-                    media.connect_playing_notify(move |_| {
-                        s_play.input(VideoPlayerMsg::Tick);
-                    });
-                    media.connect_error_notify(|m| {
-                        if let Some(err) = m.error() {
-                            tracing::warn!("media stream error: {err}");
+                    if let Some(pipeline) =
+                        PlaybackPipeline::new(&url, self.autoplay, &sender)
+                    {
+                        pipeline.set_volume(self.volume);
+                        pipeline.set_muted(self.muted);
+                        widgets.picture.set_paintable(Some(pipeline.paintable()));
+                        if self.autoplay {
+                            self.playing = true;
+                            self.playing_since = Some(Instant::now());
                         }
-                    });
-
-                    widgets.picture.set_paintable(Some(&media));
-                    if self.autoplay {
-                        // GtkMediaFile queues the play action until the
-                        // stream is prepared, so calling here is fine even
-                        // before the prepared signal fires.
-                        media.play();
-                        self.playing = true;
-                        self.playing_since = Some(Instant::now());
+                        self.media = Some(pipeline);
+                        // Anchor the throttle so the first checkpoint
+                        // fires 10s into playback, not on the very first
+                        // tick.
+                        self.last_save_at = Some(Instant::now());
+                    } else {
+                        widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
                     }
-                    self.media = Some(media);
-                    // Anchor the throttle so the first checkpoint fires
-                    // 10s into playback, not on the very first tick.
-                    self.last_save_at = Some(Instant::now());
                 } else {
                     widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
-                    self.media = None;
                 }
             }
 
@@ -567,12 +761,15 @@ impl Component for VideoPlayer {
             }
 
             VideoPlayerMsg::Tick => {
-                // Clone the MediaFile GObject ref so we can borrow self
-                // mutably below (capture_play_time / emit_checkpoint).
-                // GObject clones are cheap refcount bumps.
-                if let Some(media) = self.media.clone() {
+                if let Some(media) = self.media.as_ref() {
                     let was_playing = self.playing;
                     let now_playing = media.is_playing();
+                    let duration_us = media.duration_us().max(0);
+                    let position_us = media.position_us().max(0);
+                    let volume = media.volume();
+                    let muted = media.is_muted();
+                    let is_prepared = media.is_prepared();
+                    let is_seeking = media.is_seeking();
 
                     // Track playing-state transitions so play_duration_us
                     // reflects only the time the stream was actually
@@ -585,23 +782,25 @@ impl Component for VideoPlayer {
                         self.capture_play_time();
                     }
 
-                    self.duration_us = media.duration().max(0);
-                    self.position_us = media.timestamp().max(0);
+                    self.duration_us = duration_us;
+                    self.position_us = position_us;
                     self.playing = now_playing;
-                    self.volume = media.volume();
-                    self.muted = media.is_muted();
+                    self.volume = volume;
+                    self.muted = muted;
 
                     // Apply the pending resume seek once the stream is
                     // ready enough that a clamp against duration is
-                    // meaningful. duration() can be 0 right after
-                    // prepared fires; the duration-notify signal also
-                    // routes back through Tick so we'll catch it.
-                    if media.is_prepared() && self.duration_us > 0
+                    // meaningful. Duration queries can return 0 right
+                    // after AsyncDone fires; the bus handler reposts
+                    // ticks so we'll catch it on a later pass.
+                    if is_prepared && self.duration_us > 0
                         && let Some(resume) = self.resume_pending.take()
                     {
                         let target_us = (resume * 1_000_000.0) as i64;
                         let target = target_us.clamp(0, self.duration_us);
-                        media.seek(target);
+                        if let Some(media) = self.media.as_ref() {
+                            media.seek(target);
+                        }
                         self.position_us = target;
                     }
 
@@ -620,26 +819,33 @@ impl Component for VideoPlayer {
 
                     // Show spinner while media is preparing or seeking
                     // and we have nothing to show yet.
-                    let loading = !media.is_prepared() || media.is_seeking();
+                    let loading = !is_prepared || is_seeking;
                     widgets.loading_spinner.set_visible(loading);
                 }
             }
 
             VideoPlayerMsg::TogglePlay => {
-                if let Some(media) = self.media.clone() {
-                    let was_playing = media.is_playing();
+                let was_playing = self.media.as_ref().is_some_and(|m| m.is_playing());
+                if self.media.is_some() {
                     if was_playing {
-                        media.pause();
+                        if let Some(m) = self.media.as_ref() {
+                            m.pause();
+                        }
                         // User-initiated pause — flush a checkpoint so
                         // resume_time on Stash mirrors the spot they
                         // stopped at. emit_checkpoint also captures any
                         // play_duration accumulated since the last save.
                         self.emit_checkpoint(&sender);
                     } else {
-                        media.play();
+                        if let Some(m) = self.media.as_ref() {
+                            m.play();
+                        }
                         self.playing_since = Some(Instant::now());
                     }
-                    self.playing = media.is_playing();
+                    let now_playing = self.media.as_ref().is_some_and(|m| m.is_playing());
+                    // playbin3 state changes are async — assume the
+                    // requested state until the bus confirms.
+                    self.playing = if was_playing { now_playing } else { true };
                     flash_center(&widgets.center_indicator, self.playing);
                     sender.input(VideoPlayerMsg::PointerActive);
                 }
@@ -651,8 +857,10 @@ impl Component for VideoPlayer {
                         return;
                     }
                     let delta = secs.saturating_mul(1_000_000);
-                    let target = (media.timestamp().saturating_add(delta))
-                        .clamp(0, media.duration().max(0));
+                    let target = media
+                        .position_us()
+                        .saturating_add(delta)
+                        .clamp(0, media.duration_us().max(0));
                     media.seek(target);
                     self.position_us = target;
                     self.emit_checkpoint(&sender);
@@ -664,7 +872,7 @@ impl Component for VideoPlayer {
                 if let Some(media) = &self.media
                     && media.is_prepared()
                 {
-                    let dur = media.duration().max(0);
+                    let dur = media.duration_us().max(0);
                     let target = ((dur as f64) * f.clamp(0.0, 1.0)) as i64;
                     media.seek(target);
                     self.position_us = target;
@@ -677,7 +885,7 @@ impl Component for VideoPlayer {
                 if let Some(media) = &self.media
                     && media.is_prepared()
                 {
-                    let target = us.clamp(0, media.duration().max(0));
+                    let target = us.clamp(0, media.duration_us().max(0));
                     media.seek(target);
                     self.position_us = target;
                     self.emit_checkpoint(&sender);
@@ -828,6 +1036,9 @@ impl Component for VideoPlayer {
         if let Some(media) = &self.media {
             media.pause();
         }
+        // Drop the pipeline so its bus watch and any audio output are
+        // torn down before the widget tree is finalized.
+        self.media = None;
         if let Some(fs_window) = self.fs_window.take() {
             fs_window.set_child(gtk::Widget::NONE);
             fs_window.destroy();
@@ -888,7 +1099,10 @@ impl VideoPlayer {
         // positive max to avoid GtkRange complaining when duration is 0.
         // Skip pushing values while the stream is mid-seek — the polled
         // timestamp lags the user's drag and would yank the thumb back.
-        let media_seeking = self.media.as_ref().is_some_and(|m| m.is_seeking());
+        let media_seeking = self
+            .media
+            .as_ref()
+            .is_some_and(|m| m.is_seeking());
         let max = (self.duration_us.max(1)) as f64;
         widgets.seek_scale.set_range(0.0, max);
         if !media_seeking {
