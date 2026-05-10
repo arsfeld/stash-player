@@ -573,11 +573,23 @@ public protocol StashPlayerProtocol: AnyObject, Sendable {
     
     func getScene(id: String) throws  -> FfiScene?
     
+    /**
+     * Bump the scene's O-counter by one. Returns the new value the server
+     * settled on so the UI doesn't have to assume +1.
+     */
+    func incrementO(id: String) throws  -> Int32
+    
     func isConnected()  -> Bool
     
-    func listScenes(query: String?, page: UInt32, perPage: UInt32) throws  -> FfiScenesPage
+    func listScenes(filter: FfiSceneFilter, page: UInt32, perPage: UInt32) throws  -> FfiScenesPage
     
     func loadSavedCredentials() throws  -> FfiCredentials?
+    
+    /**
+     * Zero the scene's O-counter. Returns the new value (always 0 on
+     * success, but we mirror the Rust API).
+     */
+    func resetO(id: String) throws  -> Int32
     
     func saveActivity(id: String, resumeTime: Double?, playDuration: Double?) throws  -> Bool
     
@@ -696,6 +708,18 @@ open func getScene(id: String)throws  -> FfiScene?  {
 })
 }
     
+    /**
+     * Bump the scene's O-counter by one. Returns the new value the server
+     * settled on so the UI doesn't have to assume +1.
+     */
+open func incrementO(id: String)throws  -> Int32  {
+    return try  FfiConverterInt32.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_stash_player_ffi_fn_method_stashplayer_increment_o(self.uniffiClonePointer(),
+        FfiConverterString.lower(id),$0
+    )
+})
+}
+    
 open func isConnected() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_stash_player_ffi_fn_method_stashplayer_is_connected(self.uniffiClonePointer(),$0
@@ -703,10 +727,10 @@ open func isConnected() -> Bool  {
 })
 }
     
-open func listScenes(query: String?, page: UInt32, perPage: UInt32)throws  -> FfiScenesPage  {
+open func listScenes(filter: FfiSceneFilter, page: UInt32, perPage: UInt32)throws  -> FfiScenesPage  {
     return try  FfiConverterTypeFfiScenesPage_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_list_scenes(self.uniffiClonePointer(),
-        FfiConverterOptionString.lower(query),
+        FfiConverterTypeFfiSceneFilter_lower(filter),
         FfiConverterUInt32.lower(page),
         FfiConverterUInt32.lower(perPage),$0
     )
@@ -716,6 +740,18 @@ open func listScenes(query: String?, page: UInt32, perPage: UInt32)throws  -> Ff
 open func loadSavedCredentials()throws  -> FfiCredentials?  {
     return try  FfiConverterOptionTypeFfiCredentials.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_load_saved_credentials(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Zero the scene's O-counter. Returns the new value (always 0 on
+     * success, but we mirror the Rust API).
+     */
+open func resetO(id: String)throws  -> Int32  {
+    return try  FfiConverterInt32.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_stash_player_ffi_fn_method_stashplayer_reset_o(self.uniffiClonePointer(),
+        FfiConverterString.lower(id),$0
     )
 })
 }
@@ -948,10 +984,11 @@ public struct FfiScene {
     public var resumeTime: Double?
     public var playCount: Int32?
     public var playDuration: Double?
+    public var oCounter: Int32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, displayTitle: String, title: String?, details: String?, date: String?, rating100: Int32?, paths: FfiScenePaths, files: [FfiSceneFile], studio: FfiStudio?, performers: [FfiPerformer], resumeTime: Double?, playCount: Int32?, playDuration: Double?) {
+    public init(id: String, displayTitle: String, title: String?, details: String?, date: String?, rating100: Int32?, paths: FfiScenePaths, files: [FfiSceneFile], studio: FfiStudio?, performers: [FfiPerformer], resumeTime: Double?, playCount: Int32?, playDuration: Double?, oCounter: Int32?) {
         self.id = id
         self.displayTitle = displayTitle
         self.title = title
@@ -965,6 +1002,7 @@ public struct FfiScene {
         self.resumeTime = resumeTime
         self.playCount = playCount
         self.playDuration = playDuration
+        self.oCounter = oCounter
     }
 }
 
@@ -1014,6 +1052,9 @@ extension FfiScene: Equatable, Hashable {
         if lhs.playDuration != rhs.playDuration {
             return false
         }
+        if lhs.oCounter != rhs.oCounter {
+            return false
+        }
         return true
     }
 
@@ -1031,6 +1072,7 @@ extension FfiScene: Equatable, Hashable {
         hasher.combine(resumeTime)
         hasher.combine(playCount)
         hasher.combine(playDuration)
+        hasher.combine(oCounter)
     }
 }
 
@@ -1055,7 +1097,8 @@ public struct FfiConverterTypeFfiScene: FfiConverterRustBuffer {
                 performers: FfiConverterSequenceTypeFfiPerformer.read(from: &buf), 
                 resumeTime: FfiConverterOptionDouble.read(from: &buf), 
                 playCount: FfiConverterOptionInt32.read(from: &buf), 
-                playDuration: FfiConverterOptionDouble.read(from: &buf)
+                playDuration: FfiConverterOptionDouble.read(from: &buf), 
+                oCounter: FfiConverterOptionInt32.read(from: &buf)
         )
     }
 
@@ -1073,6 +1116,7 @@ public struct FfiConverterTypeFfiScene: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.resumeTime, into: &buf)
         FfiConverterOptionInt32.write(value.playCount, into: &buf)
         FfiConverterOptionDouble.write(value.playDuration, into: &buf)
+        FfiConverterOptionInt32.write(value.oCounter, into: &buf)
     }
 }
 
@@ -1183,6 +1227,121 @@ public func FfiConverterTypeFfiSceneFile_lift(_ buf: RustBuffer) throws -> FfiSc
 #endif
 public func FfiConverterTypeFfiSceneFile_lower(_ value: FfiSceneFile) -> RustBuffer {
     return FfiConverterTypeFfiSceneFile.lower(value)
+}
+
+
+/**
+ * Full Stash filter as carried across the bridge. Mirrors
+ * `stash_api::SceneFilter` field-for-field. Swift constructs one of these
+ * per request; the macOS app holds the canonical state in `LibraryView`.
+ */
+public struct FfiSceneFilter {
+    public var query: String?
+    public var sort: FfiSortKey
+    public var direction: FfiSortDirection
+    public var minRating: Int32?
+    public var organized: Bool?
+    public var hideTracked: Bool
+    public var randomSeed: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(query: String?, sort: FfiSortKey, direction: FfiSortDirection, minRating: Int32?, organized: Bool?, hideTracked: Bool, randomSeed: UInt32?) {
+        self.query = query
+        self.sort = sort
+        self.direction = direction
+        self.minRating = minRating
+        self.organized = organized
+        self.hideTracked = hideTracked
+        self.randomSeed = randomSeed
+    }
+}
+
+#if compiler(>=6)
+extension FfiSceneFilter: Sendable {}
+#endif
+
+
+extension FfiSceneFilter: Equatable, Hashable {
+    public static func ==(lhs: FfiSceneFilter, rhs: FfiSceneFilter) -> Bool {
+        if lhs.query != rhs.query {
+            return false
+        }
+        if lhs.sort != rhs.sort {
+            return false
+        }
+        if lhs.direction != rhs.direction {
+            return false
+        }
+        if lhs.minRating != rhs.minRating {
+            return false
+        }
+        if lhs.organized != rhs.organized {
+            return false
+        }
+        if lhs.hideTracked != rhs.hideTracked {
+            return false
+        }
+        if lhs.randomSeed != rhs.randomSeed {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(query)
+        hasher.combine(sort)
+        hasher.combine(direction)
+        hasher.combine(minRating)
+        hasher.combine(organized)
+        hasher.combine(hideTracked)
+        hasher.combine(randomSeed)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSceneFilter: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSceneFilter {
+        return
+            try FfiSceneFilter(
+                query: FfiConverterOptionString.read(from: &buf), 
+                sort: FfiConverterTypeFfiSortKey.read(from: &buf), 
+                direction: FfiConverterTypeFfiSortDirection.read(from: &buf), 
+                minRating: FfiConverterOptionInt32.read(from: &buf), 
+                organized: FfiConverterOptionBool.read(from: &buf), 
+                hideTracked: FfiConverterBool.read(from: &buf), 
+                randomSeed: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSceneFilter, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.query, into: &buf)
+        FfiConverterTypeFfiSortKey.write(value.sort, into: &buf)
+        FfiConverterTypeFfiSortDirection.write(value.direction, into: &buf)
+        FfiConverterOptionInt32.write(value.minRating, into: &buf)
+        FfiConverterOptionBool.write(value.organized, into: &buf)
+        FfiConverterBool.write(value.hideTracked, into: &buf)
+        FfiConverterOptionUInt32.write(value.randomSeed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSceneFilter_lift(_ buf: RustBuffer) throws -> FfiSceneFilter {
+    return try FfiConverterTypeFfiSceneFilter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSceneFilter_lower(_ value: FfiSceneFilter) -> RustBuffer {
+    return FfiConverterTypeFfiSceneFilter.lower(value)
 }
 
 
@@ -1543,6 +1702,217 @@ extension FfiError: Foundation.LocalizedError {
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiSortDirection {
+    
+    case asc
+    case desc
+}
+
+
+#if compiler(>=6)
+extension FfiSortDirection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSortDirection: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSortDirection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSortDirection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .asc
+        
+        case 2: return .desc
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSortDirection, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .asc:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .desc:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSortDirection_lift(_ buf: RustBuffer) throws -> FfiSortDirection {
+    return try FfiConverterTypeFfiSortDirection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSortDirection_lower(_ value: FfiSortDirection) -> RustBuffer {
+    return FfiConverterTypeFfiSortDirection.lower(value)
+}
+
+
+extension FfiSortDirection: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Mirrors `stash_api::SortKey` so Swift can pick the order the library
+ * uses. `Random` pairs with `FfiSceneFilter::random_seed` to keep paging
+ * + neighbor lookups stable across calls.
+ */
+
+public enum FfiSortKey {
+    
+    case date
+    case title
+    case rating
+    case playCount
+    case duration
+    case createdAt
+    case updatedAt
+    case random
+}
+
+
+#if compiler(>=6)
+extension FfiSortKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSortKey: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSortKey
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSortKey {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .date
+        
+        case 2: return .title
+        
+        case 3: return .rating
+        
+        case 4: return .playCount
+        
+        case 5: return .duration
+        
+        case 6: return .createdAt
+        
+        case 7: return .updatedAt
+        
+        case 8: return .random
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSortKey, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .date:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .title:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .rating:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .playCount:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .duration:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .createdAt:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .updatedAt:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .random:
+            writeInt(&buf, Int32(8))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSortKey_lift(_ buf: RustBuffer) throws -> FfiSortKey {
+    return try FfiConverterTypeFfiSortKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSortKey_lower(_ value: FfiSortKey) -> RustBuffer {
+    return FfiConverterTypeFfiSortKey.lower(value)
+}
+
+
+extension FfiSortKey: Equatable, Hashable {}
+
+
+
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1586,6 +1956,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -1804,13 +2198,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_get_scene() != 843) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_increment_o() != 61384) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_is_connected() != 16096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_stash_player_ffi_checksum_method_stashplayer_list_scenes() != 49946) {
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_list_scenes() != 2715) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_load_saved_credentials() != 30259) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_reset_o() != 63229) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_save_activity() != 19286) {

@@ -168,12 +168,20 @@
             ( cd apps/macos && xcodegen generate )
 
             DERIVED="$PWD/build-aux/macos-derived"
-            xcodebuild \
-              -project apps/macos/StashPlayer.xcodeproj \
-              -scheme StashPlayer \
-              -configuration Debug \
-              -derivedDataPath "$DERIVED" \
-              build >/dev/null
+            # xcodebuild must not see nixpkgs' clang-wrapper on PATH —
+            # its `ld` shadows Xcode's and chokes on `-Xlinker` flags
+            # the swift driver passes. Run with a clean Apple-only PATH.
+            APPLE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+            env -i HOME="$HOME" \
+                  PATH="$APPLE_PATH" \
+                  DEVELOPER_DIR="''${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+                  MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+              xcodebuild \
+                -project apps/macos/StashPlayer.xcodeproj \
+                -scheme StashPlayer \
+                -configuration Debug \
+                -derivedDataPath "$DERIVED" \
+                build >/dev/null
 
             APP="$DERIVED/Build/Products/Debug/StashPlayer.app"
             echo "Launching $APP"

@@ -189,36 +189,41 @@ relm4 components, top-down:
    24/page) → Scene detail → AVKit `VideoPlayer` with resume +
    `sceneSaveActivity` writeback on close. The Linux GTK app is
    untouched. Confirmed working against the user's real Stash server.
-7. **macOS feature parity with Linux (≈2–3 days).** Bring the macOS app
-   up to the GTK app's feature surface so they're peer frontends rather
-   than a "demo" + a "real" client.
-   - Library toolbar: sort dropdown (8 keys from `SortKey::ALL`), asc/desc
-     toggle, min-rating dropdown (Any/1–5★), organized switch, "play
-     random" button (seeded `random_<seed>` sort, `per_page = 1`).
-     `stash-player-ffi::list_scenes` currently only forwards the search
-     query — extend the FFI surface to take an `FfiSceneFilter` record so
-     all filters cross the bridge cleanly.
-   - Scene detail: prev/next neighbour navigation honouring the active
-     filter (mirror the GTK approach: query `find_scenes(filter,
-     target_index, 1)` with Stash's 1-indexed paging); performer chips
-     with `Image(systemName: "person.crop.circle.fill")` + name labels
-     in a horizontal `ScrollView`; star-rating overlay on the player.
-   - Player ergonomics: native fullscreen (window-level, not the
-     reparenting trick GTK needs), mpv-style keyboard shortcuts via
-     `.onKeyPress` on the player surface (Space/k = play/pause, ←/→ =
+7. **macOS feature parity with Linux — done.** macOS app now matches the
+   GTK app's feature surface across library, scene detail, and player.
+   - `stash-player-ffi::list_scenes` takes an `FfiSceneFilter` record
+     mirroring `stash_api::SceneFilter` (sort, direction, min rating,
+     organized, hide-tracked, random seed). `increment_o` / `reset_o`
+     mutations also crossed the bridge.
+   - Library toolbar: sort dropdown (8 keys from `SortKey::ALL`),
+     asc/desc toggle, min-rating dropdown (Any/1–5★), organized
+     toggle, hide-tracked toggle (default ON), and "play random" button
+     that programmatically pushes a fresh `SceneNavigation` onto the
+     `NavigationStack` path.
+   - Scene detail: prev/next toolbar buttons that fetch the neighbour
+     via `listScenes(filter, page=target+1, perPage=1)` and swap the
+     scene in place; horizontal performer chips with SF Symbol avatars;
+     star-rating capsule overlay on the player surface; O-counter pill +
+     increment + reset buttons in the metadata header; "Open in Stash"
+     toolbar button that opens `<base>/scenes/<id>` in the system
+     browser.
+   - Player ergonomics: `KeyCapturingPlayerView` (NSViewRepresentable
+     wrapping `AVPlayerView`) intercepts Space/k = play-pause, ←/→ =
      ∓5s, j/l = ∓10s, ↑/↓ = ±60s, m = mute, f = fullscreen, 9/0 =
-     volume), single-click toggle, double-click fullscreen. AVPlayer
-     handles seek mechanics, so this is mostly key-binding wiring.
-   - Activity-write throttle: today we save once on disappear. Match the
-     GTK ~10s throttle + flush on pause / seek so play counts stay
-     accurate across long sessions. Use AVPlayer's
-     `addPeriodicTimeObserver` at 0.25 Hz.
-8. **macOS-native wins (≈1 day).** Cheap things AVKit/AppKit give for
-   free that the GTK app can't easily match: enable Picture-in-Picture
-   on the `AVPlayerLayer`; wire up MediaPlayer remote-command center so
-   the Touch Bar / system media keys / AirPods controls work; add a
-   menubar item with "Open Library" / "Settings"; honour the system
-   theme automatically (no theme picker needed).
+     volume. `window?.toggleFullScreen(_:)` gives native window-level
+     fullscreen rather than AVPlayerView's video-only mode.
+   - Activity throttle: a periodic time observer at 0.25 Hz drives a
+     ~10s throttled `sceneSaveActivity` flush. KVO on `rate` flushes on
+     pause; `tearDownPlayer(flush:true)` flushes on prev/next swap and
+     view disappear.
+8. **macOS-native wins — done.** Picture-in-Picture is on by default via
+   `AVPlayerView.allowsPictureInPicturePlayback`; `NowPlayingController`
+   wires the `MPRemoteCommandCenter` (play/pause/toggle, ±10s skip,
+   scrubber) and `MPNowPlayingInfoCenter` (title, studio, artwork,
+   elapsed time) so media keys, AirPods controls, the menu-bar Now
+   Playing widget, and the lock screen all drive playback. App
+   `.commands` registers Cmd-1 = Library, Cmd-, = Settings. SwiftUI
+   honours the system theme automatically — no picker needed.
 9. **macOS productionization (≈1 day).** Path to a publishable build.
    Add `x86_64-apple-darwin` to the build script's `TARGETS` and `lipo
    -create` the slices for a universal staticlib. Switch

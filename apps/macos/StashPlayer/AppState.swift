@@ -8,16 +8,39 @@ enum ConnectionStatus: Equatable {
     case failed(message: String)
 }
 
-enum SidebarItem: Hashable {
-    case library
-    case settings
+/// Filter state owned by the library view. We keep a Swift-side struct so
+/// SwiftUI can diff it cheaply and so we can hash it for `task(id:)`-style
+/// reload triggers. It maps one-to-one to `FfiSceneFilter`.
+struct LibraryFilter: Hashable {
+    var query: String = ""
+    var sort: FfiSortKey = .date
+    var direction: FfiSortDirection = .desc
+    /// Stash's rating100 scale (20/40/60/80/100). nil means "any rating".
+    var minRating: Int32? = nil
+    /// nil = don't filter, true/false = restrict to organized/unorganized.
+    var organized: Bool? = nil
+    /// Default ON — opens to the "untracked" view, matching the Linux app.
+    var hideTracked: Bool = true
+    /// Set when sort == .random so paging + neighbor lookups stay stable.
+    var randomSeed: UInt32? = nil
+
+    func toFfi() -> FfiSceneFilter {
+        FfiSceneFilter(
+            query: query.isEmpty ? nil : query,
+            sort: sort,
+            direction: direction,
+            minRating: minRating,
+            organized: organized,
+            hideTracked: hideTracked,
+            randomSeed: randomSeed
+        )
+    }
 }
 
 @MainActor
 final class AppState: ObservableObject {
     let player: StashPlayer
     @Published var status: ConnectionStatus = .disconnected
-    @Published var sidebarSelection: SidebarItem = .settings
 
     init() {
         initLogging()
@@ -25,25 +48,21 @@ final class AppState: ObservableObject {
     }
 
     /// Called once at launch. Loads saved credentials from disk + Keychain
-    /// and tries to connect. On success the user lands in Library; on
-    /// anything else they stay in Settings.
+    /// and tries to connect. On failure the main window shows an
+    /// "Open Settings" placeholder; the user opens the Settings scene
+    /// (Cmd-,) to enter credentials.
     func bootstrap() async {
         let player = self.player
         do {
             let creds = try await offMain { try player.loadSavedCredentials() }
-            guard let creds else {
-                sidebarSelection = .settings
-                return
-            }
+            guard let creds else { return }
             status = .connecting
             let version = try await offMain {
                 try player.connect(baseUrl: creds.baseUrl, apiKey: creds.apiKey)
             }
             status = .connected(version: version)
-            sidebarSelection = .library
         } catch {
             status = .failed(message: humanize(error))
-            sidebarSelection = .settings
         }
     }
 
@@ -69,10 +88,15 @@ final class AppState: ObservableObject {
         return try await offMain { try player.loadSavedCredentials() }
     }
 
-    func listScenes(query: String?, page: UInt32, perPage: UInt32 = 24) async throws -> FfiScenesPage {
+    func listScenes(
+        filter: LibraryFilter,
+        page: UInt32,
+        perPage: UInt32 = 24
+    ) async throws -> FfiScenesPage {
         let player = self.player
+        let ffi = filter.toFfi()
         return try await offMain {
-            try player.listScenes(query: query, page: page, perPage: perPage)
+            try player.listScenes(filter: ffi, page: page, perPage: perPage)
         }
     }
 
@@ -91,6 +115,16 @@ final class AppState: ObservableObject {
             // Best-effort; surface in logs only.
             NSLog("saveActivity failed: %@", String(describing: error))
         }
+    }
+
+    func incrementO(id: String) async throws -> Int32 {
+        let player = self.player
+        return try await offMain { try player.incrementO(id: id) }
+    }
+
+    func resetO(id: String) async throws -> Int32 {
+        let player = self.player
+        return try await offMain { try player.resetO(id: id) }
     }
 
     func authenticatedUrl(_ raw: String) throws -> String {

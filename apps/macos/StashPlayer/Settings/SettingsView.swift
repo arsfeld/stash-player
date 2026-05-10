@@ -81,8 +81,8 @@ struct SettingsView: View {
         do {
             let version = try await app.connect(baseUrl: url, apiKey: apiKey)
             status = .success(version: version)
-            // Auto-jump to library once we know we're connected.
-            app.sidebarSelection = .library
+            // The main window picks up the new connection state via
+            // `AppState.status` and swaps the placeholder for the library.
         } catch let e as FfiError {
             status = .failure(message: errorMessage(e))
         } catch {

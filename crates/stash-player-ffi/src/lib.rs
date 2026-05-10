@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
-use stash_api::{Client, FindScenesPage, PerformerRef, Scene, SceneFile, SceneFilter, ScenePaths, StudioRef};
+use stash_api::{
+    Client, FindScenesPage, PerformerRef, Scene, SceneFile, SceneFilter, ScenePaths,
+    SortDirection, SortKey, StudioRef,
+};
 use stash_player_core::{Config, cache, secrets};
 
 uniffi::setup_scaffolding!();
@@ -169,6 +172,7 @@ pub struct FfiScene {
     pub resume_time: Option<f64>,
     pub play_count: Option<i32>,
     pub play_duration: Option<f64>,
+    pub o_counter: Option<i32>,
 }
 
 impl From<Scene> for FfiScene {
@@ -188,6 +192,80 @@ impl From<Scene> for FfiScene {
             resume_time: s.resume_time,
             play_count: s.play_count,
             play_duration: s.play_duration,
+            o_counter: s.o_counter,
+        }
+    }
+}
+
+/// Mirrors `stash_api::SortKey` so Swift can pick the order the library
+/// uses. `Random` pairs with `FfiSceneFilter::random_seed` to keep paging
+/// + neighbor lookups stable across calls.
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiSortKey {
+    Date,
+    Title,
+    Rating,
+    PlayCount,
+    Duration,
+    CreatedAt,
+    UpdatedAt,
+    Random,
+}
+
+impl From<FfiSortKey> for SortKey {
+    fn from(k: FfiSortKey) -> Self {
+        match k {
+            FfiSortKey::Date => SortKey::Date,
+            FfiSortKey::Title => SortKey::Title,
+            FfiSortKey::Rating => SortKey::Rating,
+            FfiSortKey::PlayCount => SortKey::PlayCount,
+            FfiSortKey::Duration => SortKey::Duration,
+            FfiSortKey::CreatedAt => SortKey::CreatedAt,
+            FfiSortKey::UpdatedAt => SortKey::UpdatedAt,
+            FfiSortKey::Random => SortKey::Random,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiSortDirection {
+    Asc,
+    Desc,
+}
+
+impl From<FfiSortDirection> for SortDirection {
+    fn from(d: FfiSortDirection) -> Self {
+        match d {
+            FfiSortDirection::Asc => SortDirection::Asc,
+            FfiSortDirection::Desc => SortDirection::Desc,
+        }
+    }
+}
+
+/// Full Stash filter as carried across the bridge. Mirrors
+/// `stash_api::SceneFilter` field-for-field. Swift constructs one of these
+/// per request; the macOS app holds the canonical state in `LibraryView`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSceneFilter {
+    pub query: Option<String>,
+    pub sort: FfiSortKey,
+    pub direction: FfiSortDirection,
+    pub min_rating: Option<i32>,
+    pub organized: Option<bool>,
+    pub hide_tracked: bool,
+    pub random_seed: Option<u32>,
+}
+
+impl From<FfiSceneFilter> for SceneFilter {
+    fn from(f: FfiSceneFilter) -> Self {
+        SceneFilter {
+            query: f.query.filter(|q| !q.is_empty()),
+            sort: f.sort.into(),
+            direction: f.direction.into(),
+            min_rating: f.min_rating,
+            organized: f.organized,
+            hide_tracked: f.hide_tracked,
+            random_seed: f.random_seed,
         }
     }
 }
@@ -257,15 +335,28 @@ impl StashPlayer {
 
     pub fn list_scenes(
         &self,
-        query: Option<String>,
+        filter: FfiSceneFilter,
         page: u32,
         per_page: u32,
     ) -> Result<FfiScenesPage, FfiError> {
         let client = self.client()?;
-        let mut filter = SceneFilter::new();
-        filter.query = query.filter(|q| !q.is_empty());
+        let filter: SceneFilter = filter.into();
         let page = rt().block_on(client.find_scenes(&filter, page, per_page))?;
         Ok(page.into())
+    }
+
+    /// Bump the scene's O-counter by one. Returns the new value the server
+    /// settled on so the UI doesn't have to assume +1.
+    pub fn increment_o(&self, id: String) -> Result<i32, FfiError> {
+        let client = self.client()?;
+        Ok(rt().block_on(client.increment_o(&id))?)
+    }
+
+    /// Zero the scene's O-counter. Returns the new value (always 0 on
+    /// success, but we mirror the Rust API).
+    pub fn reset_o(&self, id: String) -> Result<i32, FfiError> {
+        let client = self.client()?;
+        Ok(rt().block_on(client.reset_o(&id))?)
     }
 
     pub fn get_scene(&self, id: String) -> Result<Option<FfiScene>, FfiError> {

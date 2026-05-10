@@ -41,7 +41,9 @@ cargo run -p "$CRATE" --bin uniffi-bindgen --$PROFILE -- \
     generate --library "$LIB_PATH" --language swift --out-dir "$BINDINGS_DIR"
 
 echo "==> Composing module headers dir"
-HEADERS_DIR="$(mktemp -d -t stash-player-ffi-headers)"
+# BSD mktemp adds Xs automatically with -t; GNU mktemp requires the
+# template to contain at least three Xs. Spell it out for portability.
+HEADERS_DIR="$(mktemp -d -t stash-player-ffi-headers.XXXXXX)"
 trap 'rm -rf "$HEADERS_DIR"' EXIT
 cp "$BINDINGS_DIR"/*.h "$HEADERS_DIR/"
 # xcodebuild expects the modulemap to be named exactly `module.modulemap`.
