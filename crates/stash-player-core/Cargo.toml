@@ -6,10 +6,16 @@ license.workspace = true
 
 [dependencies]
 directories = "6.0.0"
-secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 toml = "1.1.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+tokio = { version = "1", features = ["rt"] }
 
 [lints]
 workspace = true

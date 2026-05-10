@@ -1,73 +1,43 @@
-//! API key persistence via the Linux Secret Service (GNOME Keyring,
-//! KWallet, etc.). All functions are async because the underlying D-Bus
-//! transport is — call them inside a tokio runtime.
+//! API key persistence keyed off `service = "stash-player"` /
+//! `account = "stash-api-key"`. Backend differs by platform:
+//!
+//! * Linux uses the Secret Service (GNOME Keyring, KWallet, etc.) over
+//!   D-Bus. The transport is async, so the public API stays async.
+//! * macOS uses the system Keychain via `security-framework`. The
+//!   underlying calls are synchronous; we keep the same async signature
+//!   by hopping through `tokio::task::spawn_blocking`.
+//!
+//! Either way, callers get the same `async fn load/store/delete_api_key`
+//! contract.
 
-use std::collections::HashMap;
-
-use secret_service::{EncryptionType, SecretService};
 use thiserror::Error;
 
-const ATTR_APP: &str = "stash-player";
-const ATTR_KEY: &str = "stash-api-key";
+const SERVICE: &str = "stash-player";
+const ACCOUNT: &str = "stash-api-key";
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[cfg(target_os = "linux")]
     #[error("secret service: {0}")]
     SecretService(#[from] secret_service::Error),
+    #[cfg(target_os = "macos")]
+    #[error("keychain: {0}")]
+    Keychain(String),
+    #[cfg(target_os = "macos")]
+    #[error("background task panicked: {0}")]
+    Join(#[from] tokio::task::JoinError),
     #[error("api key contained non-utf8 bytes")]
     NonUtf8,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-fn attrs() -> HashMap<&'static str, &'static str> {
-    let mut a = HashMap::new();
-    a.insert("application", ATTR_APP);
-    a.insert("key", ATTR_KEY);
-    a
-}
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{delete_api_key, load_api_key, store_api_key};
 
-pub async fn load_api_key() -> Result<Option<String>> {
-    let ss = SecretService::connect(EncryptionType::Dh).await?;
-    let collection = ss.get_default_collection().await?;
-    if collection.is_locked().await? {
-        collection.unlock().await?;
-    }
-    let items = collection.search_items(attrs()).await?;
-    let Some(item) = items.into_iter().next() else {
-        return Ok(None);
-    };
-    let bytes = item.get_secret().await?;
-    let s = String::from_utf8(bytes).map_err(|_| Error::NonUtf8)?;
-    Ok(Some(s))
-}
-
-pub async fn store_api_key(key: &str) -> Result<()> {
-    let ss = SecretService::connect(EncryptionType::Dh).await?;
-    let collection = ss.get_default_collection().await?;
-    if collection.is_locked().await? {
-        collection.unlock().await?;
-    }
-    collection
-        .create_item(
-            "stash-player API key",
-            attrs(),
-            key.as_bytes(),
-            true, // replace existing
-            "text/plain",
-        )
-        .await?;
-    Ok(())
-}
-
-pub async fn delete_api_key() -> Result<()> {
-    let ss = SecretService::connect(EncryptionType::Dh).await?;
-    let collection = ss.get_default_collection().await?;
-    if collection.is_locked().await? {
-        collection.unlock().await?;
-    }
-    for item in collection.search_items(attrs()).await? {
-        item.delete().await?;
-    }
-    Ok(())
-}
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{delete_api_key, load_api_key, store_api_key};

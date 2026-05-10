@@ -1,0 +1,43 @@
+name: StashPlayer
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  bundleIdPrefix: one.arsfeld
+  generateEmptyDirectories: true
+  groupSortPosition: top
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEAD_CODE_STRIPPING: YES
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  StashPlayer:
+    type: application
+    platform: macOS
+    sources:
+      - path: StashPlayer
+        excludes:
+          - "Generated/*.h"
+          - "Generated/*.modulemap"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: one.arsfeld.stash-player
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+    info:
+      path: StashPlayer/Info.plist
+      properties:
+        CFBundleDisplayName: Stash Player
+        LSApplicationCategoryType: public.app-category.video
+        NSHumanReadableCopyright: "Copyright © 2026 Alexandre Rosenfeld"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    dependencies:
+      - framework: StashPlayerFFI.xcframework
+        embed: false

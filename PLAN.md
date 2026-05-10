@@ -180,6 +180,56 @@ relm4 components, top-down:
 4. **Full library polish (≈3 days).** Performers / Tags / Studios / Markers
    pages, search, keyboard shortcuts, theme.
 5. **Packaging (≈1 day).** Flatpak manifest, README, screenshots.
+6. **macOS frontend — walking skeleton landed.** SwiftUI app at
+   `apps/macos/` driven by the same Rust crates via UniFFI. New
+   `stash-player-ffi` crate exposes a flat sync API to Swift; AppKit
+   Keychain replaces the Linux Secret Service through a cfg-gated
+   `stash-player-core::secrets` backend. Walking-skeleton scope:
+   Settings → connect → library grid (free-text search, infinite scroll,
+   24/page) → Scene detail → AVKit `VideoPlayer` with resume +
+   `sceneSaveActivity` writeback on close. The Linux GTK app is
+   untouched. Confirmed working against the user's real Stash server.
+7. **macOS feature parity with Linux (≈2–3 days).** Bring the macOS app
+   up to the GTK app's feature surface so they're peer frontends rather
+   than a "demo" + a "real" client.
+   - Library toolbar: sort dropdown (8 keys from `SortKey::ALL`), asc/desc
+     toggle, min-rating dropdown (Any/1–5★), organized switch, "play
+     random" button (seeded `random_<seed>` sort, `per_page = 1`).
+     `stash-player-ffi::list_scenes` currently only forwards the search
+     query — extend the FFI surface to take an `FfiSceneFilter` record so
+     all filters cross the bridge cleanly.
+   - Scene detail: prev/next neighbour navigation honouring the active
+     filter (mirror the GTK approach: query `find_scenes(filter,
+     target_index, 1)` with Stash's 1-indexed paging); performer chips
+     with `Image(systemName: "person.crop.circle.fill")` + name labels
+     in a horizontal `ScrollView`; star-rating overlay on the player.
+   - Player ergonomics: native fullscreen (window-level, not the
+     reparenting trick GTK needs), mpv-style keyboard shortcuts via
+     `.onKeyPress` on the player surface (Space/k = play/pause, ←/→ =
+     ∓5s, j/l = ∓10s, ↑/↓ = ±60s, m = mute, f = fullscreen, 9/0 =
+     volume), single-click toggle, double-click fullscreen. AVPlayer
+     handles seek mechanics, so this is mostly key-binding wiring.
+   - Activity-write throttle: today we save once on disappear. Match the
+     GTK ~10s throttle + flush on pause / seek so play counts stay
+     accurate across long sessions. Use AVPlayer's
+     `addPeriodicTimeObserver` at 0.25 Hz.
+8. **macOS-native wins (≈1 day).** Cheap things AVKit/AppKit give for
+   free that the GTK app can't easily match: enable Picture-in-Picture
+   on the `AVPlayerLayer`; wire up MediaPlayer remote-command center so
+   the Touch Bar / system media keys / AirPods controls work; add a
+   menubar item with "Open Library" / "Settings"; honour the system
+   theme automatically (no theme picker needed).
+9. **macOS productionization (≈1 day).** Path to a publishable build.
+   Add `x86_64-apple-darwin` to the build script's `TARGETS` and `lipo
+   -create` the slices for a universal staticlib. Switch
+   `NSAllowsArbitraryLoads = true` to per-domain `NSExceptionDomains`
+   keyed off `Config.stash_url` so HTTP-only deployments still work
+   without blanket ATS bypass. Add a GitHub Actions workflow on
+   `macos-latest` that runs `cargo test`, the xcframework build, and
+   `xcodebuild`; publish a notarized `.app` (or `.dmg`) via
+   `actions/upload-artifact` on tag pushes. Code-signing and
+   notarization need an Apple Developer ID — gate the workflow on
+   secrets being present so forks still get a clean unsigned build.
 
 ## Open questions (do not block plan; resolve before coding the relevant bit)
 

@@ -1,11 +1,12 @@
 # Stash Player
 
-A native Linux desktop client for [Stash](https://github.com/stashapp/stash).
-Browse your library and play scenes locally with hardware-accelerated video,
+Native desktop clients for [Stash](https://github.com/stashapp/stash):
+browse your library and play scenes locally with hardware-accelerated video,
 with watch progress and play counts synced back to Stash.
 
-Built with **Rust**, **GTK4 + libadwaita**, and **relm4**, with playback
-through GStreamer.
+- **Linux** — GTK4 + libadwaita, relm4, GStreamer (`stash-player-ui`).
+- **macOS** — SwiftUI + AVKit driving the same Rust networking layer via
+  UniFFI (`apps/macos/`). Walking-skeleton MVP — see [macOS](#macos) below.
 
 ## Features
 
@@ -45,9 +46,12 @@ stash-player/
 │   │                           #   find_scene, save_scene_activity,
 │   │                           #   authenticated_url, fetch_bytes)
 │   ├── stash-player-core/      # config, secrets, cache paths
-│   └── stash-player-ui/        # relm4 components, the binary
+│   ├── stash-player-ui/        # relm4 components — the Linux binary
+│   └── stash-player-ffi/       # UniFFI bridge for the macOS app
+├── apps/
+│   └── macos/                  # SwiftUI app (Xcode project + sources)
 ├── data/                       # .desktop, AppStream metainfo, icon
-├── build-aux/                  # Flatpak manifest
+├── build-aux/                  # Flatpak manifest, macOS xcframework script
 └── flake.nix                   # Nix dev shell
 ```
 
@@ -97,6 +101,50 @@ flatpak run one.arsfeld.stash-player
 flatpak-builder --user --install --force-clean --install-deps-from=flathub \
   --repo=build-aux/repo build-aux/build-dir build-aux/one.arsfeld.stash-player.yml
 ```
+
+## macOS
+
+The macOS frontend is a SwiftUI app driven by the same Rust crates. UniFFI
+generates a Swift binding to a small wrapper crate (`stash-player-ffi`),
+which is statically linked into the app via an XCFramework. AVKit handles
+playback; the Keychain stores the API key.
+
+This is currently a walking-skeleton MVP: connect → library grid →
+scene detail with AVPlayer, resume position, and `sceneSaveActivity`
+writeback on close. Filters beyond free-text search, fullscreen, mpv-style
+shortcuts, performer chips, and prev/next navigation are not yet ported.
+
+### Prerequisites
+
+- Xcode 16+ (for SwiftUI on macOS 14)
+- `rustup target add aarch64-apple-darwin` (or `x86_64-apple-darwin` for
+  Intel Macs — append it to `TARGETS` in the build script and add a
+  `lipo -create` step)
+- [`xcodegen`](https://github.com/yonaskolb/XcodeGen) to (re)generate the
+  Xcode project from `apps/macos/project.yml`: `brew install xcodegen`
+
+### Build
+
+The flake exposes a one-liner that does everything (rust → xcframework →
+xcodeproj → xcodebuild → launch):
+
+```sh
+nix run .#macos
+```
+
+`nix run .#macos-build` does the same minus the launch (useful from CI or
+when you just want to refresh `Generated/`). `nix develop` drops you into a
+shell with the pinned Rust toolchain + `xcodegen` + `MACOSX_DEPLOYMENT_TARGET=14.0`.
+
+If you'd rather drive Xcode by hand:
+
+```sh
+./build-aux/build-macos-xcframework.sh        # rust staticlib + swift bindings
+( cd apps/macos && xcodegen generate )        # only when project.yml changes
+open apps/macos/StashPlayer.xcodeproj
+```
+
+After Rust changes, re-run the script (or `nix run .#macos-build`).
 
 ## Configuration
 
