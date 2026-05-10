@@ -202,3 +202,31 @@
     20%  { opacity: 1.0; transform: scale(1.0); }
     100% { opacity: 0.0; transform: scale(1.25); }
 }
+
+/* Centred plate that surfaces "loading…" and terminal pipeline errors
+ * while a stream is opening. Matches the OSD's translucent dark feel so
+ * it reads as part of the player chrome. */
+.video-status-plate {
+    color: #ffffff;
+    background-color: alpha(black, 0.55);
+    border-radius: 18px;
+    padding: 24px 32px;
+    min-width: 220px;
+}
+
+.video-status-plate spinner {
+    color: #ffffff;
+    min-width: 48px;
+    min-height: 48px;
+}
+
+.video-status-title {
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 1.05em;
+}
+
+.video-status-detail {
+    color: alpha(#ffffff, 0.78);
+    font-size: 0.9em;
+}

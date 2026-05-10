@@ -25,7 +25,7 @@
 //! emits while the flag is clear go through `UserSeek`, which seeks the
 //! underlying stream immediately.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,7 @@ struct PlaybackPipeline {
     prepared: Rc<Cell<bool>>,
     seeking: Rc<Cell<bool>>,
     playing: Rc<Cell<bool>>,
+    error: Rc<RefCell<Option<String>>>,
 }
 
 impl PlaybackPipeline {
@@ -91,6 +92,7 @@ impl PlaybackPipeline {
         let prepared = Rc::new(Cell::new(false));
         let seeking = Rc::new(Cell::new(false));
         let playing = Rc::new(Cell::new(false));
+        let error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
         let bus = pipeline.bus().expect("pipeline has a bus");
         let bus_watch = {
@@ -98,23 +100,40 @@ impl PlaybackPipeline {
             let prepared = prepared.clone();
             let seeking = seeking.clone();
             let playing = playing.clone();
+            let error = error.clone();
             let pipeline_weak = pipeline.downgrade();
             bus.add_watch_local(move |_, msg| {
                 use gst::MessageView;
                 match msg.view() {
                     MessageView::Error(err) => {
+                        let glib_err = err.error();
                         tracing::warn!(
                             "gstreamer error from {:?}: {} ({:?})",
                             err.src().map(|s| s.path_string()),
-                            err.error(),
+                            glib_err,
                             err.debug()
                         );
+                        *error.borrow_mut() = Some(glib_err.to_string());
+                        // An error means we'll never finish preparing; clear
+                        // the seeking flag so the loading overlay logic in
+                        // the widget can switch to the error state.
+                        seeking.set(false);
                     }
                     MessageView::AsyncDone(_) => {
+                        let landed_us = pipeline_weak
+                            .upgrade()
+                            .and_then(|p| p.query_position::<gst::ClockTime>())
+                            .map(|t| t.useconds() as i64)
+                            .unwrap_or(-1);
+                        tracing::debug!(
+                            landed_us,
+                            "bus: AsyncDone — seek complete, prepared"
+                        );
                         prepared.set(true);
                         seeking.set(false);
                     }
                     MessageView::AsyncStart(_) => {
+                        tracing::debug!("bus: AsyncStart — seek/preroll begin");
                         seeking.set(true);
                     }
                     MessageView::DurationChanged(_) => {}
@@ -166,6 +185,7 @@ impl PlaybackPipeline {
             prepared,
             seeking,
             playing,
+            error,
         })
     }
 
@@ -191,6 +211,10 @@ impl PlaybackPipeline {
 
     fn is_seeking(&self) -> bool {
         self.seeking.get()
+    }
+
+    fn error_message(&self) -> Option<String> {
+        self.error.borrow().clone()
     }
 
     fn duration_us(&self) -> i64 {
@@ -225,19 +249,42 @@ impl PlaybackPipeline {
 
     fn seek(&self, target_us: i64) {
         if !self.prepared.get() {
+            tracing::debug!(target_us, "seek skipped: pipeline not prepared");
             return;
         }
         let pos = gst::ClockTime::from_useconds(target_us.max(0) as u64);
-        // SNAP_BEFORE lands on the keyframe at-or-before the target so a
-        // single HTTP range request preceeds frame delivery — matches the
-        // smoother GtkMediaFile behaviour the user noticed regressing.
-        if let Err(e) = self.pipeline.seek_simple(
+        let was_seeking = self.seeking.get();
+        let pre_position_us = self
+            .pipeline
+            .query_position::<gst::ClockTime>()
+            .map(|t| t.useconds() as i64)
+            .unwrap_or(-1);
+        // KEY_UNIT | SNAP_BEFORE keeps the HTTP range request cheap by
+        // landing on the keyframe at-or-before the target (one fetch,
+        // smooth playback resumption). ACCURATE then asks the decoder to
+        // chase forward from that keyframe to the exact requested frame
+        // — without it, several rapid "+5s" nudges between two sparse
+        // keyframes all land on the same earlier keyframe and the
+        // playhead visibly stalls while the slider keeps jumping.
+        let result = self.pipeline.seek_simple(
             gst::SeekFlags::FLUSH
                 | gst::SeekFlags::KEY_UNIT
-                | gst::SeekFlags::SNAP_BEFORE,
+                | gst::SeekFlags::SNAP_BEFORE
+                | gst::SeekFlags::ACCURATE,
             pos,
-        ) {
-            tracing::warn!("seek failed: {e}");
+        );
+        match result {
+            Ok(()) => {
+                tracing::debug!(
+                    target_us,
+                    pre_position_us,
+                    was_seeking,
+                    "seek submitted"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(target_us, "seek failed: {e}");
+            }
         }
     }
 }
@@ -342,6 +389,12 @@ pub struct VideoPlayer {
     /// `value-changed` handler can ignore our own writes.
     suppress_scale: Rc<Cell<bool>>,
     suppress_volume: Rc<Cell<bool>>,
+    /// Timestamp of the most recent user-driven seek slider change. Used
+    /// by `refresh_widgets` to suppress pushing polled positions onto the
+    /// thumb for a brief window after the user touches it — without this
+    /// the thumb visibly skips backward to GStreamer's SNAP_BEFORE
+    /// keyframe in between drag updates.
+    last_user_seek: Rc<Cell<Option<Instant>>>,
     // ─── activity tracking ───────────────────────────────────────────────
     /// Set while the underlying stream reports `is_playing()`; cleared on
     /// every transition out of playing so we can sum up watched time.
@@ -414,18 +467,57 @@ impl Component for VideoPlayer {
                     },
                 },
 
-                // Buffering / loading spinner.
+                // Loading / error plate. Shown while the pipeline is
+                // preparing (so opening a stream is visible feedback) and
+                // swapped to an error message if the pipeline fails. Not
+                // shown during seeks — playbin3 prepares fast enough that
+                // a flashing spinner during scrubbing was just noise.
                 add_overlay = &gtk::Box {
                     set_halign: gtk::Align::Center,
                     set_valign: gtk::Align::Center,
                     set_can_target: false,
 
-                    #[name = "loading_spinner"]
-                    gtk::Spinner {
-                        set_spinning: true,
-                        set_width_request: 48,
-                        set_height_request: 48,
+                    #[name = "status_plate"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 12,
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
+                        add_css_class: "video-status-plate",
                         set_visible: false,
+
+                        #[name = "status_spinner"]
+                        gtk::Spinner {
+                            set_spinning: true,
+                            set_width_request: 48,
+                            set_height_request: 48,
+                            set_halign: gtk::Align::Center,
+                        },
+
+                        #[name = "status_icon"]
+                        gtk::Image {
+                            set_icon_name: Some("dialog-error-symbolic"),
+                            set_pixel_size: 48,
+                            set_halign: gtk::Align::Center,
+                            set_visible: false,
+                        },
+
+                        #[name = "status_title"]
+                        gtk::Label {
+                            set_label: "Loading video…",
+                            add_css_class: "video-status-title",
+                            set_halign: gtk::Align::Center,
+                        },
+
+                        #[name = "status_detail"]
+                        gtk::Label {
+                            add_css_class: "video-status-detail",
+                            set_halign: gtk::Align::Center,
+                            set_wrap: true,
+                            set_justify: gtk::Justification::Center,
+                            set_max_width_chars: 48,
+                            set_visible: false,
+                        },
                     },
                 },
 
@@ -572,6 +664,7 @@ impl Component for VideoPlayer {
     ) -> ComponentParts<Self> {
         let suppress_scale = Rc::new(Cell::new(false));
         let suppress_volume = Rc::new(Cell::new(false));
+        let last_user_seek: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
 
         let model = VideoPlayer {
             media: None,
@@ -591,6 +684,7 @@ impl Component for VideoPlayer {
             tick_source: None,
             suppress_scale: suppress_scale.clone(),
             suppress_volume: suppress_volume.clone(),
+            last_user_seek: last_user_seek.clone(),
             playing_since: None,
             play_duration_us: 0,
             last_save_at: None,
@@ -599,14 +693,18 @@ impl Component for VideoPlayer {
 
         let widgets = view_output!();
 
-        // Hook seek slider: only treat as a user seek when not suppressed.
+        // Hook seek slider: anything that isn't our own programmatic
+        // write becomes a UserSeek, and we stamp the time so refresh
+        // doesn't yank the thumb back during a drag.
         {
             let sender = sender.clone();
             let suppress = suppress_scale.clone();
+            let stamp = last_user_seek.clone();
             widgets.seek_scale.connect_value_changed(move |s| {
                 if suppress.get() {
                     return;
                 }
+                stamp.set(Some(Instant::now()));
                 sender.input(VideoPlayerMsg::UserSeek(s.value() as i64));
             });
         }
@@ -769,7 +867,8 @@ impl Component for VideoPlayer {
                     let volume = media.volume();
                     let muted = media.is_muted();
                     let is_prepared = media.is_prepared();
-                    let is_seeking = media.is_seeking();
+                    let media_seeking = media.is_seeking();
+                    let error_msg = media.error_message();
 
                     // Track playing-state transitions so play_duration_us
                     // reflects only the time the stream was actually
@@ -782,11 +881,51 @@ impl Component for VideoPlayer {
                         self.capture_play_time();
                     }
 
-                    self.duration_us = duration_us;
-                    self.position_us = position_us;
+                    // Duration queries can transiently return 0 while a
+                    // flushing seek is in flight. Don't let that wipe our
+                    // cached duration — once we know the stream length we
+                    // hold onto it. (It can legitimately change for live
+                    // streams, but only in the upward direction we care
+                    // about here.)
+                    if duration_us > 0 {
+                        self.duration_us = duration_us;
+                    }
                     self.playing = now_playing;
                     self.volume = volume;
                     self.muted = muted;
+
+                    // Trust the polled position only when there isn't a
+                    // user-initiated seek in flight. While GStreamer is
+                    // flushing for a seek (and briefly before AsyncStart
+                    // hits the bus) `position_us()` can return 0 or the
+                    // pre-seek position, which would clobber the target
+                    // we just stored locally and snap the thumb to the
+                    // start. The seek handlers stamp `last_user_seek`
+                    // before they call `media.seek()`; that timestamp,
+                    // plus the bus-driven `is_seeking` flag, defines the
+                    // window we ignore polled values in.
+                    let user_seek_recent = self
+                        .last_user_seek
+                        .get()
+                        .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
+                    if !media_seeking && !user_seek_recent {
+                        if position_us != self.position_us {
+                            tracing::trace!(
+                                old_us = self.position_us,
+                                new_us = position_us,
+                                "Tick: position_us updated from poll"
+                            );
+                        }
+                        self.position_us = position_us;
+                    } else {
+                        tracing::trace!(
+                            polled_us = position_us,
+                            held_us = self.position_us,
+                            media_seeking,
+                            user_seek_recent,
+                            "Tick: holding position_us (seek window)"
+                        );
+                    }
 
                     // Apply the pending resume seek once the stream is
                     // ready enough that a clamp against duration is
@@ -817,10 +956,28 @@ impl Component for VideoPlayer {
                         }
                     }
 
-                    // Show spinner while media is preparing or seeking
-                    // and we have nothing to show yet.
-                    let loading = !is_prepared || is_seeking;
-                    widgets.loading_spinner.set_visible(loading);
+                    // Drive the central status plate. We only show it for
+                    // initial loading and for terminal errors — seeking
+                    // intentionally doesn't trigger it.
+                    if let Some(msg) = error_msg {
+                        widgets.status_spinner.set_spinning(false);
+                        widgets.status_spinner.set_visible(false);
+                        widgets.status_icon.set_visible(true);
+                        widgets.status_title.set_label("Couldn't play video");
+                        widgets.status_detail.set_label(&msg);
+                        widgets.status_detail.set_visible(true);
+                        widgets.status_plate.set_visible(true);
+                    } else if !is_prepared {
+                        widgets.status_icon.set_visible(false);
+                        widgets.status_spinner.set_visible(true);
+                        widgets.status_spinner.set_spinning(true);
+                        widgets.status_title.set_label("Loading video…");
+                        widgets.status_detail.set_visible(false);
+                        widgets.status_plate.set_visible(true);
+                    } else {
+                        widgets.status_plate.set_visible(false);
+                        widgets.status_spinner.set_spinning(false);
+                    }
                 }
             }
 
@@ -857,10 +1014,30 @@ impl Component for VideoPlayer {
                         return;
                     }
                     let delta = secs.saturating_mul(1_000_000);
-                    let target = media
-                        .position_us()
+                    // Anchor on our local position and our cached duration,
+                    // not the live `media.*()` queries. While a seek is in
+                    // flight playbin3 reports the pre-seek (or 0) position
+                    // and a 0 duration, so two quick presses of "+10s" would
+                    // both compute their target from the same base and the
+                    // clamp would collapse the target to 0 — making the
+                    // thumb visibly bounce around without playback ever
+                    // actually advancing.
+                    let base_us = self.position_us;
+                    let cached_dur_us = self.duration_us.max(0);
+                    let target = base_us
                         .saturating_add(delta)
-                        .clamp(0, media.duration_us().max(0));
+                        .clamp(0, cached_dur_us);
+                    tracing::debug!(
+                        secs,
+                        delta_us = delta,
+                        base_us,
+                        cached_dur_us,
+                        target_us = target,
+                        live_pos_us = media.position_us(),
+                        live_dur_us = media.duration_us(),
+                        "SeekRelative"
+                    );
+                    self.last_user_seek.set(Some(Instant::now()));
                     media.seek(target);
                     self.position_us = target;
                     self.emit_checkpoint(&sender);
@@ -872,8 +1049,15 @@ impl Component for VideoPlayer {
                 if let Some(media) = &self.media
                     && media.is_prepared()
                 {
-                    let dur = media.duration_us().max(0);
+                    let dur = self.duration_us.max(0);
                     let target = ((dur as f64) * f.clamp(0.0, 1.0)) as i64;
+                    tracing::debug!(
+                        fraction = f,
+                        cached_dur_us = dur,
+                        target_us = target,
+                        "SeekFraction"
+                    );
+                    self.last_user_seek.set(Some(Instant::now()));
                     media.seek(target);
                     self.position_us = target;
                     self.emit_checkpoint(&sender);
@@ -885,7 +1069,14 @@ impl Component for VideoPlayer {
                 if let Some(media) = &self.media
                     && media.is_prepared()
                 {
-                    let target = us.clamp(0, media.duration_us().max(0));
+                    let target = us.clamp(0, self.duration_us.max(0));
+                    tracing::debug!(
+                        slider_us = us,
+                        cached_dur_us = self.duration_us,
+                        target_us = target,
+                        "UserSeek"
+                    );
+                    self.last_user_seek.set(Some(Instant::now()));
                     media.seek(target);
                     self.position_us = target;
                     self.emit_checkpoint(&sender);
@@ -1097,15 +1288,24 @@ impl VideoPlayer {
     ) {
         // Seek slider: max = duration, value = position. Clamp to a tiny
         // positive max to avoid GtkRange complaining when duration is 0.
-        // Skip pushing values while the stream is mid-seek — the polled
-        // timestamp lags the user's drag and would yank the thumb back.
+        // Skip pushing polled values onto the thumb when (a) the stream
+        // is mid-seek or (b) the user touched the slider very recently —
+        // the polled timestamp lags GStreamer's SNAP_BEFORE keyframe and
+        // would visibly snap the thumb backward in between drag updates.
+        // 400 ms covers the gap between consecutive value-changed events
+        // during a continuous drag without leaving the thumb desynced for
+        // long after the user lets go.
         let media_seeking = self
             .media
             .as_ref()
             .is_some_and(|m| m.is_seeking());
+        let user_holding = self
+            .last_user_seek
+            .get()
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
         let max = (self.duration_us.max(1)) as f64;
         widgets.seek_scale.set_range(0.0, max);
-        if !media_seeking {
+        if !media_seeking && !user_holding {
             let pos = (self.position_us.clamp(0, self.duration_us.max(0))) as f64;
             self.suppress_scale.set(true);
             widgets.seek_scale.set_value(pos);
