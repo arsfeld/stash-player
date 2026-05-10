@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stash Player macOS app icon.
+  1024x1024 canvas with an 824x824 squircle centered (100px margin),
+  matching Apple's Big Sur+ icon grid. Reuses the brand purple→pink
+  gradient + disk/play motif from the GNOME icon, redrawn for macOS
+  proportions with depth (inner bevel, soft shadow).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Background gradient (top→bottom): deep indigo → violet → magenta -->
+    <linearGradient id="bgGradient" x1="512" y1="100" x2="512" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b3fb8"/>
+      <stop offset="0.55" stop-color="#7a3fc4"/>
+      <stop offset="1" stop-color="#c5408c"/>
+    </linearGradient>
+
+    <!-- Top sheen (gives the icon depth like other macOS app icons) -->
+    <linearGradient id="bgSheen" x1="512" y1="100" x2="512" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Disk surface gradient -->
+    <linearGradient id="diskGradient" x1="512" y1="320" x2="512" y2="780" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fdfdff"/>
+      <stop offset="1" stop-color="#dadbe8"/>
+    </linearGradient>
+
+    <!-- Subtle ring/vignette on the disk -->
+    <radialGradient id="diskRing" cx="512" cy="552" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.10"/>
+    </radialGradient>
+
+    <!-- Play triangle gradient -->
+    <linearGradient id="playGradient" x1="512" y1="430" x2="512" y2="678" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a3fc4"/>
+      <stop offset="1" stop-color="#c5408c"/>
+    </linearGradient>
+
+    <!-- Soft drop shadow under the disk -->
+    <filter id="diskShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dx="0" dy="10" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.35"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Squircle clip for sheen + film-strip details -->
+    <clipPath id="bgClip">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+  </defs>
+
+  <!-- Squircle backplate -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#bgGradient)"/>
+
+  <!-- Sheen + film-strip detail clipped to the squircle -->
+  <g clip-path="url(#bgClip)">
+    <rect x="100" y="100" width="824" height="460" fill="url(#bgSheen)"/>
+    <g fill="#ffffff" fill-opacity="0.08">
+      <rect x="160" y="850" width="80" height="40" rx="10"/>
+      <rect x="272" y="850" width="80" height="40" rx="10"/>
+      <rect x="384" y="850" width="80" height="40" rx="10"/>
+      <rect x="496" y="850" width="80" height="40" rx="10"/>
+      <rect x="608" y="850" width="80" height="40" rx="10"/>
+      <rect x="720" y="850" width="80" height="40" rx="10"/>
+    </g>
+  </g>
+
+  <!-- Inner stroke for definition -->
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" ry="184.5"
+        fill="none" stroke="#000000" stroke-opacity="0.18" stroke-width="1"/>
+
+  <!-- Disk + play triangle -->
+  <g filter="url(#diskShadow)">
+    <circle cx="512" cy="552" r="240" fill="url(#diskGradient)"/>
+    <circle cx="512" cy="552" r="240" fill="url(#diskRing)"/>
+    <path d="M444 432 L660 552 L444 672 Z"
+          fill="url(#playGradient)"
+          stroke="#5b3fb8" stroke-opacity="0.25" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+</svg>

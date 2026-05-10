@@ -29,6 +29,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: ""
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: StashPlayer/Info.plist
       properties:
