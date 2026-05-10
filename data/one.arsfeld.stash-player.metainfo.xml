@@ -10,16 +10,14 @@
   <description>
     <p>
       Stash Player is a native GTK4 + libadwaita client for the
-      Stash media server. Browse your library, play scenes locally
-      with hardware-accelerated video, and cast directly to a
-      Chromecast on your network.
+      Stash media server. Browse your library and play scenes locally
+      with hardware-accelerated video.
     </p>
     <p>Features:</p>
     <ul>
       <li>Adaptive libadwaita UI that fits in on GNOME</li>
       <li>Local playback via GStreamer with VA-API where available</li>
       <li>Resume position and play count synced back to Stash</li>
-      <li>Direct Chromecast streaming (no transcoding proxy)</li>
     </ul>
   </description>
 

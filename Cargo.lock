@@ -2325,10 +2325,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stash-cast"
-version = "0.1.0"
-
-[[package]]
 name = "stash-player-core"
 version = "0.1.0"
 dependencies = [

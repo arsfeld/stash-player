@@ -1,6 +1,5 @@
 //! Scene detail page. Inline player at the top (matches Stash's web UI),
-//! followed by metadata, cast, and a file-info group. The Cast button is
-//! stubbed until milestone 4 (Chromecast).
+//! followed by metadata, performers, and a file-info group.
 
 use relm4::prelude::*;
 use relm4::{adw, gtk};
@@ -272,16 +271,7 @@ impl Component for ScenePage {
                                     },
 
                                     gtk::Box {
-                                        set_spacing: 8,
-
-                                        gtk::Button {
-                                            add_css_class: "pill",
-                                            set_label: "Cast…",
-                                            set_sensitive: false,
-                                            set_tooltip_text: Some("Chromecast lands in milestone 4"),
-                                        },
-
-                                        gtk::Box { set_hexpand: true },
+                                        set_halign: gtk::Align::End,
 
                                         gtk::Button {
                                             set_icon_name: "external-link-symbolic",
@@ -302,7 +292,7 @@ impl Component for ScenePage {
                                         set_visible: false,
 
                                         gtk::Label {
-                                            set_label: "Cast",
+                                            set_label: "Performers",
                                             set_xalign: 0.0,
                                             add_css_class: "heading",
                                         },

@@ -1,7 +1,7 @@
 # stash-player — Plan
 
 A native Linux desktop client for [Stash](https://github.com/stashapp/stash):
-browse the library, play scenes locally, and cast directly to Chromecast.
+browse the library and play scenes locally.
 
 ## Decisions locked in
 
@@ -13,7 +13,6 @@ browse the library, play scenes locally, and cast directly to Chromecast.
 | UI design goal | User-friendly, GNOME HIG-compliant, polished out of the box |
 | Video pipeline | GTK's built-in `gtk::MediaFile` (GStreamer under the hood) |
 | Stash API | GraphQL over HTTP (Stash exposes `/graphql`) |
-| Cast model | Send Stash stream URLs directly to Chromecast (no local transcode) |
 
 Rationale on the big ones:
 
@@ -33,9 +32,6 @@ Rationale on the big ones:
   surface is a few hundred lines instead of thousands. We can drop to
   `gstreamer-rs` directly if a feature we need (subtitle tracks,
   transcode-fallback on pipeline error) forces it.
-- **Direct-URL casting** keeps v1 small. The Chromecast pulls from Stash on
-  its own; our app is just the remote. (A transcoding proxy can be bolted on
-  later behind the same `Caster` trait.)
 
 ## Crate plan
 
@@ -46,7 +42,6 @@ stash-player/
 ├── Cargo.toml                  # workspace
 ├── crates/
 │   ├── stash-api/              # GraphQL client, auth, types
-│   ├── stash-cast/             # Chromecast discovery + control
 │   ├── stash-player-core/      # app state, config, persistence
 │   └── stash-player-ui/        # relm4 components, the binary
 └── PLAN.md
@@ -58,30 +53,16 @@ stash-player/
 - Surface today: `Client::new(base_url, api_key)`, `version()`,
   `find_scenes(filter, page, per_page)`, `find_scene(id)`, `fetch_bytes(url)`,
   `authenticated_url(url)` (appends `apikey=` for consumers that can't
-  carry our request header — GTK's media stack, Chromecast).
+  carry our request header — e.g. GTK's media stack).
 - Activity tracking lands with milestone 3: `save_activity(id, resume_time,
   play_duration)` (Stash's `sceneSaveActivity` mutation increments play
   count when `playDuration` is set) and the scene query starts pulling
   `resume_time` / `play_count` so we can seek to the saved position on
   load. Performers / tags / markers queries come with milestone 5.
 
-### `stash-cast`
-
-Crate exists as a doc-only stub today; the real implementation lands in
-milestone 4.
-
-- Device discovery: mDNS via `mdns-sd` looking for `_googlecast._tcp.local`.
-- Control: `rust_cast` crate (TLS + protobuf to the receiver). Use the default
-  media receiver app (`CC1AD845`) with a `LOAD` payload pointing at the Stash
-  stream URL.
-- Trait: `trait Caster { discover, connect, load(url, mime), play, pause,
-  seek, set_volume, status_stream() }` so we can swap implementations later.
-- Status updates flow back via a `tokio::sync::broadcast` channel; the UI
-  subscribes through a relm4 worker.
-
 ### `stash-player-core`
-- Config: `~/.config/stash-player/config.toml` (server URL, default cast
-  device, theme). Use `directories` + `serde`.
+- Config: `~/.config/stash-player/config.toml` (server URL, theme).
+  Use `directories` + `serde`.
 - Secrets: API key in the system keyring via the `keyring` crate
   (Secret Service on Linux), never in the TOML.
 - Local cache: thumbnails are decoded to fixed-size RGBA8 and written as
@@ -108,8 +89,7 @@ UX principles for this crate:
 
 relm4 components, top-down:
 
-- `AppModel` — root component. Owns navigation stack, connection status,
-  current cast target.
+- `AppModel` — root component. Owns navigation stack and connection status.
 - `LibraryPage` — main grid plus a top toolbar (search, sort dropdown,
   asc/desc toggle, organized switch, min-rating filter, "play random"
   button). Grid is currently a `gtk::FlowBox` paged in batches of 24 on
@@ -118,23 +98,19 @@ relm4 components, top-down:
 - `ScenePage` — inline `VideoPlayer` at the top, then title +
   studio/date/duration/resolution subtitle, autoplay toggle, prev/next
   navigation honouring the library's current filter, performers chips
-  (Adw avatars), details, and a file-info group. "Cast…" button is
-  stubbed until milestone 4.
+  (Adw avatars), details, and a file-info group.
 - `VideoPlayer` widget (used inline on `ScenePage`, not a separate page):
   `gtk::MediaFile` painted into a `gtk::Picture` wrapped in a
   `gtk::GraphicsOffload` for compositor-direct video. Custom OSD with
   seek/transport/volume/fullscreen and mpv-style keyboard shortcuts.
   Marker scrubber + speed control are milestone-5 polish.
-- `CastSheet` — popover showing discovered devices, current device status,
-  remote transport controls when casting.
 - `SettingsPage` — Stash URL + API key entry, "test connection" button,
-  default cast device, theme.
+  theme.
 - Async work: the shared `stash_api::Client` is held by `AppModel` and
   cloned into each component that needs it. Off-thread work goes through
   `ComponentSender::oneshot_command` (one task per request) rather than
   long-lived workers — simpler, and the relm4 worker pattern wasn't
-  buying us anything yet. `CastWorker` will likely materialize when the
-  `Caster` actually needs to push status updates.
+  buying us anything yet.
 
 ## Playback details
 
@@ -154,19 +130,6 @@ relm4 components, top-down:
   stream is prepared.
 - Hardware accel: VA-API is picked up by GStreamer automatically when
   `gstreamer1.0-vaapi` is installed — document as a runtime dep.
-
-## Casting details
-
-- On app start (or when the cast button is first opened), spin up mDNS
-  discovery and keep it warm for ~30s, then idle.
-- "Cast to X" flow: connect → launch default media receiver →
-  `LOAD { contentId: stream_url, contentType: "video/mp4" or "application/x-mpegURL" }`.
-- While casting, the local `playbin3` is paused; the UI mirrors transport
-  state from the receiver's `MEDIA_STATUS` messages.
-- Important constraint to verify with your setup: the **Chromecast must
-  reach your Stash server's URL**. If Stash is behind localhost-only or
-  HTTPS-with-self-signed, casting won't work without a reachable host.
-  We'll surface a clear error rather than silently failing.
 
 ## Build, run, package
 
@@ -199,8 +162,7 @@ relm4 components, top-down:
    bitmaps are cached on disk under `XDG_CACHE_HOME/stash-player/thumbs/`
    keyed by URL hash + dimensions, with a 12-permit semaphore capping
    concurrent fetches. Scene detail page shows the inline player +
-   metadata + performers chips + prev/next neighbor navigation; Cast is
-   stubbed for milestone 4.
+   metadata + performers chips + prev/next neighbor navigation.
    Open polish for later: virtualize the grid (FlowBox holds the full
    list in memory; fine for hundreds, not great for tens of thousands),
    filter chips for performer / studio / tag, sidebar for the
@@ -213,11 +175,9 @@ relm4 components, top-down:
    `gtk4paintablesink`; we ended up letting `gtk::MediaFile` wrap that
    for us (see "Decisions" above). Resume + `sceneSaveActivity` writeback
    is the remaining piece.
-4. **Chromecast cast (≈3 days).** Discovery, connect, LOAD/PLAY/PAUSE/SEEK,
-   status mirroring, error surfacing.
-5. **Full library polish (≈3 days).** Performers / Tags / Studios / Markers
+4. **Full library polish (≈3 days).** Performers / Tags / Studios / Markers
    pages, search, keyboard shortcuts, theme.
-6. **Packaging (≈1 day).** Flatpak manifest, README, screenshots.
+5. **Packaging (≈1 day).** Flatpak manifest, README, screenshots.
 
 ## Open questions (do not block plan; resolve before coding the relevant bit)
 

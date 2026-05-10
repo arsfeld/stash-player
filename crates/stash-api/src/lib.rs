@@ -79,8 +79,8 @@ impl Client {
 
     /// Take an absolute or relative URL from the Stash API and produce one
     /// that's authenticated via the `apikey=` query param. Use this when the
-    /// consumer (GStreamer's media backend, Chromecast, a `<video>` tag)
-    /// won't carry our `ApiKey` request header.
+    /// consumer (GStreamer's media backend, a `<video>` tag) won't carry
+    /// our `ApiKey` request header.
     pub fn authenticated_url(&self, url: &str) -> Result<String> {
         let mut parsed = match Url::parse(url) {
             Ok(u) => u,

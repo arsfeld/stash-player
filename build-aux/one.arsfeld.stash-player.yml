@@ -11,7 +11,7 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc
-  # Network — talks to Stash over HTTP(S) and announces/talks to Chromecast.
+  # Network — talks to Stash over HTTP(S).
   - --share=network
   # Audio
   - --socket=pulseaudio
