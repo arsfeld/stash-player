@@ -1,0 +1,197 @@
+name: macOS
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Cancel in-flight builds on the same ref — macOS runner minutes are scarce.
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Match the Swift target's deployment floor (apps/macos/project.yml).
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+jobs:
+  build:
+    name: Build StashPlayer.app
+    # macos-14 is Apple Silicon; matches the aarch64-apple-darwin staticlib
+    # that build-macos-xcframework.sh produces.
+    runs-on: macos-14
+    env:
+      APP_PATH: build-aux/macos-derived/Build/Products/Release/StashPlayer.app
+      ZIP_PATH: StashPlayer-macos-arm64.zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Fork PRs can't read repo secrets, so fall back to ad-hoc signing
+      # there instead of failing the job. Same-repo pushes/PRs and tag
+      # builds get the real Developer ID identity.
+      - name: Determine signing mode
+        id: signing
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        run: |
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            echo "mode=developer-id" >> "$GITHUB_OUTPUT"
+            echo "Signing mode: developer-id"
+          else
+            echo "mode=ad-hoc" >> "$GITHUB_OUTPUT"
+            echo "Signing mode: ad-hoc (no MACOS_CERTIFICATE secret)"
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.mode == 'developer-id'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+
+      - name: Build stash-player-ffi xcframework
+        run: ./build-aux/build-macos-xcframework.sh
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+        working-directory: apps/macos
+
+      - name: Build StashPlayer.app (Release)
+        env:
+          SIGN_MODE: ${{ steps.signing.outputs.mode }}
+          DEVELOPMENT_TEAM_ID: ${{ secrets.MACOS_DEVELOPMENT_TEAM }}
+        # `Developer ID Application` matches as a prefix — xcodebuild picks
+        # the unique cert imported into the temp keychain. Hardened runtime
+        # is already enabled in project.yml; --timestamp gives us the
+        # secure timestamp notarytool requires.
+        run: |
+          if [ "$SIGN_MODE" = "developer-id" ]; then
+            SIGN_IDENTITY="Developer ID Application"
+            TEAM_ID="$DEVELOPMENT_TEAM_ID"
+            EXTRA_FLAGS="--timestamp"
+          else
+            SIGN_IDENTITY="-"
+            TEAM_ID=""
+            EXTRA_FLAGS=""
+          fi
+
+          xcodebuild \
+            -project apps/macos/StashPlayer.xcodeproj \
+            -scheme StashPlayer \
+            -configuration Release \
+            -derivedDataPath build-aux/macos-derived \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="$EXTRA_FLAGS" \
+            build
+
+      - name: Verify signature
+        if: steps.signing.outputs.mode == 'developer-id'
+        run: |
+          codesign -dv --verbose=4 "$APP_PATH"
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+
+      - name: Package .app into zip
+        # `ditto -c -k --keepParent` preserves symlinks and Apple metadata
+        # better than `zip` — important for a .app bundle.
+        run: |
+          test -d "$APP_PATH" || { echo "no .app at $APP_PATH" >&2; exit 1; }
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          ls -lh "$ZIP_PATH"
+
+      # Notarize only on `v*` tags — pushes/PRs are signed but skip the
+      # 1–5 min round-trip to Apple's notary service.
+      - name: Notarize and staple
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.mode == 'developer-id'
+        env:
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          echo "$NOTARY_KEY" | base64 --decode > "$KEY_PATH"
+          trap 'rm -f "$KEY_PATH"' EXIT
+
+          # `--wait` blocks until Apple finishes (typically <5 min). Exits
+          # non-zero if status != Accepted; we still fetch the log either
+          # way so failures are debuggable from the run summary.
+          set +e
+          SUBMIT_OUT=$(xcrun notarytool submit "$ZIP_PATH" \
+            --key "$KEY_PATH" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json)
+          RESULT=$?
+          set -e
+          echo "$SUBMIT_OUT"
+
+          SUBMISSION_ID=$(echo "$SUBMIT_OUT" | jq -r '.id // empty')
+          if [ -n "$SUBMISSION_ID" ]; then
+            echo "==> Notarization log for $SUBMISSION_ID"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key "$KEY_PATH" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+          fi
+
+          if [ "$RESULT" -ne 0 ]; then
+            exit "$RESULT"
+          fi
+
+          # Staple the ticket onto the .app, then re-zip so consumers get
+          # an offline-validatable bundle (no network call on first launch).
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          rm -f "$ZIP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
+          # Confirm Gatekeeper is happy with the stapled bundle.
+          spctl --assess --type execute --verbose "$APP_PATH"
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StashPlayer-macos-arm64
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: error
+
+  release:
+    name: Attach .app to GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: StashPlayer-macos-arm64
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: StashPlayer-macos-arm64.zip
+          generate_release_notes: true
