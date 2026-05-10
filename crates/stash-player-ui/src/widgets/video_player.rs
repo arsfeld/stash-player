@@ -64,6 +64,10 @@ pub enum VideoPlayerOutput {
         resume_secs: f64,
         play_duration_secs: f64,
     },
+    /// The OSD just revealed (true) or hid (false). The scene page uses
+    /// this to fade the floating header bar in lockstep so window chrome
+    /// disappears alongside the player controls when the mouse is idle.
+    ControlsRevealedChanged(bool),
 }
 
 #[derive(Debug)]
@@ -116,6 +120,10 @@ pub struct VideoPlayer {
     /// the inline overlay we were embedded in.
     fs_original_parent: Option<gtk::Widget>,
     show_controls: bool,
+    /// Latched copy of the most recently emitted reveal state. We diff
+    /// against this in `update_with_view` so the parent only hears about
+    /// real edge transitions, not every tick.
+    controls_revealed: bool,
     hide_source: Option<glib::SourceId>,
     tick_source: Option<glib::SourceId>,
     /// Flag set while we update the seek scale programmatically so the
@@ -366,6 +374,7 @@ impl Component for VideoPlayer {
             fs_window: None,
             fs_original_parent: None,
             show_controls: true,
+            controls_revealed: true,
             hide_source: None,
             tick_source: None,
             suppress_scale: suppress_scale.clone(),
@@ -790,6 +799,18 @@ impl Component for VideoPlayer {
             }
         }
 
+        // Notify the parent on reveal-state edges so it can fade the
+        // floating header bar together with the OSD. Computed here (not
+        // in `refresh_widgets`) because we need `&mut self` to latch the
+        // last value, and emitting only on changes avoids spamming the
+        // parent on every tick.
+        let force_visible = self.media.is_none() || self.duration_us == 0;
+        let revealed = self.show_controls || force_visible;
+        if revealed != self.controls_revealed {
+            self.controls_revealed = revealed;
+            let _ = sender.output(VideoPlayerOutput::ControlsRevealedChanged(revealed));
+        }
+
         // Re-render derived widget state. We keep this manual because
         // many of these properties depend on multiple model fields and a
         // few need to skip our own value-changed handlers.
@@ -915,16 +936,15 @@ impl VideoPlayer {
 
         // OSD visibility: stay up only when no media is loaded yet so the
         // user has something to look at; otherwise let the inactivity timer
-        // hide it whether playing or paused.
-        let force_visible = self.media.is_none() || self.duration_us == 0;
-        let reveal = self.show_controls || force_visible;
-        widgets.controls_revealer.set_reveal_child(reveal);
+        // hide it whether playing or paused. `controls_revealed` was
+        // computed (and emitted upward) in `update_with_view`.
+        widgets.controls_revealer.set_reveal_child(self.controls_revealed);
 
         // Cursor: hide on the player widget when controls are hidden so
         // the OSD "gets out of the way". Scoped to the widget (not the
         // toplevel surface) so the rest of the page keeps a normal
         // pointer.
-        let cursor = if reveal {
+        let cursor = if self.controls_revealed {
             None
         } else {
             gtk::gdk::Cursor::from_name("none", None)

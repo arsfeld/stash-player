@@ -62,6 +62,8 @@ pub enum SceneMsg {
         resume_secs: f64,
         play_duration_secs: f64,
     },
+    /// Fade the floating header bar in/out alongside the player's OSD.
+    SetHeaderRevealed(bool),
 }
 
 #[derive(Debug)]
@@ -105,6 +107,7 @@ impl Component for ScenePage {
             #[watch]
             set_title: &page_title(&model.state),
 
+            #[name = "toolbar_view"]
             #[wrap(Some)]
             set_child = &adw::ToolbarView {
                 // Float the header bar over the video so the player is
@@ -373,6 +376,9 @@ impl Component for ScenePage {
                     resume_secs,
                     play_duration_secs,
                 },
+                VideoPlayerOutput::ControlsRevealedChanged(on) => {
+                    SceneMsg::SetHeaderRevealed(on)
+                }
             });
 
         let model = ScenePage {
@@ -429,6 +435,9 @@ impl Component for ScenePage {
                     self.player.emit(VideoPlayerMsg::SetAutoplay(on));
                     let _ = sender.output(SceneOutput::SetAutoplay(on));
                 }
+            }
+            SceneMsg::SetHeaderRevealed(on) => {
+                widgets.toolbar_view.set_reveal_top_bars(on);
             }
             SceneMsg::SaveActivity {
                 resume_secs,

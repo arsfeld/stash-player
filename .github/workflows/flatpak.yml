@@ -16,8 +16,8 @@ jobs:
     name: Build Flatpak bundle
     runs-on: ubuntu-latest
     container:
-      # Matches runtime-version: '48' in the manifest.
-      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      # Matches runtime-version: '47' in the manifest.
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
       options: --privileged
 
     steps:
