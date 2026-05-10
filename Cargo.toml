@@ -6,6 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 authors = ["Alexandre Rosenfeld"]
+license = "MIT"
 
 [profile.release]
 lto = "thin"

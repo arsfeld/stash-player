@@ -2,6 +2,7 @@
 name = "stash-player-ui"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 adw = { version = "0.9.1", package = "libadwaita", features = ["v1_5"] }

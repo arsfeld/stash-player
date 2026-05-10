@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>one.arsfeld.stash-player</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT OR Apache-2.0</project_license>
+  <project_license>MIT</project_license>
 
   <name>Stash Player</name>
   <summary>Native Linux client for Stash</summary>
