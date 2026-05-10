@@ -9,41 +9,11 @@ through GStreamer.
 
 ## Features
 
-- **Adaptive libadwaita UI** — `AdwApplicationWindow`, `AdwNavigationView`,
-  `AdwToolbarView`, `AdwHeaderBar`, `AdwClamp`, fits in on GNOME and resizes
-  down cleanly.
-- **Settings page** with Stash URL + API key entry and a "Test connection"
-  button that round-trips the GraphQL `version` query. The URL persists to
-  `~/.config/stash-player/config.toml`; the API key is stored in the
-  Linux Secret Service keyring (via `libsecret`), never on disk.
-- **Library grid** with search, sort key dropdown, asc/desc toggle, an
-  organized-only filter switch, a min-rating filter (in 1-star increments),
-  and a "play random" shortcut that uses Stash's seeded `random_<seed>` sort
-  so paging stays stable.
-- **Infinite scroll** — 24 scenes per page, fetched on `edge-reached`.
-- **On-disk thumbnail cache** — screenshots are decoded, cropped, and
-  resized to 240×135 RGBA8 with the `image` crate, then cached under
-  `XDG_CACHE_HOME/stash-player/thumbs/` keyed by URL hash + dimensions. A
-  12-permit semaphore caps concurrent fetches.
-- **Inline scene player** — `gtk::MediaFile` painted into a `gtk::Picture`
-  inside `gtk::GraphicsOffload` so frames go straight to the Wayland
-  compositor (the same trick `GtkVideo` uses internally). Custom OSD with
-  seek bar, transport buttons, time labels, volume slider, mute, and
-  fullscreen toggle. Controls auto-hide after a couple of seconds of
-  inactivity.
-- **Hardware acceleration via VA-API** is picked up automatically when the
-  matching GStreamer plugins are installed.
-- **mpv-style keyboard shortcuts** (see below).
-- **Click-to-toggle** play/pause; **double-click** for fullscreen.
-- **Scene detail page** with title, studio · date · duration · resolution
-  subtitle, autoplay toggle, prev/next navigation honouring the library's
-  current filter, performers chips (Adw avatars), details, file info, and
-  an "Open in Stash" shortcut.
-- **Activity sync** — resume position and watched-time deltas are written
-  back via `sceneSaveActivity`, throttled to ~10s while playing and flushed
-  on pause, seek, scene swap, and shutdown. Saved `resume_time` is applied
-  once the stream is prepared, so reopening a scene picks up where you left
-  off and Stash's play count increments.
+- Browse your library with search, sort, rating filter, and a "play random" shortcut.
+- Inline scene player with mpv-style keyboard shortcuts and hardware-accelerated playback.
+- Scene detail pages with performers, metadata, prev/next navigation, and an "Open in Stash" shortcut.
+- Resume where you left off — watch progress and play counts sync back to Stash automatically.
+- API key stored securely in the system keyring.
 
 ## Install
 
