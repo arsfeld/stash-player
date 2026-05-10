@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b3fb8"/>
+      <stop offset="0.55" stop-color="#7a3fc4"/>
+      <stop offset="1" stop-color="#c5408c"/>
+    </linearGradient>
+
+    <linearGradient id="bgHighlight" x1="0" y1="8" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="diskGradient" x1="0" y1="36" x2="0" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fdfdff"/>
+      <stop offset="1" stop-color="#dadbe8"/>
+    </linearGradient>
+
+    <radialGradient id="diskRing" cx="64" cy="68" r="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.08"/>
+    </radialGradient>
+
+    <linearGradient id="playGradient" x1="0" y1="50" x2="0" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a3fc4"/>
+      <stop offset="1" stop-color="#c5408c"/>
+    </linearGradient>
+
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.4"/>
+      <feOffset dx="0" dy="1.2" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.35"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <clipPath id="bgClip">
+      <rect x="6" y="6" width="116" height="116" rx="22" ry="22"/>
+    </clipPath>
+  </defs>
+
+  <!-- Outer rounded-square backplate (GNOME HIG style) -->
+  <g>
+    <rect x="6" y="6" width="116" height="116" rx="22" ry="22" fill="url(#bgGradient)"/>
+    <g clip-path="url(#bgClip)">
+      <!-- Top sheen -->
+      <rect x="6" y="6" width="116" height="60" fill="url(#bgHighlight)"/>
+      <!-- Soft film-strip suggestion at the bottom -->
+      <g fill="#ffffff" fill-opacity="0.08">
+        <rect x="14" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="28" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="42" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="56" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="70" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="84" y="106" width="10" height="6" rx="1.5"/>
+        <rect x="98" y="106" width="10" height="6" rx="1.5"/>
+      </g>
+    </g>
+    <!-- 1px inner stroke for definition -->
+    <rect x="6.5" y="6.5" width="115" height="115" rx="21.5" ry="21.5" fill="none" stroke="#000000" stroke-opacity="0.18"/>
+  </g>
+
+  <!-- Disk + play triangle, evokes a media player -->
+  <g filter="url(#dropShadow)">
+    <circle cx="64" cy="68" r="32" fill="url(#diskGradient)"/>
+    <circle cx="64" cy="68" r="32" fill="url(#diskRing)"/>
+    <path d="M55 53.5 L82 68 L55 82.5 Z" fill="url(#playGradient)" stroke="#5b3fb8" stroke-opacity="0.25" stroke-width="0.6" stroke-linejoin="round"/>
+  </g>
+</svg>

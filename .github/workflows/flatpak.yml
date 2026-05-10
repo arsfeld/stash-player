@@ -1,0 +1,51 @@
+name: Flatpak
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Flatpak bundle
+    runs-on: ubuntu-latest
+    container:
+      # Matches runtime-version: '48' in the manifest.
+      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      options: --privileged
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: stash-player.flatpak
+          manifest-path: build-aux/one.arsfeld.stash-player.yml
+          cache-key: flatpak-builder-${{ hashFiles('Cargo.lock', 'build-aux/one.arsfeld.stash-player.yml') }}
+          # Run appstream + desktop file validation as part of the build.
+          verbose: false
+
+  release:
+    name: Attach bundle to GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: stash-player.flatpak
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: stash-player.flatpak
+          generate_release_notes: true

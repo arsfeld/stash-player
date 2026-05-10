@@ -1,0 +1,204 @@
+/* Library grid */
+
+.scene-card {
+    border-radius: 12px;
+    background-color: @card_bg_color;
+    transition: background-color 120ms ease;
+}
+
+.scene-card:hover {
+    background-color: shade(@card_bg_color, 1.08);
+}
+
+.scene-card .scene-thumb {
+    background-color: shade(@card_bg_color, 0.88);
+    background-image: -gtk-icontheme("video-x-generic-symbolic");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 32px;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    min-height: 135px;
+}
+
+.scene-card .scene-thumb picture {
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+}
+
+.scene-card .scene-body {
+    padding: 10px 12px 12px 12px;
+}
+
+.scene-card .scene-title {
+    font-weight: 600;
+}
+
+.scene-card .scene-meta {
+    opacity: 0.65;
+    font-size: 0.85em;
+}
+
+/* Scene detail page */
+
+.rating-badge {
+    background-color: alpha(black, 0.6);
+    color: #ffffff;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 4px 12px;
+}
+
+.performer-chip {
+    background-color: @card_bg_color;
+    border-radius: 999px;
+    padding: 4px 14px 4px 4px;
+}
+
+/* Scene page header bar floats over the video. We mirror the OSD's
+   top-down dark gradient so back/title controls stay readable against
+   any frame, while the area below the bar fades cleanly into the
+   black letterbox of the player. */
+.scene-headerbar {
+    background: linear-gradient(
+        to bottom,
+        alpha(black, 0.78) 0%,
+        alpha(black, 0.45) 65%,
+        alpha(black, 0.0) 100%
+    );
+    color: #ffffff;
+    box-shadow: none;
+    border: none;
+    padding-bottom: 18px;
+}
+
+.scene-headerbar windowhandle,
+.scene-headerbar headerbar {
+    background: transparent;
+    box-shadow: none;
+}
+
+.scene-headerbar button {
+    color: #ffffff;
+    background: transparent;
+    box-shadow: none;
+    border: none;
+}
+
+.scene-headerbar button:hover {
+    background-color: alpha(white, 0.16);
+}
+
+/* Inline video player + OSD */
+
+.video-player {
+    background-color: black;
+    min-height: 540px;
+}
+
+.video-surface {
+    background-color: black;
+}
+
+/* Bottom OSD bar — gradient fade + libadwaita "osd" feel.
+   We don't use the built-in `.osd` class because that paints a uniform
+   tinted slab; here we want the controls to read clearly over a video
+   regardless of its content, while the area above the bar stays clear.
+*/
+.video-osd {
+    color: #ffffff;
+    background: linear-gradient(
+        to bottom,
+        alpha(black, 0.0) 0%,
+        alpha(black, 0.45) 35%,
+        alpha(black, 0.78) 100%
+    );
+    padding-top: 32px;
+}
+
+.video-osd button {
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    min-width: 36px;
+    min-height: 36px;
+}
+
+.video-osd button:hover {
+    background-color: alpha(white, 0.16);
+}
+
+.video-osd button:active {
+    background-color: alpha(white, 0.24);
+}
+
+.video-osd button.video-osd-primary {
+    background-color: alpha(white, 0.18);
+    min-width: 42px;
+    min-height: 42px;
+}
+
+.video-osd button.video-osd-primary:hover {
+    background-color: alpha(white, 0.28);
+}
+
+.video-osd-time {
+    color: #ffffff;
+    font-feature-settings: "tnum";
+    font-size: 0.92em;
+    opacity: 0.9;
+}
+
+/* Slider styling — slim track, accent-coloured fill, pill thumb. */
+.video-osd-seek trough,
+.video-osd-volume trough {
+    background-color: alpha(white, 0.22);
+    min-height: 4px;
+    border-radius: 999px;
+}
+
+.video-osd-seek highlight,
+.video-osd-volume highlight {
+    background-color: @accent_color;
+    border-radius: 999px;
+    min-height: 4px;
+}
+
+.video-osd-seek slider,
+.video-osd-volume slider {
+    background-color: #ffffff;
+    border: none;
+    box-shadow: 0 1px 4px alpha(black, 0.4);
+    min-width: 14px;
+    min-height: 14px;
+    margin: -6px;
+    border-radius: 999px;
+}
+
+.video-osd-seek:hover slider,
+.video-osd-volume:hover slider {
+    background-color: @accent_color;
+}
+
+/* Big centred play/pause flash that fires when toggling. */
+.video-center-indicator {
+    color: #ffffff;
+    background-color: alpha(black, 0.45);
+    border-radius: 999px;
+    padding: 24px;
+    -gtk-icon-shadow: 0 2px 6px alpha(black, 0.6);
+    transition: opacity 200ms ease, transform 200ms ease;
+    opacity: 0.0;
+    transform: scale(0.85);
+}
+
+.video-center-indicator-flash {
+    animation: video-center-flash 520ms cubic-bezier(0.2, 0.6, 0.2, 1.0);
+}
+
+@keyframes video-center-flash {
+    0%   { opacity: 0.0; transform: scale(0.7); }
+    20%  { opacity: 1.0; transform: scale(1.0); }
+    100% { opacity: 0.0; transform: scale(1.25); }
+}

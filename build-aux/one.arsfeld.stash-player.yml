@@ -1,0 +1,59 @@
+app-id: one.arsfeld.stash-player
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: stash-player
+
+finish-args:
+  # Display
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # Network — talks to Stash over HTTP(S) and announces/talks to Chromecast.
+  - --share=network
+  # Audio
+  - --socket=pulseaudio
+  # Hardware video acceleration via VA-API
+  - --device=dri
+  # libsecret / GNOME keyring for the Stash API key
+  - --talk-name=org.freedesktop.secrets
+  # Persist app config + thumbnail cache outside the sandbox
+  - --filesystem=xdg-config/stash-player:create
+  - --filesystem=xdg-cache/stash-player:create
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    # Cargo needs to fetch crates from crates.io during the build. This
+    # is allowed in personal/CI builds; Flathub submissions would have to
+    # vendor sources offline (see flatpak-cargo-generator).
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/stash-player/cargo
+    RUST_BACKTRACE: '1'
+
+modules:
+  - name: stash-player
+    buildsystem: simple
+    build-commands:
+      - cargo build --release -p stash-player-ui --locked --manifest-path Cargo.toml
+      - install -Dm755 target/release/stash-player-ui /app/bin/stash-player
+      - install -Dm644 data/one.arsfeld.stash-player.desktop
+        /app/share/applications/one.arsfeld.stash-player.desktop
+      - install -Dm644 data/one.arsfeld.stash-player.metainfo.xml
+        /app/share/metainfo/one.arsfeld.stash-player.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/one.arsfeld.stash-player.svg
+        /app/share/icons/hicolor/scalable/apps/one.arsfeld.stash-player.svg
+      - install -Dm644 data/icons/hicolor/symbolic/apps/one.arsfeld.stash-player-symbolic.svg
+        /app/share/icons/hicolor/symbolic/apps/one.arsfeld.stash-player-symbolic.svg
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - target
+          - .direnv
+          - .env
+          - .github

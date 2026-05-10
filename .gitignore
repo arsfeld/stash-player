@@ -1,0 +1,11 @@
+/target
+/result
+/.direnv
+*.swp
+.DS_Store
+.env
+.env.local
+/.flatpak-builder
+/build-aux/repo
+/build-aux/build-dir
+*.flatpak

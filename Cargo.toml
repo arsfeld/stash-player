@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Alexandre Rosenfeld"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
