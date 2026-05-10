@@ -15,7 +15,7 @@ cargo run -p stash-player-ui
 
 # Local Flatpak build via the flake (cleans, exports, installs as user):
 nix run .#flatpak
-flatpak run one.arsfeld.stash-player
+flatpak run dev.arsfeld.stash-player
 ```
 
 `STASH_URL` / `STASH_API_KEY` env vars (loaded via `.env` for dev convenience) override the persisted config + keyring entry on launch (see `crates/stash-player-ui/src/main.rs`). The keyring is the real source of truth for the API key.
@@ -142,7 +142,7 @@ Async work goes through `ComponentSender::oneshot_command` (one `tokio` task per
 
 ## Flatpak notes
 
-- Manifest at `build-aux/one.arsfeld.stash-player.yml` targets `org.gnome.Platform` 50.
+- Manifest at `build-aux/dev.arsfeld.stash-player.yml` targets `org.gnome.Platform` 50.
 - Pulls `org.freedesktop.Platform.codecs-extra` (25.08-extra) so H.264 / H.265 / AAC / AC-3 actually play — the freedesktop runtime ships `gst-libav` but not the encumbered codec libs.
 - Local Flatpak builds need network access (`--share=network`) so cargo can fetch crates. Flathub submission would require offline-vendored sources via `flatpak-cargo-generator`.
 - Release tagging (`v*`) triggers `.github/workflows/flatpak.yml`, which attaches `stash-player.flatpak` to the GitHub release.

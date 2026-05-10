@@ -42,8 +42,8 @@ fn main() {
 
     gst::init().expect("failed to initialize GStreamer");
 
-    let app = RelmApp::new("one.arsfeld.stash-player");
-    relm4::gtk::Window::set_default_icon_name("one.arsfeld.stash-player");
+    let app = RelmApp::new("dev.arsfeld.stash-player");
+    relm4::gtk::Window::set_default_icon_name("dev.arsfeld.stash-player");
     install_css();
     icons::install();
     app.run::<AppModel>(AppInit {

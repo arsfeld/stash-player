@@ -47,7 +47,7 @@ curl -L -o stash-player.flatpak \
   https://github.com/arsfeld/stash-player/releases/latest/download/stash-player.flatpak
 
 flatpak install --user stash-player.flatpak
-flatpak run one.arsfeld.stash-player
+flatpak run dev.arsfeld.stash-player
 ```
 
 The bundle ships the binary and assets only; the GNOME 50 runtime is pulled
@@ -131,12 +131,12 @@ For a local Flatpak build (rather than the prebuilt bundle linked above):
 ```sh
 # With the Nix flake — clean build + install in one step:
 nix run .#flatpak
-flatpak run one.arsfeld.stash-player
+flatpak run dev.arsfeld.stash-player
 
 # Or directly inside `nix develop` (or with flatpak-builder + appstreamcli on
 # PATH):
 flatpak-builder --user --install --force-clean --install-deps-from=flathub \
-  --repo=build-aux/repo build-aux/build-dir build-aux/one.arsfeld.stash-player.yml
+  --repo=build-aux/repo build-aux/build-dir build-aux/dev.arsfeld.stash-player.yml
 ```
 
 ### macOS

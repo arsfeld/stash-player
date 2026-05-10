@@ -33,7 +33,7 @@
       # Linux: existing GTK dev shell + Flatpak builder app.
       # ------------------------------------------------------------------
 
-      manifest = "build-aux/one.arsfeld.stash-player.yml";
+      manifest = "build-aux/dev.arsfeld.stash-player.yml";
       buildDir = "build-aux/build-dir";
       repoDir  = "build-aux/repo";
 

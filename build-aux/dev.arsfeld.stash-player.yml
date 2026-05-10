@@ -1,4 +1,4 @@
-app-id: one.arsfeld.stash-player
+app-id: dev.arsfeld.stash-player
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -55,14 +55,14 @@ modules:
       # Mountpoint for the codecs-extra extension declared at the top level.
       # Must exist at install time or flatpak refuses to mount the extension.
       - install -dm755 /app/lib/codecs-extra
-      - install -Dm644 data/one.arsfeld.stash-player.desktop
-        /app/share/applications/one.arsfeld.stash-player.desktop
-      - install -Dm644 data/one.arsfeld.stash-player.metainfo.xml
-        /app/share/metainfo/one.arsfeld.stash-player.metainfo.xml
-      - install -Dm644 data/icons/hicolor/scalable/apps/one.arsfeld.stash-player.svg
-        /app/share/icons/hicolor/scalable/apps/one.arsfeld.stash-player.svg
-      - install -Dm644 data/icons/hicolor/symbolic/apps/one.arsfeld.stash-player-symbolic.svg
-        /app/share/icons/hicolor/symbolic/apps/one.arsfeld.stash-player-symbolic.svg
+      - install -Dm644 data/dev.arsfeld.stash-player.desktop
+        /app/share/applications/dev.arsfeld.stash-player.desktop
+      - install -Dm644 data/dev.arsfeld.stash-player.metainfo.xml
+        /app/share/metainfo/dev.arsfeld.stash-player.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/dev.arsfeld.stash-player.svg
+        /app/share/icons/hicolor/scalable/apps/dev.arsfeld.stash-player.svg
+      - install -Dm644 data/icons/hicolor/symbolic/apps/dev.arsfeld.stash-player-symbolic.svg
+        /app/share/icons/hicolor/symbolic/apps/dev.arsfeld.stash-player-symbolic.svg
     sources:
       - type: dir
         path: ..
