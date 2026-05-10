@@ -42,7 +42,12 @@ jobs:
       - name: Download bundle artifact
         uses: actions/download-artifact@v4
         with:
-          name: stash-player.flatpak
+          # flatpak-builder uploads the bundle with an arch suffix
+          # (`<bundle-basename>-<arch>.flatpak`).
+          name: stash-player-x86_64.flatpak
+
+      - name: Rename for release
+        run: mv stash-player-x86_64.flatpak stash-player.flatpak
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
