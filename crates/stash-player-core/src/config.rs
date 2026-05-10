@@ -69,3 +69,44 @@ fn project_dirs() -> Result<ProjectDirs> {
 fn config_path() -> Result<PathBuf> {
     Ok(project_dirs()?.config_dir().join("config.toml"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_placeholder_url_and_autoplay_off() {
+        let c = Config::default();
+        assert_eq!(c.stash_url, DEFAULT_STASH_URL);
+        assert!(!c.autoplay);
+    }
+
+    #[test]
+    fn round_trips_through_toml() {
+        let original = Config {
+            stash_url: "https://stash.example.test".into(),
+            autoplay: true,
+        };
+        let text = toml::to_string_pretty(&original).unwrap();
+        let parsed: Config = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.stash_url, original.stash_url);
+        assert_eq!(parsed.autoplay, original.autoplay);
+    }
+
+    #[test]
+    fn tolerates_missing_autoplay_field() {
+        // Older config files (written before autoplay existed) only carry
+        // stash_url. #[serde(default)] should let them load without error.
+        let parsed: Config = toml::from_str(r#"stash_url = "https://x.test""#).unwrap();
+        assert_eq!(parsed.stash_url, "https://x.test");
+        assert!(!parsed.autoplay);
+    }
+
+    #[test]
+    fn rejects_config_missing_stash_url() {
+        // stash_url has no default and is the one piece of info we can't
+        // invent — surface a hard error instead of silently substituting.
+        let err = toml::from_str::<Config>(r#"autoplay = true"#).unwrap_err();
+        assert!(err.message().contains("stash_url"));
+    }
+}

@@ -15,3 +15,19 @@ fn project_dirs() -> Result<ProjectDirs, Error> {
 pub fn thumb_dir() -> Result<PathBuf, Error> {
     Ok(project_dirs()?.cache_dir().join("thumbs"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thumb_dir_lives_under_cache_dir_and_is_named_thumbs() {
+        let dir = thumb_dir().expect("XDG cache dir should resolve");
+        assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some("thumbs"));
+        let parent = dir.parent().unwrap();
+        // Parent should be the project's cache dir; assert by membership
+        // rather than exact path so this works on Linux/macOS/Windows.
+        let expected_parent = project_dirs().unwrap().cache_dir().to_owned();
+        assert_eq!(parent, expected_parent);
+    }
+}

@@ -287,3 +287,154 @@ pub(crate) fn find_scenes_variables(
         "scene_filter": serde_json::Value::Object(scene_filter),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_direction_toggles_round_trip() {
+        assert_eq!(SortDirection::Asc.toggled(), SortDirection::Desc);
+        assert_eq!(SortDirection::Desc.toggled(), SortDirection::Asc);
+        assert_eq!(SortDirection::default(), SortDirection::Desc);
+    }
+
+    #[test]
+    fn sort_keys_serialize_to_stash_strings() {
+        let pairs = [
+            (SortKey::Date, "date"),
+            (SortKey::Title, "title"),
+            (SortKey::Rating, "rating"),
+            (SortKey::PlayCount, "play_count"),
+            (SortKey::Duration, "duration"),
+            (SortKey::CreatedAt, "created_at"),
+            (SortKey::UpdatedAt, "updated_at"),
+            (SortKey::Random, "random"),
+        ];
+        for (k, expected) in pairs {
+            assert_eq!(k.as_stash(), expected);
+        }
+        assert_eq!(SortKey::ALL.len(), 8);
+    }
+
+    #[test]
+    fn variables_default_filter_omits_optional_fields() {
+        let f = SceneFilter::new();
+        let v = find_scenes_variables(&f, 1, 40);
+        assert_eq!(v["filter"]["page"], 1);
+        assert_eq!(v["filter"]["per_page"], 40);
+        assert_eq!(v["filter"]["sort"], "date");
+        assert_eq!(v["filter"]["direction"], "DESC");
+        assert!(v["filter"].get("q").is_none(), "no q without query");
+        assert_eq!(v["scene_filter"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn variables_query_string_populates_q() {
+        let mut f = SceneFilter::new();
+        f.query = Some("hello".into());
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["filter"]["q"], "hello");
+    }
+
+    #[test]
+    fn variables_empty_query_string_does_not_populate_q() {
+        // Empty searches shouldn't send `q: ""`, which Stash treats as a
+        // nontrivial filter and may slow down the query.
+        let mut f = SceneFilter::new();
+        f.query = Some(String::new());
+        let v = find_scenes_variables(&f, 1, 10);
+        assert!(v["filter"].get("q").is_none());
+    }
+
+    #[test]
+    fn variables_min_rating_uses_exclusive_greater_than() {
+        // Stash's IntCriterion GREATER_THAN is exclusive; the UI exposes
+        // 1–5 stars (20/40/60/80/100 on the wire). For a "≥ 60" filter
+        // we send GREATER_THAN 59.
+        let mut f = SceneFilter::new();
+        f.min_rating = Some(60);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["rating100"]["value"], 59);
+        assert_eq!(v["scene_filter"]["rating100"]["modifier"], "GREATER_THAN");
+    }
+
+    #[test]
+    fn variables_min_rating_zero_does_not_underflow() {
+        // The (min - 1) computation must clamp at 0 so we never send -1.
+        let mut f = SceneFilter::new();
+        f.min_rating = Some(0);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["rating100"]["value"], 0);
+    }
+
+    #[test]
+    fn variables_organized_passes_through() {
+        let mut f = SceneFilter::new();
+        f.organized = Some(false);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["organized"], false);
+    }
+
+    #[test]
+    fn variables_random_with_seed_emits_random_n() {
+        let mut f = SceneFilter::new();
+        f.sort = SortKey::Random;
+        f.random_seed = Some(2026);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["filter"]["sort"], "random_2026");
+    }
+
+    #[test]
+    fn variables_random_without_seed_falls_back_to_plain_random() {
+        let mut f = SceneFilter::new();
+        f.sort = SortKey::Random;
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["filter"]["sort"], "random");
+    }
+
+    #[test]
+    fn variables_seed_ignored_for_non_random_sorts() {
+        let mut f = SceneFilter::new();
+        f.sort = SortKey::Title;
+        f.random_seed = Some(99);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["filter"]["sort"], "title");
+    }
+
+    #[test]
+    fn scene_display_title_prefers_title_then_falls_back_to_id() {
+        let with_title = Scene {
+            id: "9".into(),
+            title: Some("Hello".into()),
+            details: None,
+            date: None,
+            rating100: None,
+            paths: ScenePaths {
+                screenshot: None,
+                preview: None,
+                sprite: None,
+                stream: None,
+                webp: None,
+            },
+            files: vec![],
+            studio: None,
+            performers: vec![],
+            resume_time: None,
+            play_count: None,
+            play_duration: None,
+        };
+        assert_eq!(with_title.display_title(), "Hello");
+
+        let mut empty = with_title.clone();
+        empty.title = Some(String::new());
+        // An empty-string title should fall through to the id-based label
+        // — otherwise the UI shows a blank row.
+        assert_eq!(empty.display_title(), "Scene 9");
+
+        let mut none = with_title.clone();
+        none.title = None;
+        assert_eq!(none.display_title(), "Scene 9");
+    }
+}
+
