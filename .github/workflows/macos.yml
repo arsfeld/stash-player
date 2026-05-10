@@ -24,9 +24,11 @@ env:
 jobs:
   build:
     name: Build StashPlayer.app
-    # macos-14 is Apple Silicon; matches the aarch64-apple-darwin staticlib
-    # that build-macos-xcframework.sh produces.
-    runs-on: macos-14
+    # macos-15 is Apple Silicon and ships Xcode 16.x — needed because
+    # xcodegen produces objectVersion=77 project files which Xcode 15
+    # (the macos-14 default) can't parse. Matches the aarch64-apple-darwin
+    # staticlib that build-macos-xcframework.sh produces.
+    runs-on: macos-15
     env:
       APP_PATH: build-aux/macos-derived/Build/Products/Release/StashPlayer.app
       ZIP_PATH: StashPlayer-macos-arm64.zip
