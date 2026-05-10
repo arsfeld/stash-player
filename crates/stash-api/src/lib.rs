@@ -171,6 +171,26 @@ impl Client {
         Ok(resp.scene_save_activity)
     }
 
+    /// Bump the O-counter for `id` by one. Returns the new counter value
+    /// the server settled on (so the UI doesn't have to assume +1 in the
+    /// face of races with another client).
+    pub async fn increment_o(&self, id: &str) -> Result<i32> {
+        let variables = serde_json::json!({ "id": id });
+        let resp: SceneIncrementOResponse = self
+            .graphql(SCENE_INCREMENT_O_MUTATION, &variables)
+            .await?;
+        Ok(resp.scene_increment_o)
+    }
+
+    /// Zero the O-counter for `id`. Returns the new counter value (0 on
+    /// success).
+    pub async fn reset_o(&self, id: &str) -> Result<i32> {
+        let variables = serde_json::json!({ "id": id });
+        let resp: SceneResetOResponse =
+            self.graphql(SCENE_RESET_O_MUTATION, &variables).await?;
+        Ok(resp.scene_reset_o)
+    }
+
     async fn graphql<T: for<'de> Deserialize<'de>>(
         &self,
         query: &str,
@@ -237,4 +257,28 @@ mutation SceneSaveActivity($id: ID!, $resume_time: Float, $playDuration: Float) 
 struct SceneSaveActivityResponse {
     #[serde(rename = "sceneSaveActivity")]
     scene_save_activity: bool,
+}
+
+const SCENE_INCREMENT_O_MUTATION: &str = r#"
+mutation SceneIncrementO($id: ID!) {
+  sceneIncrementO(id: $id)
+}
+"#;
+
+#[derive(Deserialize)]
+struct SceneIncrementOResponse {
+    #[serde(rename = "sceneIncrementO")]
+    scene_increment_o: i32,
+}
+
+const SCENE_RESET_O_MUTATION: &str = r#"
+mutation SceneResetO($id: ID!) {
+  sceneResetO(id: $id)
+}
+"#;
+
+#[derive(Deserialize)]
+struct SceneResetOResponse {
+    #[serde(rename = "sceneResetO")]
+    scene_reset_o: i32,
 }

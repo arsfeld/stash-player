@@ -63,6 +63,10 @@ pub(crate) enum SceneMsg {
     },
     /// Fade the floating header bar in/out alongside the player's OSD.
     SetHeaderRevealed(bool),
+    /// Bump the scene's O-counter by one.
+    IncrementO,
+    /// Zero the scene's O-counter.
+    ResetO,
 }
 
 #[derive(Debug)]
@@ -92,6 +96,19 @@ pub(crate) enum SceneCmd {
         scene_id: String,
         result: Result<bool, String>,
     },
+    /// Result of a `sceneIncrementO` / `sceneResetO` mutation. The new
+    /// counter value the server settled on; we ignore late results that
+    /// don't match the currently-loaded scene.
+    OUpdated {
+        scene_id: String,
+        result: Result<i32, String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OMutation {
+    Increment,
+    Reset,
 }
 
 #[relm4::component(pub)]
@@ -241,6 +258,43 @@ impl Component for ScenePage {
                                                 set_active: model.autoplay,
                                                 connect_active_notify[sender] => move |s| {
                                                     sender.input(SceneMsg::AutoplayToggled(s.is_active()));
+                                                },
+                                            },
+
+                                            gtk::Box {
+                                                add_css_class: "linked",
+                                                set_valign: gtk::Align::Center,
+                                                set_margin_start: 4,
+                                                #[watch]
+                                                set_sensitive: matches!(model.state, State::Loaded(_)),
+
+                                                gtk::Button {
+                                                    set_tooltip_text: Some("Bump O-counter"),
+                                                    connect_clicked => SceneMsg::IncrementO,
+
+                                                    #[wrap(Some)]
+                                                    set_child = &gtk::Box {
+                                                        set_orientation: gtk::Orientation::Horizontal,
+                                                        set_spacing: 6,
+                                                        set_valign: gtk::Align::Center,
+
+                                                        gtk::Image {
+                                                            set_icon_name: Some("o-counter-symbolic"),
+                                                            set_pixel_size: 14,
+                                                        },
+
+                                                        #[name = "o_count_label"]
+                                                        gtk::Label {
+                                                            add_css_class: "o-counter-pill",
+                                                        },
+                                                    },
+                                                },
+
+                                                #[name = "o_reset_btn"]
+                                                gtk::Button {
+                                                    set_icon_name: "edit-clear-symbolic",
+                                                    set_tooltip_text: Some("Reset O-counter to 0"),
+                                                    connect_clicked => SceneMsg::ResetO,
                                                 },
                                             },
 
@@ -429,6 +483,8 @@ impl Component for ScenePage {
             SceneMsg::SetHeaderRevealed(on) => {
                 widgets.toolbar_view.set_reveal_top_bars(on);
             }
+            SceneMsg::IncrementO => self.spawn_o_mutation(&sender, OMutation::Increment),
+            SceneMsg::ResetO => self.spawn_o_mutation(&sender, OMutation::Reset),
             SceneMsg::SaveActivity {
                 resume_secs,
                 play_duration_secs,
@@ -525,6 +581,20 @@ impl Component for ScenePage {
                 Ok(_) => tracing::debug!("activity saved for scene {scene_id}"),
                 Err(e) => tracing::warn!("activity save failed for scene {scene_id}: {e}"),
             },
+            SceneCmd::OUpdated { scene_id, result } => match result {
+                Ok(new_count) => {
+                    // Drop late results that don't match the currently
+                    // loaded scene — the user may have hit prev/next
+                    // before the round-trip landed.
+                    if scene_id == self.scene_id
+                        && let State::Loaded(scene) = &mut self.state
+                    {
+                        scene.o_counter = Some(new_count);
+                        update_o_widgets(widgets, new_count);
+                    }
+                }
+                Err(e) => tracing::warn!("o-counter update failed for scene {scene_id}: {e}"),
+            },
         }
         self.update_view(widgets, sender);
     }
@@ -563,6 +633,24 @@ impl ScenePage {
                 .as_ref()
                 .map(|c| c.total < 0 || (c.index as i64) + 1 < c.total)
                 .unwrap_or(false)
+    }
+
+    fn spawn_o_mutation(&self, sender: &ComponentSender<Self>, mutation: OMutation) {
+        if !matches!(self.state, State::Loaded(_)) {
+            return;
+        }
+        let client = self.client.clone();
+        let scene_id = self.scene_id.clone();
+        sender.oneshot_command(async move {
+            let result = match mutation {
+                OMutation::Increment => client.increment_o(&scene_id).await,
+                OMutation::Reset => client.reset_o(&scene_id).await,
+            };
+            SceneCmd::OUpdated {
+                scene_id,
+                result: result.map_err(|e| e.to_string()),
+            }
+        });
     }
 
     fn start_navigate(
@@ -634,6 +722,8 @@ fn populate_scene(widgets: &<ScenePage as Component>::Widgets, scene: &Scene) {
         widgets.rating_badge.set_visible(false);
     }
 
+    update_o_widgets(widgets, scene.o_counter.unwrap_or(0));
+
     populate_performers(&widgets.performers_box, &scene.performers);
     widgets
         .performers_section
@@ -661,6 +751,13 @@ fn build_stream_url(client: &stash_api::Client, scene: &Scene) -> Option<String>
             None
         }
     }
+}
+
+fn update_o_widgets(widgets: &<ScenePage as Component>::Widgets, count: i32) {
+    widgets.o_count_label.set_label(&count.to_string());
+    // Reset is a no-op when the count is already 0; hide the button so
+    // the action group doesn't carry a dead control.
+    widgets.o_reset_btn.set_visible(count > 0);
 }
 
 fn populate_performers(container: &gtk::Box, performers: &[PerformerRef]) {

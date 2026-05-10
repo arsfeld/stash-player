@@ -69,6 +69,7 @@ pub(crate) enum LibraryMsg {
     SetDirection(SortDirection),
     OrganizedChanged(bool),
     MinRatingChanged(u32),
+    HideTrackedChanged(bool),
     ChildActivatedAt(u32),
     OpenSettings,
     PlayRandom,
@@ -254,6 +255,28 @@ impl Component for LibraryPage {
                             sender.input(LibraryMsg::MinRatingChanged(dd.selected()));
                         },
                     },
+
+                    gtk::Separator {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_margin_start: 6,
+                        set_margin_end: 6,
+                    },
+
+                    gtk::Switch {
+                        set_valign: gtk::Align::Center,
+                        set_tooltip_text: Some("Show only scenes with O-counter = 0"),
+                        #[watch]
+                        set_active: model.filter.hide_tracked,
+                        connect_active_notify[sender] => move |sw| {
+                            sender.input(LibraryMsg::HideTrackedChanged(sw.is_active()));
+                        },
+                    },
+
+                    gtk::Image {
+                        set_icon_name: Some("o-counter-symbolic"),
+                        set_pixel_size: 16,
+                        set_tooltip_text: Some("O-counter filter"),
+                    },
                 },
 
                 #[wrap(Some)]
@@ -363,7 +386,12 @@ impl Component for LibraryPage {
     ) -> ComponentParts<Self> {
         let model = LibraryPage {
             client: init.client,
-            filter: SceneFilter::new(),
+            // Default view: untracked-only. The user can toggle this off
+            // from the toolbar; we don't persist the choice across launches.
+            filter: SceneFilter {
+                hide_tracked: true,
+                ..SceneFilter::new()
+            },
             page: 0,
             total: 0,
             loaded: 0,
@@ -450,6 +478,13 @@ impl Component for LibraryPage {
                     self.fetch_next_page(&sender);
                 }
             }
+            LibraryMsg::HideTrackedChanged(active) => {
+                if active != self.filter.hide_tracked {
+                    self.filter.hide_tracked = active;
+                    self.reset(widgets);
+                    self.fetch_next_page(&sender);
+                }
+            }
             LibraryMsg::ChildActivatedAt(index) => {
                 let id = self
                     .scene_ids
@@ -468,28 +503,7 @@ impl Component for LibraryPage {
             LibraryMsg::OpenSettings => {
                 let _ = sender.output(LibraryOutput::OpenSettings);
             }
-            LibraryMsg::PlayRandom => {
-                let Some(client) = self.client.clone() else { return };
-                let mut filter = self.filter.clone();
-                filter.sort = SortKey::Random;
-                // Always reseed so each click produces a fresh order.
-                filter.random_seed = Some(fresh_seed());
-                let req_filter = filter.clone();
-                sender.oneshot_command(async move {
-                    let result = client
-                        .find_scenes(&req_filter, 1, 1)
-                        .await
-                        .map(|p| {
-                            Box::new(RandomPick {
-                                scene: p.scenes.into_iter().next(),
-                                total: p.count,
-                                filter: req_filter,
-                            })
-                        })
-                        .map_err(|e| e.to_string());
-                    LibraryCmd::Random(result)
-                });
-            }
+            LibraryMsg::PlayRandom => self.spawn_play_random(&sender),
         }
         self.update_view(widgets, sender);
     }
@@ -578,6 +592,29 @@ impl LibraryPage {
         } else {
             None
         };
+    }
+
+    fn spawn_play_random(&self, sender: &ComponentSender<Self>) {
+        let Some(client) = self.client.clone() else { return };
+        let mut filter = self.filter.clone();
+        filter.sort = SortKey::Random;
+        // Always reseed so each click produces a fresh order.
+        filter.random_seed = Some(fresh_seed());
+        let req_filter = filter.clone();
+        sender.oneshot_command(async move {
+            let result = client
+                .find_scenes(&req_filter, 1, 1)
+                .await
+                .map(|p| {
+                    Box::new(RandomPick {
+                        scene: p.scenes.into_iter().next(),
+                        total: p.count,
+                        filter: req_filter,
+                    })
+                })
+                .map_err(|e| e.to_string());
+            LibraryCmd::Random(result)
+        });
     }
 
     fn fetch_next_page(&mut self, sender: &ComponentSender<Self>) {
@@ -682,6 +719,10 @@ impl LibraryPage {
             body.append(&meta_label);
         }
 
+        if let Some(badge) = o_counter_badge(scene.o_counter.unwrap_or(0)) {
+            body.append(&badge);
+        }
+
         card.append(&body);
 
         let child = gtk::FlowBoxChild::builder()
@@ -712,6 +753,29 @@ impl LibraryPage {
             });
         }
     }
+}
+
+/// Drop-icon + count badge shown on the library card when a scene has
+/// been tracked at least once. Returns `None` for `count == 0` so the
+/// caller can skip appending entirely.
+fn o_counter_badge(count: i32) -> Option<gtk::Box> {
+    if count <= 0 {
+        return None;
+    }
+    let badge = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(4)
+        .halign(gtk::Align::Start)
+        .css_classes(["o-counter-badge"])
+        .build();
+    badge.append(
+        &gtk::Image::builder()
+            .icon_name("o-counter-symbolic")
+            .pixel_size(12)
+            .build(),
+    );
+    badge.append(&gtk::Label::builder().label(count.to_string()).build());
+    Some(badge)
 }
 
 fn empty_thumbnail(scene_id: String) -> LibraryCmd {

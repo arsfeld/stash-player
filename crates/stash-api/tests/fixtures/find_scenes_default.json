@@ -12,6 +12,7 @@
           "resume_time": 120.5,
           "play_count": 2,
           "play_duration": 300.0,
+          "o_counter": 3,
           "paths": {
             "screenshot": "https://stash.example.test/scene/1001/screenshot?t=1700000000",
             "preview": "https://stash.example.test/scene/1001/preview",
@@ -52,6 +53,7 @@
           "resume_time": 0,
           "play_count": 0,
           "play_duration": 0,
+          "o_counter": 0,
           "paths": {
             "screenshot": "https://stash.example.test/scene/1002/screenshot?t=1700000001",
             "preview": null,

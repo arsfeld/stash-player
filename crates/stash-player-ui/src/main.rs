@@ -6,6 +6,7 @@ use relm4::RelmApp;
 use stash_player_core::Config;
 
 mod app;
+mod icons;
 mod pages;
 mod widgets;
 
@@ -44,6 +45,7 @@ fn main() {
     let app = RelmApp::new("one.arsfeld.stash-player");
     relm4::gtk::Window::set_default_icon_name("one.arsfeld.stash-player");
     install_css();
+    icons::install();
     app.run::<AppModel>(AppInit {
         config,
         api_key_override,

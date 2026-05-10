@@ -150,10 +150,12 @@ relm4 components, top-down:
 2. **Library browse — done (modulo polish).** Scene query hand-rolled in
    `stash-api::find_scenes`; UI navigates between Library / Scene /
    Settings via `AdwNavigationView`. The library is a `gtk::FlowBox` of
-   card cells (thumbnail + title + studio · duration), with infinite
-   scroll triggered on `edge-reached` (24 scenes per fetch) and a top
-   toolbar carrying the search entry, sort dropdown, asc/desc toggle,
-   organized switch, min-rating filter, and a "play random" shortcut
+   card cells (thumbnail + title + studio · duration + an "O n" pill
+   when the counter is non-zero), with infinite scroll triggered on
+   `edge-reached` (24 scenes per fetch) and a top toolbar carrying the
+   search entry, sort dropdown, asc/desc toggle, organized switch,
+   min-rating filter, hide-tracked switch (default ON — opens to
+   `o_counter = 0` only), and a "play random" shortcut
    (uses Stash's seeded `random_<seed>` sort so paging stays stable).
    Stash's screenshot endpoint serves a mix of JPEG and WebP, so
    thumbnails are decoded + cropped + resized with the `image` crate to
@@ -197,3 +199,7 @@ relm4 components, top-down:
 - **Activity sync** — yes, we write back. Resume position throttled to
   ~10s and flushed on pause / seek / close; play count increments via
   `sceneSaveActivity`'s `playDuration` parameter.
+- **O-counter support** — shipped. Scene page exposes increment + reset
+  buttons (`sceneIncrementO` / `sceneResetO`); library has a Hide-tracked
+  toggle (default ON) that filters `o_counter = 0` so the user opens to
+  scenes they haven't tracked yet.

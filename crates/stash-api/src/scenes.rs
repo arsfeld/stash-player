@@ -86,6 +86,9 @@ pub struct SceneFilter {
     /// `Some(true)` keeps only organized scenes, `Some(false)` keeps only
     /// unorganized; `None` doesn't filter on this field.
     pub organized: Option<bool>,
+    /// When true, restrict results to `o_counter = 0` (untracked scenes).
+    /// Maps to Stash's `IntCriterionInput { value: 0, modifier: EQUALS }`.
+    pub hide_tracked: bool,
     /// Seed used when `sort == Random` so that paging and prev/next produce
     /// a stable order across requests. Stash treats `random_<seed>` as a
     /// seeded random sort. Ignored when sort isn't Random.
@@ -100,6 +103,7 @@ impl SceneFilter {
             direction: SortDirection::Desc,
             min_rating: None,
             organized: None,
+            hide_tracked: false,
             random_seed: None,
         }
     }
@@ -135,6 +139,10 @@ pub struct Scene {
     /// `playDuration` deltas we send via `sceneSaveActivity`.
     #[serde(default)]
     pub play_duration: Option<f64>,
+    /// Stash's per-scene "O counter" tally. Bumped via `sceneIncrementO`,
+    /// zeroed via `sceneResetO`. Absent or zero means "untracked".
+    #[serde(default)]
+    pub o_counter: Option<i32>,
 }
 
 impl Scene {
@@ -197,6 +205,7 @@ query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
       resume_time
       play_count
       play_duration
+      o_counter
       paths { screenshot preview sprite stream webp }
       files { duration width height video_codec frame_rate }
       studio { id name }
@@ -223,6 +232,7 @@ query FindScene($id: ID!) {
     resume_time
     play_count
     play_duration
+    o_counter
     paths { screenshot preview sprite stream webp }
     files { duration width height video_codec frame_rate }
     studio { id name }
@@ -275,6 +285,15 @@ pub(crate) fn find_scenes_variables(
     }
     if let Some(org) = filter.organized {
         scene_filter.insert("organized".into(), serde_json::Value::Bool(org));
+    }
+    if filter.hide_tracked {
+        scene_filter.insert(
+            "o_counter".into(),
+            serde_json::json!({
+                "value": 0,
+                "modifier": "EQUALS",
+            }),
+        );
     }
 
     serde_json::json!({
@@ -372,6 +391,23 @@ mod tests {
     }
 
     #[test]
+    fn variables_default_filter_omits_o_counter() {
+        let f = SceneFilter::new();
+        let v = find_scenes_variables(&f, 1, 10);
+        assert!(v["scene_filter"].get("o_counter").is_none());
+    }
+
+    #[test]
+    fn variables_hide_tracked_filters_o_counter_zero() {
+        // Stash IntCriterion EQUALS with value 0 == "untracked scenes only".
+        let mut f = SceneFilter::new();
+        f.hide_tracked = true;
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["o_counter"]["value"], 0);
+        assert_eq!(v["scene_filter"]["o_counter"]["modifier"], "EQUALS");
+    }
+
+    #[test]
     fn variables_random_with_seed_emits_random_n() {
         let mut f = SceneFilter::new();
         f.sort = SortKey::Random;
@@ -418,6 +454,7 @@ mod tests {
             resume_time: None,
             play_count: None,
             play_duration: None,
+            o_counter: None,
         };
         assert_eq!(with_title.display_title(), "Hello");
 

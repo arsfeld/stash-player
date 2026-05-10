@@ -74,6 +74,13 @@ fn find_scenes_default_full_shape() {
     assert_eq!(s.duration_seconds(), Some(1800.0));
     assert_eq!(s.files[0].video_codec.as_deref(), Some("h264"));
     assert!(s.paths.stream.as_deref().unwrap().contains("apikey="));
+    assert_eq!(s.o_counter, Some(3));
+
+    // Scene 3 (index 2) omits `o_counter` entirely, so #[serde(default)]
+    // should land it at None instead of erroring.
+    let s3 = &page.scenes[2];
+    assert_eq!(s3.id, "1003");
+    assert!(s3.o_counter.is_none());
 }
 
 #[test]

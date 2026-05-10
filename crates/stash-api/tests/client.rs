@@ -179,6 +179,48 @@ async fn save_scene_activity_serializes_optional_floats() {
 }
 
 #[tokio::test]
+async fn increment_o_returns_new_count_and_sends_id_variable() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fixture_json("scene_increment_o.json")),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "test-key").unwrap();
+    let new_count = client.increment_o("1001").await.unwrap();
+    assert_eq!(new_count, 4);
+
+    let req = &server.received_requests().await.unwrap()[0];
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+    assert!(body["query"].as_str().unwrap().contains("sceneIncrementO"));
+    assert_eq!(body["variables"]["id"], "1001");
+}
+
+#[tokio::test]
+async fn reset_o_returns_zero_and_sends_id_variable() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fixture_json("scene_reset_o.json")),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "test-key").unwrap();
+    let new_count = client.reset_o("1001").await.unwrap();
+    assert_eq!(new_count, 0);
+
+    let req = &server.received_requests().await.unwrap()[0];
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+    assert!(body["query"].as_str().unwrap().contains("sceneResetO"));
+    assert_eq!(body["variables"]["id"], "1001");
+}
+
+#[tokio::test]
 async fn empty_api_key_omits_header_but_request_still_reaches_server() {
     // Servers behind reverse proxies sometimes don't require auth; the
     // client should still build and send the request without an ApiKey

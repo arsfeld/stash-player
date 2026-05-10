@@ -16,6 +16,13 @@ pub fn thumb_dir() -> Result<PathBuf, Error> {
     Ok(project_dirs()?.cache_dir().join("thumbs"))
 }
 
+/// Directory we materialize bundled icons into at startup so GTK's
+/// `IconTheme` can pick them up via `add_search_path`. Layout follows the
+/// XDG icon-theme spec (`<root>/hicolor/scalable/actions/<name>.svg`).
+pub fn icon_root() -> Result<PathBuf, Error> {
+    Ok(project_dirs()?.cache_dir().join("icons"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

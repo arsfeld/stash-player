@@ -39,6 +39,34 @@
     font-size: 0.85em;
 }
 
+/* Drop-icon + count tally on cards with a non-zero O-counter. The badge
+   is a horizontal Box; tabular numerals keep it from jiggling as the
+   count grows. */
+.o-counter-badge {
+    margin-top: 4px;
+    padding: 1px 8px 1px 6px;
+    border-radius: 999px;
+    background-color: alpha(@accent_color, 0.18);
+    color: @accent_color;
+    font-size: 0.8em;
+    font-weight: 600;
+    font-feature-settings: "tnum";
+}
+
+.o-counter-badge image {
+    color: @accent_color;
+    -gtk-icon-size: 12px;
+}
+
+/* The count label that sits inside the increment button, right of the
+   drop icon. Tabular numerals + minimal extra padding so it reads as
+   one unit with the icon rather than as a floating chip. */
+.o-counter-pill {
+    font-feature-settings: "tnum";
+    font-weight: 600;
+    min-width: 1ch;
+}
+
 /* Scene detail page */
 
 .rating-badge {
