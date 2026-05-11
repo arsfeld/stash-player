@@ -12,7 +12,9 @@ Both frontends share the `stash-api` GraphQL client and `stash-player-core`
 config/secret/cache crates, so feature work lands once and shows up on both
 platforms.
 
-![Library view](docs/screenshots/library.png)
+![Library view — Linux](docs/screenshots/library.png)
+
+![Library view — macOS](docs/screenshots/macos-library.png)
 
 ## Features
 
