@@ -61,6 +61,7 @@ def scene(idx, sid, title, details, date, rating100, dur, w, h, codec, fps,
             "webp": None,
         },
         "files": [{
+            "path": f"/media/stash/{sid}_{title.lower().replace(' ', '_')}.mp4",
             "duration": dur,
             "width": w,
             "height": h,

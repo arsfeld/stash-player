@@ -13,7 +13,7 @@ enum ConnectionStatus: Equatable {
 /// reload triggers. It maps one-to-one to `FfiSceneFilter`.
 struct LibraryFilter: Hashable {
     var query: String = ""
-    var sort: FfiSortKey = .date
+    var sort: FfiSortKey = .createdAt
     var direction: FfiSortDirection = .desc
     /// Stash's rating100 scale (20/40/60/80/100). nil means "any rating".
     var minRating: Int32? = nil

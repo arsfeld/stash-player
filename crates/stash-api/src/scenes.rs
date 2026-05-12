@@ -24,12 +24,16 @@ impl SortDirection {
 /// returned by [`SortKey::as_stash`]; the human label by [`SortKey::label`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortKey {
-    #[default]
     Date,
     Title,
     Rating,
     PlayCount,
     Duration,
+    // Default to "Date added" (Stash's `created_at`) so newly imported
+    // scenes surface at the top of the library. Sorting by `date` — the
+    // scene's release/content metadata — buries unscraped imports at the
+    // bottom because their `date` is NULL.
+    #[default]
     CreatedAt,
     UpdatedAt,
     Random,
@@ -146,13 +150,22 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// Best-effort title for display. Falls back to the first file's basename
-    /// or the scene id when Stash has no metadata title.
+    /// Best-effort title for display. Falls back to the first file's
+    /// basename (extension stripped) — same fallback Stash's own UI shows
+    /// for untitled scenes — and to the scene id only when no file path is
+    /// available either.
     pub fn display_title(&self) -> String {
         if let Some(t) = self.title.as_deref()
             && !t.is_empty()
         {
             return t.to_owned();
+        }
+        if let Some(name) = self
+            .files
+            .iter()
+            .find_map(|f| f.path.as_deref().and_then(filename_stem))
+        {
+            return name;
         }
         format!("Scene {}", self.id)
     }
@@ -160,6 +173,22 @@ impl Scene {
     pub fn duration_seconds(&self) -> Option<f64> {
         self.files.first().and_then(|f| f.duration)
     }
+}
+
+/// Extract the basename (final path component) of `path`, with any trailing
+/// extension stripped. Returns `None` for empty paths or paths whose final
+/// component is empty (e.g. trailing separator). Handles both `/` and `\`
+/// so Windows-side Stash servers still produce useful labels.
+fn filename_stem(path: &str) -> Option<String> {
+    let basename = path.rsplit(['/', '\\']).next()?;
+    if basename.is_empty() {
+        return None;
+    }
+    let stem = match basename.rsplit_once('.') {
+        Some((stem, _ext)) if !stem.is_empty() => stem,
+        _ => basename,
+    };
+    Some(stem.to_owned())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -178,6 +207,11 @@ pub struct SceneFile {
     pub height: Option<i32>,
     pub video_codec: Option<String>,
     pub frame_rate: Option<f64>,
+    /// Absolute filesystem path Stash sees for this file. Used as the
+    /// `display_title` fallback when Stash has no scene title, matching
+    /// Stash's own UI behaviour.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,7 +241,7 @@ query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
       play_duration
       o_counter
       paths { screenshot preview sprite stream webp }
-      files { duration width height video_codec frame_rate }
+      files { path duration width height video_codec frame_rate }
       studio { id name }
       performers { id name }
     }
@@ -337,7 +371,7 @@ mod tests {
         let v = find_scenes_variables(&f, 1, 40);
         assert_eq!(v["filter"]["page"], 1);
         assert_eq!(v["filter"]["per_page"], 40);
-        assert_eq!(v["filter"]["sort"], "date");
+        assert_eq!(v["filter"]["sort"], "created_at");
         assert_eq!(v["filter"]["direction"], "DESC");
         assert!(v["filter"].get("q").is_none(), "no q without query");
         assert_eq!(v["scene_filter"], serde_json::json!({}));
@@ -434,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_display_title_prefers_title_then_falls_back_to_id() {
+    fn scene_display_title_prefers_title_then_filename_then_id() {
         let with_title = Scene {
             id: "9".into(),
             title: Some("Hello".into()),
@@ -460,13 +494,48 @@ mod tests {
 
         let mut empty = with_title.clone();
         empty.title = Some(String::new());
-        // An empty-string title should fall through to the id-based label
-        // — otherwise the UI shows a blank row.
+        // No file path and an empty-string title — fall through to the
+        // id-based label so the UI never shows a blank row.
         assert_eq!(empty.display_title(), "Scene 9");
 
         let mut none = with_title.clone();
         none.title = None;
         assert_eq!(none.display_title(), "Scene 9");
+
+        // With a file path the fallback prefers the basename (no
+        // extension) over the scene id, matching Stash's own UI.
+        let with_path = Scene {
+            files: vec![SceneFile {
+                duration: None,
+                width: None,
+                height: None,
+                video_codec: None,
+                frame_rate: None,
+                path: Some("/media/library/cool video.mp4".into()),
+            }],
+            title: None,
+            ..with_title.clone()
+        };
+        assert_eq!(with_path.display_title(), "cool video");
+    }
+
+    #[test]
+    fn filename_stem_handles_common_path_shapes() {
+        assert_eq!(filename_stem("/a/b/c.mp4").as_deref(), Some("c"));
+        assert_eq!(filename_stem("c.mp4").as_deref(), Some("c"));
+        // Backslash separator (Windows-side Stash servers).
+        assert_eq!(
+            filename_stem(r"C:\videos\clip 01.mkv").as_deref(),
+            Some("clip 01"),
+        );
+        // No extension → keep the whole basename.
+        assert_eq!(filename_stem("/a/b/README").as_deref(), Some("README"));
+        // Dotfile-style names: nothing before the dot, so don't strip.
+        assert_eq!(filename_stem("/a/b/.hidden").as_deref(), Some(".hidden"));
+        // Empty / trailing-separator cases stay None so the caller can
+        // fall through to the id-based label.
+        assert!(filename_stem("").is_none());
+        assert!(filename_stem("/a/b/").is_none());
     }
 }
 

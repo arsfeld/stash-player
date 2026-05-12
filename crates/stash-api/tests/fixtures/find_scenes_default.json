@@ -22,6 +22,7 @@
           },
           "files": [
             {
+              "path": "/media/library/sample_alpha.mp4",
               "duration": 1800.0,
               "width": 1920,
               "height": 1080,
