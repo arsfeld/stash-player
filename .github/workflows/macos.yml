@@ -44,7 +44,17 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: macos
+          # Bumped from `macos` after the previous cache poisoned
+          # ~/.cargo/bin (see cache-bin note below). Bump again if the
+          # restore ever lands a broken cargo shim.
+          shared-key: macos-v2
+          # Don't cache ~/.cargo/bin — rustup's shim binaries are
+          # hardlinks to a single `rustup-init`, and tar restores them
+          # as independent copies. The restored `cargo` then runs as
+          # rustup-init and rejects `cargo build` with "unexpected
+          # argument 'build'". The runner re-installs rustup each job
+          # anyway, so there's nothing to gain from caching this dir.
+          cache-bin: "false"
 
       - name: Install xcodegen
         run: brew install xcodegen
