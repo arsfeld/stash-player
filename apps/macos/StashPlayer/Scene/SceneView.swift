@@ -2,6 +2,9 @@ import SwiftUI
 import AVKit
 import AVFoundation
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "dev.arsfeld.stash-player", category: "SceneView")
 
 /// How often to flush a partial activity update to Stash while playing.
 /// Matches the GTK app's ~10s throttle.
@@ -28,6 +31,7 @@ struct SceneView: View {
     @State private var accumulatedDelta: Double = 0
     @State private var lastFlushAt: Date = .distantPast
     @State private var rateObserver: NSKeyValueObservation?
+    @State private var statusObserver: NSKeyValueObservation?
     @State private var periodicToken: Any?
 
     @State private var liveOCount: Int32?
@@ -219,10 +223,12 @@ struct SceneView: View {
                 loadError = "Bad stream URL"
                 return
             }
+            logger.info("Loading stream: \(url.absoluteString.replacing(/apikey=[^&]+/, with: "apikey=***"), privacy: .public)")
             let player = AVPlayer(url: url)
             attachRateObserver(player)
             attachPeriodicObserver(player)
             attachEndObserver(player)
+            attachStatusObserver(player)
             avPlayer = player
             // Seed the OSD's known duration from FFI metadata so the
             // scrubber range isn't 0…1 for the first ~150ms while the
@@ -303,6 +309,22 @@ struct SceneView: View {
         }
     }
 
+    /// Watch for AVPlayerItem load failures. Without this observer,
+    /// playback errors (network, codec, auth) are silently swallowed and
+    /// the user sees a blank player forever.
+    private func attachStatusObserver(_ player: AVPlayer) {
+        guard let item = player.currentItem else { return }
+        statusObserver = item.observe(\.status, options: [.new]) { item, _ in
+            guard item.status == .failed else { return }
+            let msg = item.error?.localizedDescription ?? "Unknown playback error"
+            logger.error("AVPlayerItem failed: \(msg, privacy: .public)")
+            Task { @MainActor in
+                avPlayer = nil
+                loadError = msg
+            }
+        }
+    }
+
     @MainActor
     private func bindNowPlaying(player: AVPlayer) async {
         var thumb: NSImage? = nil
@@ -363,6 +385,8 @@ struct SceneView: View {
         }
         rateObserver?.invalidate()
         rateObserver = nil
+        statusObserver?.invalidate()
+        statusObserver = nil
         if let token = periodicToken {
             avPlayer?.removeTimeObserver(token)
             periodicToken = nil
