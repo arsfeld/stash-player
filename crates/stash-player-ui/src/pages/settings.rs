@@ -94,7 +94,7 @@ impl Component for SettingsPage {
                             adw::PreferencesGroup {
                                 set_title: "Connection",
                                 set_description: Some(
-                                    "Where to find your Stash server. The API key is \
+                                    "Where to find your Stash server. The optional API key is \
                                      stored in your Linux Secret Service keyring."
                                 ),
 
@@ -108,7 +108,7 @@ impl Component for SettingsPage {
 
                                 #[name = "key_row"]
                                 adw::PasswordEntryRow {
-                                    set_title: "API key",
+                                    set_title: "API key (optional)",
                                     connect_changed[sender] => move |entry| {
                                         sender.input(SettingsMsg::ApiKeyChanged(entry.text().to_string()));
                                     },

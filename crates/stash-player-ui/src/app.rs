@@ -206,7 +206,17 @@ impl Component for AppModel {
                 }
             }
             AppMsg::SecretsLoaded(None) => {
-                widgets.nav.push(self.settings.widget());
+                if self.config.has_custom_stash_url() {
+                    match stash_api::Client::new(&self.config.stash_url, "") {
+                        Ok(client) => {
+                            self.client = Some(client.clone());
+                            self.library.emit(LibraryMsg::SetClient(client));
+                        }
+                        Err(e) => tracing::warn!("could not build client: {e}"),
+                    }
+                } else {
+                    widgets.nav.push(self.settings.widget());
+                }
             }
         }
         self.update_view(widgets, sender);

@@ -19,7 +19,7 @@ struct SettingsView: View {
                 TextField("Stash URL", text: $url, prompt: Text("https://stash.example.com"))
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
-                SecureField("API key", text: $apiKey, prompt: Text("•••••••••"))
+                SecureField("API key (optional)", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -28,7 +28,7 @@ struct SettingsView: View {
                     Button("Test connection") {
                         Task { await test() }
                     }
-                    .disabled(url.isEmpty || apiKey.isEmpty || isTesting)
+                    .disabled(url.isEmpty || isTesting)
 
                     if isTesting {
                         ProgressView().controlSize(.small)

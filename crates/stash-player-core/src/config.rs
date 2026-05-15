@@ -60,6 +60,10 @@ impl Config {
         fs::write(&path, text)?;
         Ok(())
     }
+
+    pub fn has_custom_stash_url(&self) -> bool {
+        !self.stash_url.trim().is_empty() && self.stash_url != DEFAULT_STASH_URL
+    }
 }
 
 fn project_dirs() -> Result<ProjectDirs> {
@@ -108,5 +112,20 @@ mod tests {
         // invent — surface a hard error instead of silently substituting.
         let err = toml::from_str::<Config>(r#"autoplay = true"#).unwrap_err();
         assert!(err.message().contains("stash_url"));
+    }
+
+    #[test]
+    fn detects_custom_stash_url() {
+        assert!(!Config::default().has_custom_stash_url());
+        assert!(!Config {
+            stash_url: "  ".into(),
+            autoplay: false,
+        }
+        .has_custom_stash_url());
+        assert!(Config {
+            stash_url: "https://stash.example.test".into(),
+            autoplay: false,
+        }
+        .has_custom_stash_url());
     }
 }

@@ -185,11 +185,12 @@ After Rust changes, re-run the script (or `nix run .#macos-build`).
 On first launch, open **Stash server** and enter:
 
 - **URL** — e.g. `https://stash.example.tld`
-- **API key** — copy it from Stash's *Settings → Security → API Key*
+- **API key** — optional; copy it from Stash's *Settings → Security → API Key*
+  when auth is enabled
 
 Click **Test connection** to confirm. The URL persists to the platform's
 config dir (`~/.config/stash-player/config.toml` on Linux,
-`~/Library/Application Support/stash-player/` on macOS); the API key goes to
+`~/Library/Application Support/stash-player/` on macOS); any API key goes to
 the system keyring.
 
 ## Keyboard shortcuts (player)

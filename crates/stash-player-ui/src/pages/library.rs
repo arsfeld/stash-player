@@ -286,7 +286,7 @@ impl Component for LibraryPage {
                     add_named[Some("empty")] = &adw::StatusPage {
                         set_icon_name: Some("network-server-symbolic"),
                         set_title: "No server configured",
-                        set_description: Some("Add your Stash server URL and API key in settings."),
+                        set_description: Some("Add your Stash server URL in settings."),
 
                         #[wrap(Some)]
                         set_child = &gtk::Button {

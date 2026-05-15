@@ -40,7 +40,7 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             } else {
-                Text("Open Settings to enter your Stash URL and API key.")
+                Text("Open Settings to enter your Stash URL.")
                     .foregroundStyle(.secondary)
             }
             Button("Open Settings…") { openSettings() }

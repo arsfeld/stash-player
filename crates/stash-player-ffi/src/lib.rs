@@ -386,13 +386,13 @@ impl StashPlayer {
     pub fn load_saved_credentials(&self) -> Result<Option<FfiCredentials>, FfiError> {
         let cfg = Config::load()?;
         let key = rt().block_on(secrets::load_api_key())?;
-        match key {
-            Some(api_key) if !cfg.stash_url.is_empty() => Ok(Some(FfiCredentials {
-                base_url: cfg.stash_url,
-                api_key,
-            })),
-            _ => Ok(None),
+        if !cfg.has_custom_stash_url() {
+            return Ok(None);
         }
+        Ok(Some(FfiCredentials {
+            base_url: cfg.stash_url,
+            api_key: key.unwrap_or_default(),
+        }))
     }
 
     pub fn save_credentials(&self, base_url: String, api_key: String) -> Result<(), FfiError> {
