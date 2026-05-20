@@ -437,9 +437,20 @@ struct SceneView: View {
         if !window.styleMask.contains(.fullSizeContentView) {
             window.styleMask.insert(.fullSizeContentView)
         }
+        if !window.styleMask.contains(.titled) {
+            window.styleMask.insert(.titled)
+        }
         // Drop any previously-installed library/scene NSToolbar; the OSD
         // top bar carries the chrome now.
         window.toolbar = nil
+
+        // Defensive: `.windowStyle(.hiddenTitleBar)` at the app level
+        // ships with the standard window buttons visible, but anything
+        // that flipped `isHidden` upstream (e.g. a fullscreen exit) would
+        // leave them off. Force them on every time we apply chrome.
+        window.standardWindowButton(.closeButton)?.isHidden = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = false
+        window.standardWindowButton(.zoomButton)?.isHidden = false
 
         if let f = scene.files.first,
            let w = f.width, let h = f.height,
