@@ -193,6 +193,34 @@ config dir (`~/.config/stash-player/config.toml` on Linux,
 `~/Library/Application Support/stash-player/` on macOS); any API key goes to
 the system keyring.
 
+## Local development backend
+
+Two options for running the app against something other than your real Stash
+server:
+
+| | `tools/mock-stash/` | `tools/dev-stash/` |
+| --- | --- | --- |
+| Backend | Python stub | Real `stashapp/stash` in Docker |
+| Video playback | No (404s on `/stream`) | Yes |
+| Setup | `python3 server.py` | `docker compose up -d` + `populate.sh` |
+| Library content | 12 SFW gradient thumbnails | Sample CC-BY clips (Blender) |
+| Good for | Screenshots, offline UI work | Player, scrub, scan, activity writeback |
+
+To boot the real one:
+
+```sh
+docker compose up -d                 # boots Stash at http://127.0.0.1:9999
+tools/dev-stash/populate.sh          # downloads clips + triggers scan
+STASH_URL=http://127.0.0.1:9999 cargo run -p stash-player-ui
+```
+
+`docker compose down -v` wipes the Stash DB; the gitignored
+`tools/dev-stash/media/` survives so clips don't re-download.
+
+See [`tools/dev-stash/README.md`](tools/dev-stash/README.md) for details and
+[`tools/dev-stash/ATTRIBUTION.md`](tools/dev-stash/ATTRIBUTION.md) for clip
+sources / licences.
+
 ## Keyboard shortcuts (player)
 
 | Key | Action |

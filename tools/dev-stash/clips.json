@@ -1,0 +1,140 @@
+[
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4",
+    "filename": "bbb_h264_360p_10s_1mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_2MB.mp4",
+    "filename": "bbb_h264_360p_10s_2mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4",
+    "filename": "bbb_h264_720p_10s_1mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_5MB.mp4",
+    "filename": "bbb_h264_720p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_2MB.mp4",
+    "filename": "bbb_h264_1080p_10s_2mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4",
+    "filename": "bbb_h264_1080p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_10MB.mp4",
+    "filename": "bbb_h264_1080p_10s_10mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h265/720/Big_Buck_Bunny_720_10s_1MB.mp4",
+    "filename": "bbb_h265_720p_10s_1mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h265/1080/Big_Buck_Bunny_1080_10s_5MB.mp4",
+    "filename": "bbb_h265_1080p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/360/Sintel_360_10s_1MB.mp4",
+    "filename": "sintel_h264_360p_10s_1mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4",
+    "filename": "sintel_h264_720p_10s_1mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_5MB.mp4",
+    "filename": "sintel_h264_720p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/1080/Sintel_1080_10s_2MB.mp4",
+    "filename": "sintel_h264_1080p_10s_2mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/1080/Sintel_1080_10s_5MB.mp4",
+    "filename": "sintel_h264_1080p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (Blender Foundation)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_2MB.mp4",
+    "filename": "jellyfish_h264_720p_10s_2mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (synthetic pattern)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_5MB.mp4",
+    "filename": "jellyfish_h264_720p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (synthetic pattern)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h264/1080/Jellyfish_1080_10s_10MB.mp4",
+    "filename": "jellyfish_h264_1080p_10s_10mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (synthetic pattern)"
+  },
+  {
+    "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h265/1080/Jellyfish_1080_10s_5MB.mp4",
+    "filename": "jellyfish_h265_1080p_10s_5mb.mp4",
+    "license": "CC-BY-3.0",
+    "source": "test-videos.co.uk (synthetic pattern)"
+  },
+  {
+    "url": "https://media.w3.org/2010/05/video/movie_300.mp4",
+    "filename": "w3c_movie_300.mp4",
+    "license": "W3C Test Content (free for any use)",
+    "source": "media.w3.org"
+  },
+  {
+    "url": "https://media.w3.org/2010/05/sintel/trailer.mp4",
+    "filename": "w3c_sintel_trailer.mp4",
+    "license": "CC-BY-3.0",
+    "source": "media.w3.org (Blender Foundation)"
+  },
+  {
+    "url": "https://media.w3.org/2010/05/bunny/trailer.mp4",
+    "filename": "w3c_bunny_trailer.mp4",
+    "license": "CC-BY-3.0",
+    "source": "media.w3.org (Blender Foundation)"
+  },
+  {
+    "url": "https://download.blender.org/peach/trailer/trailer_iphone.m4v",
+    "filename": "blender_peach_trailer_iphone.m4v",
+    "license": "CC-BY-3.0",
+    "source": "download.blender.org (Blender Foundation)"
+  },
+  {
+    "url": "https://download.blender.org/peach/trailer/trailer_480p.mov",
+    "filename": "blender_peach_trailer_480p.mov",
+    "license": "CC-BY-3.0",
+    "source": "download.blender.org (Blender Foundation)"
+  }
+]

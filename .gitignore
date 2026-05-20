@@ -1,6 +1,7 @@
 /target
 /result
 /docs
+/tools/dev-stash/media
 /.antigravitycli
 /.direnv
 /.envrc.local

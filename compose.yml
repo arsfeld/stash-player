@@ -1,0 +1,48 @@
+# Local dev backend: real Stash server for `stash-player` development.
+#
+# Boots a single Stash container on 127.0.0.1:9999 with the library
+# pointed at `tools/dev-stash/media/` (gitignored). Pair with
+# `tools/dev-stash/populate.sh` to fetch a curated set of CC0 /
+# public-domain clips and trigger a scan.
+#
+# This is the heavier complement to `tools/mock-stash/`. mock-stash is
+# fast / offline / safe for screenshots but 404s on video streams;
+# dev-stash is the real Stash so video playback, transcoding, and the
+# real GraphQL surface are all exercisable locally.
+#
+# Image tag is pinned on purpose: Stash GraphQL changes between
+# releases, and `:latest` would silently break the populate script.
+# Bump deliberately and re-test populate.sh when updating.
+
+services:
+  stash:
+    image: stashapp/stash:v0.31.1
+    container_name: stash-player-dev-stash
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9999:9999"
+    environment:
+      # STASH_* path hints: Stash drops generated thumbnails, metadata
+      # DB, cache, and blobs into these dirs (mapped to named volumes
+      # below). populate.sh handles the first-run `setup` GraphQL
+      # mutation that actually registers /data as a library; the env
+      # vars here only influence default paths.
+      STASH_GENERATED: /generated
+      STASH_METADATA: /metadata
+      STASH_CACHE: /cache
+      STASH_BLOBS: /blobs
+      STASH_PORT: "9999"
+    volumes:
+      - ./tools/dev-stash/media:/data:ro
+      - stash-config:/root/.stash
+      - stash-metadata:/metadata
+      - stash-cache:/cache
+      - stash-blobs:/blobs
+      - stash-generated:/generated
+
+volumes:
+  stash-config:
+  stash-metadata:
+  stash-cache:
+  stash-blobs:
+  stash-generated:
