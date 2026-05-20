@@ -31,23 +31,19 @@ struct OSDOverlay: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top header: full-width, translucent gradient (no glass
-            // panel). Title + back-button sit directly on the gradient
-            // with text shadows for readability over bright frames.
-            // `.ignoresSafeArea(.container, edges: .top)` so the gradient
-            // bleeds behind the (transparent) title bar all the way to
-            // the window edge — without it SwiftUI inserts a safe-area
-            // inset that pushes the header down past the traffic lights.
+            // Top header: always-visible row that sits inline with the
+            // window's traffic lights. No background — the back button +
+            // title float directly on the video with text shadows for
+            // readability. `.ignoresSafeArea(.container, edges: .top)` so
+            // the row sits flush with the window edge instead of being
+            // pushed below the (transparent) title bar.
             OSDTopHeader(
                 title: scene.displayTitle,
                 subtitle: subtitleLine,
-                onClose: { vm.bumpReveal(); onClose() }
+                onClose: onClose
             )
             .frame(maxWidth: .infinity)
             .ignoresSafeArea(.container, edges: .top)
-            .opacity(vm.revealed ? 1 : 0)
-            .offset(y: vm.revealed ? 0 : -8)
-            .allowsHitTesting(vm.revealed)
 
             Spacer(minLength: 0)
                 .allowsHitTesting(false)
@@ -100,10 +96,10 @@ struct OSDOverlay: View {
 
 // MARK: - Top panel
 
-/// Full-width translucent header. No glass panel — just a gradient that
-/// darkens the top ~80pt of the frame so the title text reads clearly,
-/// fading to fully transparent below. Title + back-button get drop-shadow
-/// text effects for readability over bright video frames.
+/// Always-visible header strip that sits inline with the window's traffic
+/// lights. Fully transparent background so the video shows through behind
+/// the window controls; title + back-button rely on text shadows for
+/// readability over bright video frames.
 private struct OSDTopHeader: View {
     let title: String
     let subtitle: String
@@ -118,40 +114,30 @@ private struct OSDTopHeader: View {
             )
 
             Text(title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.7), radius: 3, x: 0, y: 1)
+                .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
                 .lineLimit(1)
 
             if !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .shadow(color: .black.opacity(0.7), radius: 3, x: 0, y: 1)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
                     .lineLimit(1)
                     .layoutPriority(-1)
             }
             Spacer(minLength: 0)
         }
-        // Left padding clears the window's traffic lights; the gradient
-        // background still extends edge-to-edge behind them.
+        // Left padding clears the window's traffic lights so the back
+        // button sits flush against them.
         .padding(.leading, 78)
         .padding(.trailing, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 28)
+        // Vertical padding sized to match the standard 28pt title-bar
+        // height — the back button + title row visually aligns with the
+        // traffic lights instead of floating below them.
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    .black.opacity(0.55),
-                    .black.opacity(0.25),
-                    .black.opacity(0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .allowsHitTesting(false)
-        )
     }
 }
 
