@@ -77,6 +77,14 @@ struct SceneView: View {
     @State private var hostWindow: NSWindow?
     /// Notification observer for end-of-playback → autoplay next.
     @State private var endObserver: NSObjectProtocol?
+    /// `NSWindow.willEnter/willExitFullScreenNotification` observers. We
+    /// hide the SwiftUI toolbar entirely in fullscreen because the OS
+    /// slide-down strip ignores `.toolbarBackground(.hidden, ...)` and
+    /// renders as an opaque white bar over the video. Traffic lights are
+    /// already hidden by AppKit in fullscreen, so losing the toolbar
+    /// there is invisible to the user.
+    @State private var fullScreenObservers: [NSObjectProtocol] = []
+    @State private var isFullScreen: Bool = false
 
     init(initial: SceneNavigation, navigationPath: Binding<NavigationPath>) {
         self.initial = initial
@@ -116,6 +124,11 @@ struct SceneView: View {
             // also hides the traffic lights — `.toolbarBackground(.hidden, ...)`
             // is the supported way to keep the controls but drop the chrome.
             .toolbarBackground(.hidden, for: .windowToolbar)
+            // In fullscreen, fully hide the toolbar — the OS slide-down
+            // toolbar renders opaque (ignores toolbarBackground hidden)
+            // and traffic lights are already gone, so a hidden toolbar
+            // is invisible loss with visible gain.
+            .toolbar(isFullScreen ? .hidden : .visible, for: .windowToolbar)
             // Suppress the SwiftUI-auto-generated back button — the OSD
             // top header carries our own auto-fading back chevron.
             .navigationBarBackButtonHidden(true)
@@ -269,7 +282,7 @@ struct SceneView: View {
                 osdVM.seedDuration(dur)
             }
 
-            if let resume = scene.resumeTime, resume > 5 {
+            if let resume = effectiveResumeSeconds(for: scene) {
                 let target = CMTime(seconds: resume, preferredTimescale: 600)
                 await player.seek(
                     to: target,
@@ -321,6 +334,24 @@ struct SceneView: View {
                 }
             }
         }
+    }
+
+    /// Resume position the player should actually seek to, or `nil` to
+    /// start from the beginning. Mirrors `Scene::effective_resume_secs`
+    /// in `stash-api`: Stash keeps the saved `resume_time` near the
+    /// duration when the user watches a scene to completion, and seeking
+    /// there on re-open immediately fires end-of-stream — which the
+    /// autoplay end observer then turns into a confusing auto-advance
+    /// to the next scene. Treat resumes within the last 10s — or past
+    /// 97% of the known duration — as "finished, play from the start".
+    private func effectiveResumeSeconds(for scene: FfiScene) -> Double? {
+        guard let resume = scene.resumeTime, resume > 5 else { return nil }
+        if let duration = scene.files.first?.duration,
+           duration > 0,
+           resume >= duration - 10 || resume / duration >= 0.97 {
+            return nil
+        }
+        return resume
     }
 
     /// Auto-advance to the next scene in the current filter when playback
@@ -444,6 +475,10 @@ struct SceneView: View {
             NSEvent.removeMonitor(k)
             keyDownMonitor = nil
         }
+        for obs in fullScreenObservers {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        fullScreenObservers = []
         // Drop the aspect-ratio constraint so the library window isn't
         // stuck snapping to the last scene's dimensions.
         if let window = hostWindow {

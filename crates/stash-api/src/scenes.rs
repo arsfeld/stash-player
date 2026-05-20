@@ -173,6 +173,27 @@ impl Scene {
     pub fn duration_seconds(&self) -> Option<f64> {
         self.files.first().and_then(|f| f.duration)
     }
+
+    /// Resume position the UI should actually seek to, or `None` to start
+    /// from the beginning. Stash saves a `resume_time` near the duration
+    /// when the user watches a scene to completion; honouring that on the
+    /// next open lands playback at the tail, which immediately fires
+    /// end-of-stream (and, on macOS, auto-advances to the next scene).
+    /// Treat resumes within the last 10s — or anything past 97% of the
+    /// known duration — as "finished, play from the start".
+    pub fn effective_resume_secs(&self) -> Option<f64> {
+        let resume = self.resume_time?;
+        if resume <= 0.0 {
+            return None;
+        }
+        if let Some(duration) = self.duration_seconds()
+            && duration > 0.0
+            && (resume >= duration - 10.0 || resume / duration >= 0.97)
+        {
+            return None;
+        }
+        Some(resume)
+    }
 }
 
 /// Extract the basename (final path component) of `path`, with any trailing
@@ -517,6 +538,68 @@ mod tests {
             ..with_title.clone()
         };
         assert_eq!(with_path.display_title(), "cool video");
+    }
+
+    #[test]
+    fn effective_resume_skips_finished_scenes() {
+        let base = Scene {
+            id: "1".into(),
+            title: None,
+            details: None,
+            date: None,
+            rating100: None,
+            paths: ScenePaths {
+                screenshot: None,
+                preview: None,
+                sprite: None,
+                stream: None,
+                webp: None,
+            },
+            files: vec![SceneFile {
+                duration: Some(600.0),
+                width: None,
+                height: None,
+                video_codec: None,
+                frame_rate: None,
+                path: None,
+            }],
+            studio: None,
+            performers: vec![],
+            resume_time: None,
+            play_count: None,
+            play_duration: None,
+            o_counter: None,
+        };
+
+        // Fresh / unset → start from the beginning.
+        assert_eq!(base.clone().effective_resume_secs(), None);
+
+        let mut zero = base.clone();
+        zero.resume_time = Some(0.0);
+        assert_eq!(zero.effective_resume_secs(), None);
+
+        // Mid-playback → honour the resume.
+        let mut middle = base.clone();
+        middle.resume_time = Some(120.0);
+        assert_eq!(middle.effective_resume_secs(), Some(120.0));
+
+        // Within the last 10s → treat as finished.
+        let mut tail = base.clone();
+        tail.resume_time = Some(595.0);
+        assert_eq!(tail.effective_resume_secs(), None);
+
+        // Past the 97% mark on a long scene → treat as finished even
+        // though the absolute gap is bigger than 10s.
+        let mut long = base.clone();
+        long.files[0].duration = Some(3600.0);
+        long.resume_time = Some(3500.0);
+        assert_eq!(long.effective_resume_secs(), None);
+
+        // No duration metadata → fall back to honouring the resume.
+        let mut no_duration = base.clone();
+        no_duration.files.clear();
+        no_duration.resume_time = Some(595.0);
+        assert_eq!(no_duration.effective_resume_secs(), Some(595.0));
     }
 
     #[test]

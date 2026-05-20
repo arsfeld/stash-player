@@ -560,7 +560,7 @@ impl Component for ScenePage {
                     populate_scene(widgets, &scene);
                     self.player.emit(VideoPlayerMsg::SetUrl {
                         url: build_stream_url(&self.client, &scene),
-                        resume_secs: scene.resume_time,
+                        resume_secs: scene.effective_resume_secs(),
                     });
                     self.state = State::Loaded(Box::new(scene));
                 }
@@ -580,7 +580,7 @@ impl Component for ScenePage {
                     populate_scene(widgets, &scene);
                     self.player.emit(VideoPlayerMsg::SetUrl {
                         url: build_stream_url(&self.client, &scene),
-                        resume_secs: scene.resume_time,
+                        resume_secs: scene.effective_resume_secs(),
                     });
                     self.state = State::Loaded(Box::new(scene));
                 }
