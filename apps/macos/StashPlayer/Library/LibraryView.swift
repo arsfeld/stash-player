@@ -44,6 +44,10 @@ struct LibraryView: View {
     @State private var hasMore = true
     @State private var loadError: String?
     @State private var didFirstLoad = false
+    /// Persisted toolbar choice. The Toggle writes to this and to
+    /// `filter.hideInteractive` together so `.task(id: filter)` reloads
+    /// the grid in lockstep with the saved value.
+    @AppStorage("library.hideInteractive") private var persistedHideInteractive: Bool = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 240, maximum: 280), spacing: 16, alignment: .top)
@@ -78,6 +82,10 @@ struct LibraryView: View {
         .toolbar { toolbarContent }
         .task {
             if !didFirstLoad {
+                // Seed the persisted toolbar value into the filter BEFORE the
+                // initial reload so we don't fetch a non-interactive-excluded
+                // page only to immediately discard it.
+                filter.hideInteractive = persistedHideInteractive
                 didFirstLoad = true
                 await reload()
             }
@@ -155,6 +163,14 @@ struct LibraryView: View {
                   ? "Hiding scenes with O > 0 — click to show all"
                   : "Showing all scenes — click to hide tracked")
 
+            Toggle(isOn: hideInteractiveBinding) {
+                Image(systemName: "waveform.slash")
+            }
+            .toggleStyle(.button)
+            .help(filter.hideInteractive
+                  ? "Hiding interactive scenes — click to show all"
+                  : "Showing all scenes — click to hide interactive")
+
             Button {
                 Task { await playRandom() }
             } label: {
@@ -182,6 +198,19 @@ struct LibraryView: View {
         Binding(
             get: { filter.organized == true },
             set: { on in filter.organized = on ? true : nil }
+        )
+    }
+
+    /// Two-way binding that keeps the Toggle, the active filter, and the
+    /// persisted @AppStorage value in lockstep. Writing through the filter
+    /// triggers `.task(id: filter)`, which reloads the grid.
+    private var hideInteractiveBinding: Binding<Bool> {
+        Binding(
+            get: { filter.hideInteractive },
+            set: { on in
+                filter.hideInteractive = on
+                persistedHideInteractive = on
+            }
         )
     }
 

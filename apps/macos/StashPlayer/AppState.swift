@@ -21,6 +21,9 @@ struct LibraryFilter: Hashable {
     var organized: Bool? = nil
     /// Default ON — opens to the "untracked" view, matching the Linux app.
     var hideTracked: Bool = true
+    /// Mirrors the toolbar "Hide interactive" toggle; persisted in
+    /// LibraryView via @AppStorage so the choice survives app restarts.
+    var hideInteractive: Bool = false
     /// Set when sort == .random so paging + neighbor lookups stay stable.
     var randomSeed: UInt32? = nil
 
@@ -32,6 +35,9 @@ struct LibraryFilter: Hashable {
             minRating: minRating,
             organized: organized,
             hideTracked: hideTracked,
+            // `false` excludes interactive scenes; nil means "no filter".
+            // Matches the Linux UI's translation.
+            interactive: hideInteractive ? false : nil,
             randomSeed: randomSeed
         )
     }
