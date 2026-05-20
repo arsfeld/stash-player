@@ -29,6 +29,19 @@ pub struct Config {
     /// loads (or when the user navigates with prev/next).
     #[serde(default)]
     pub autoplay: bool,
+    /// Last volume the user picked in the video player, in `0.0..=1.0`.
+    /// Restored on every fresh stream so the level persists across scenes
+    /// and app restarts.
+    #[serde(default = "default_volume")]
+    pub volume: f64,
+    /// Mute state, persisted alongside `volume` so unmuting returns to the
+    /// previously chosen level.
+    #[serde(default)]
+    pub muted: bool,
+}
+
+fn default_volume() -> f64 {
+    1.0
 }
 
 impl Default for Config {
@@ -36,6 +49,8 @@ impl Default for Config {
         Self {
             stash_url: DEFAULT_STASH_URL.to_owned(),
             autoplay: false,
+            volume: default_volume(),
+            muted: false,
         }
     }
 }
@@ -83,6 +98,8 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.stash_url, DEFAULT_STASH_URL);
         assert!(!c.autoplay);
+        assert_eq!(c.volume, 1.0);
+        assert!(!c.muted);
     }
 
     #[test]
@@ -90,20 +107,27 @@ mod tests {
         let original = Config {
             stash_url: "https://stash.example.test".into(),
             autoplay: true,
+            volume: 0.42,
+            muted: true,
         };
         let text = toml::to_string_pretty(&original).unwrap();
         let parsed: Config = toml::from_str(&text).unwrap();
         assert_eq!(parsed.stash_url, original.stash_url);
         assert_eq!(parsed.autoplay, original.autoplay);
+        assert_eq!(parsed.volume, original.volume);
+        assert_eq!(parsed.muted, original.muted);
     }
 
     #[test]
-    fn tolerates_missing_autoplay_field() {
-        // Older config files (written before autoplay existed) only carry
-        // stash_url. #[serde(default)] should let them load without error.
+    fn tolerates_missing_optional_fields() {
+        // Older config files (written before autoplay/volume/muted existed)
+        // only carry stash_url. #[serde(default)] should let them load
+        // without error and fall back to the documented defaults.
         let parsed: Config = toml::from_str(r#"stash_url = "https://x.test""#).unwrap();
         assert_eq!(parsed.stash_url, "https://x.test");
         assert!(!parsed.autoplay);
+        assert_eq!(parsed.volume, 1.0);
+        assert!(!parsed.muted);
     }
 
     #[test]
@@ -120,11 +144,15 @@ mod tests {
         assert!(!Config {
             stash_url: "  ".into(),
             autoplay: false,
+            volume: 1.0,
+            muted: false,
         }
         .has_custom_stash_url());
         assert!(Config {
             stash_url: "https://stash.example.test".into(),
             autoplay: false,
+            volume: 1.0,
+            muted: false,
         }
         .has_custom_stash_url());
     }

@@ -330,7 +330,7 @@ fn apply_state_change(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct VideoPlayerInit {
     pub(crate) url: Option<String>,
     /// Start playing as soon as a stream is loaded (initial URL and any
@@ -339,6 +339,24 @@ pub(crate) struct VideoPlayerInit {
     /// Saved resume position (seconds) for the initial URL. Applied once
     /// the stream is prepared, then forgotten.
     pub(crate) resume_secs: Option<f64>,
+    /// Initial volume in `0.0..=1.0`. Restored from app config so the
+    /// user's preference survives across scenes and restarts.
+    pub(crate) volume: f64,
+    /// Initial mute state, paired with `volume` so unmuting returns to
+    /// the previously chosen level.
+    pub(crate) muted: bool,
+}
+
+impl Default for VideoPlayerInit {
+    fn default() -> Self {
+        Self {
+            url: None,
+            autoplay: false,
+            resume_secs: None,
+            volume: 1.0,
+            muted: false,
+        }
+    }
 }
 
 /// What the player tells the parent (the scene page) about playback.
@@ -358,6 +376,10 @@ pub(crate) enum VideoPlayerOutput {
     /// this to fade the floating header bar in lockstep so window chrome
     /// disappears alongside the player controls when the mouse is idle.
     ControlsRevealedChanged(bool),
+    /// User changed the volume or mute state via the OSD or a keyboard
+    /// shortcut. The scene page forwards this to the app so the config
+    /// gets persisted — the slider's pipeline state is already up to date.
+    VolumeChanged { volume: f64, muted: bool },
 }
 
 #[derive(Debug)]
@@ -778,7 +800,7 @@ impl Component for VideoPlayer {
             VideoPlayerMsg::SeekRelative(secs) => self.handle_seek_relative(&sender, secs),
             VideoPlayerMsg::SeekFraction(f) => self.handle_seek_fraction(&sender, f),
             VideoPlayerMsg::UserSeek(us) => self.handle_user_seek(&sender, us),
-            VideoPlayerMsg::SetVolume(v) => self.handle_set_volume(v),
+            VideoPlayerMsg::SetVolume(v) => self.handle_set_volume(&sender, v),
             VideoPlayerMsg::AdjustVolume(delta) => {
                 let v = (self.volume + delta).clamp(0.0, 1.0);
                 sender.input(VideoPlayerMsg::SetVolume(v));
@@ -954,8 +976,8 @@ impl VideoPlayer {
             url: init.url.clone(),
             duration_us: 0,
             position_us: 0,
-            volume: 1.0,
-            muted: false,
+            volume: init.volume.clamp(0.0, 1.0),
+            muted: init.muted,
             playback: PlaybackFlags {
                 playing: false,
                 autoplay: init.autoplay,
@@ -1423,7 +1445,7 @@ impl VideoPlayer {
         self.emit_checkpoint(sender);
     }
 
-    fn handle_set_volume(&mut self, v: f64) {
+    fn handle_set_volume(&mut self, sender: &ComponentSender<Self>, v: f64) {
         let v = v.clamp(0.0, 1.0);
         self.volume = v;
         if let Some(media) = self.media.as_ref() {
@@ -1433,15 +1455,24 @@ impl VideoPlayer {
                 self.muted = false;
             }
         }
+        let _ = sender.output(VideoPlayerOutput::VolumeChanged {
+            volume: self.volume,
+            muted: self.muted,
+        });
     }
 
     fn handle_toggle_mute(&mut self, sender: &ComponentSender<Self>) {
-        if let Some(media) = self.media.as_ref() {
-            let new_muted = !media.is_muted();
-            media.set_muted(new_muted);
-            self.muted = new_muted;
-            sender.input(VideoPlayerMsg::PointerActive);
-        }
+        let Some(media) = self.media.as_ref() else {
+            return;
+        };
+        let new_muted = !media.is_muted();
+        media.set_muted(new_muted);
+        self.muted = new_muted;
+        sender.input(VideoPlayerMsg::PointerActive);
+        let _ = sender.output(VideoPlayerOutput::VolumeChanged {
+            volume: self.volume,
+            muted: self.muted,
+        });
     }
 
     fn handle_toggle_fullscreen(

@@ -34,6 +34,13 @@ final class OSDViewModel: ObservableObject {
     /// Apple TV / IINA.
     let hideDelay: Double = 2.5
 
+    /// UserDefaults keys used to persist volume + mute across videos and
+    /// app restarts. Read by `SceneView.reloadPlayer()` to seed each fresh
+    /// `AVPlayer`; written below from the volume/mute KVO observers so
+    /// every change path (slider, keyboard, mute toggle) lands in storage.
+    static let volumeDefaultsKey = "scene.volume"
+    static let mutedDefaultsKey = "scene.muted"
+
     private weak var player: AVPlayer?
     private var rateObs: NSKeyValueObservation?
     private var volObs: NSKeyValueObservation?
@@ -69,11 +76,17 @@ final class OSDViewModel: ObservableObject {
         }
         volObs = player.observe(\.volume, options: [.new]) { [weak self] _, change in
             let v = change.newValue ?? 0
-            Task { @MainActor in self?.volume = v }
+            Task { @MainActor in
+                self?.volume = v
+                UserDefaults.standard.set(Double(v), forKey: Self.volumeDefaultsKey)
+            }
         }
         mutedObs = player.observe(\.isMuted, options: [.new]) { [weak self] _, change in
             let m = change.newValue ?? false
-            Task { @MainActor in self?.isMuted = m }
+            Task { @MainActor in
+                self?.isMuted = m
+                UserDefaults.standard.set(m, forKey: Self.mutedDefaultsKey)
+            }
         }
     }
 

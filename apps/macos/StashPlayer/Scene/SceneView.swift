@@ -245,6 +245,17 @@ struct SceneView: View {
             }
             logger.info("Loading stream: \(url.absoluteString.replacing(/apikey=[^&]+/, with: "apikey=***"), privacy: .public)")
             let player = AVPlayer(url: url)
+            // Restore the previously chosen volume/mute before the OSD
+            // attaches and reads `player.volume`/`player.isMuted`. AVPlayer
+            // defaults to 1.0 / false on a fresh instance, so without this
+            // every scene swap would silently reset the user's preference.
+            // `object(forKey:)` lets us distinguish "never set" from "set
+            // to 0" — `double(forKey:)` would treat both as 0 and mute.
+            let savedVolume = (UserDefaults.standard.object(
+                forKey: OSDViewModel.volumeDefaultsKey
+            ) as? Double) ?? 1.0
+            player.volume = Float(max(0, min(1, savedVolume)))
+            player.isMuted = UserDefaults.standard.bool(forKey: OSDViewModel.mutedDefaultsKey)
             attachRateObserver(player)
             attachPeriodicObserver(player)
             attachEndObserver(player)

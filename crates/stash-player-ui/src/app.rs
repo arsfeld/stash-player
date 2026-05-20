@@ -48,6 +48,9 @@ pub(crate) enum AppMsg {
     /// keeps playing audio in the background.
     NavPopped(adw::NavigationPage),
     SetAutoplay(bool),
+    /// Player reported a volume/mute change — write through to disk so the
+    /// next scene + next launch start at this level.
+    SetVolume { volume: f64, muted: bool },
     Configured(Box<Configured>),
     SecretsLoaded(Option<String>),
 }
@@ -159,9 +162,14 @@ impl Component for AppModel {
                         scene_id: id,
                         context,
                         autoplay: self.config.autoplay,
+                        volume: self.config.volume,
+                        muted: self.config.muted,
                     })
                     .forward(sender.input_sender(), |out| match out {
                         SceneOutput::SetAutoplay(on) => AppMsg::SetAutoplay(on),
+                        SceneOutput::SetVolume { volume, muted } => {
+                            AppMsg::SetVolume { volume, muted }
+                        }
                     });
                 widgets.nav.push(scene.widget());
                 self.scene = Some(scene);
@@ -182,6 +190,21 @@ impl Component for AppModel {
             AppMsg::SetAutoplay(on) => {
                 if self.config.autoplay != on {
                     self.config.autoplay = on;
+                    if let Err(e) = self.config.save() {
+                        tracing::warn!("could not save config: {e}");
+                    }
+                }
+            }
+            AppMsg::SetVolume { volume, muted } => {
+                // Bit-equality is fine here: the source is our own slider/
+                // keyboard handler which sends discrete values; we're only
+                // trying to avoid re-saving when the polled volume races
+                // and reports the same value back.
+                let volume_changed = self.config.volume.to_bits() != volume.to_bits();
+                let muted_changed = self.config.muted != muted;
+                if volume_changed || muted_changed {
+                    self.config.volume = volume;
+                    self.config.muted = muted;
                     if let Err(e) = self.config.save() {
                         tracing::warn!("could not save config: {e}");
                     }

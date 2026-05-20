@@ -29,6 +29,10 @@ pub(crate) struct SceneInit {
     pub scene_id: String,
     pub context: Option<SceneNavContext>,
     pub autoplay: bool,
+    /// Initial player volume, restored from app config.
+    pub volume: f64,
+    /// Initial mute state, restored from app config.
+    pub muted: bool,
 }
 
 pub(crate) struct ScenePage {
@@ -67,12 +71,18 @@ pub(crate) enum SceneMsg {
     IncrementO,
     /// Zero the scene's O-counter.
     ResetO,
+    /// Player reported a new volume/mute state — bubble up to the app so
+    /// it can persist to config.
+    VolumeChanged { volume: f64, muted: bool },
 }
 
 #[derive(Debug)]
 pub(crate) enum SceneOutput {
     /// User flipped the autoplay toggle — persist this in app config.
     SetAutoplay(bool),
+    /// User adjusted the video player volume or mute state — persist
+    /// both so the next scene + next launch resume at the same level.
+    SetVolume { volume: f64, muted: bool },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -411,6 +421,8 @@ impl Component for ScenePage {
                 url: None,
                 autoplay: init.autoplay,
                 resume_secs: None,
+                volume: init.volume,
+                muted: init.muted,
             })
             .forward(sender.input_sender(), |out| match out {
                 VideoPlayerOutput::ActivityCheckpoint {
@@ -422,6 +434,9 @@ impl Component for ScenePage {
                 },
                 VideoPlayerOutput::ControlsRevealedChanged(on) => {
                     SceneMsg::SetHeaderRevealed(on)
+                }
+                VideoPlayerOutput::VolumeChanged { volume, muted } => {
+                    SceneMsg::VolumeChanged { volume, muted }
                 }
             });
 
@@ -485,6 +500,9 @@ impl Component for ScenePage {
             }
             SceneMsg::IncrementO => self.spawn_o_mutation(&sender, OMutation::Increment),
             SceneMsg::ResetO => self.spawn_o_mutation(&sender, OMutation::Reset),
+            SceneMsg::VolumeChanged { volume, muted } => {
+                let _ = sender.output(SceneOutput::SetVolume { volume, muted });
+            }
             SceneMsg::SaveActivity {
                 resume_secs,
                 play_duration_secs,
