@@ -39,6 +39,9 @@ const THUMB_BYTES: usize = (THUMB_WIDTH as usize) * (THUMB_HEIGHT as usize) * 4;
 #[derive(Debug)]
 pub(crate) struct LibraryInit {
     pub(crate) client: Option<stash_api::Client>,
+    /// Initial value of the "Hide interactive" toolbar toggle, sourced from
+    /// `Config::hide_interactive` so the choice persists across launches.
+    pub(crate) hide_interactive: bool,
 }
 
 pub(crate) struct LibraryPage {
@@ -70,6 +73,7 @@ pub(crate) enum LibraryMsg {
     OrganizedChanged(bool),
     MinRatingChanged(u32),
     HideTrackedChanged(bool),
+    HideInteractiveChanged(bool),
     ChildActivatedAt(u32),
     OpenSettings,
     PlayRandom,
@@ -129,6 +133,9 @@ pub(crate) enum LibraryOutput {
         /// Total scenes matching `filter`. Negative means unknown.
         total: i64,
     },
+    /// User flipped the "Hide interactive" toggle; the parent persists it
+    /// to `Config` so the choice survives restarts.
+    HideInteractiveChanged(bool),
 }
 
 #[relm4::component(pub)]
@@ -277,6 +284,26 @@ impl Component for LibraryPage {
                         set_pixel_size: 16,
                         set_tooltip_text: Some("O-counter filter"),
                     },
+
+                    gtk::Separator {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_margin_start: 6,
+                        set_margin_end: 6,
+                    },
+
+                    gtk::Switch {
+                        set_valign: gtk::Align::Center,
+                        set_tooltip_text: Some("Hide scenes flagged as interactive (funscript)"),
+                        #[watch]
+                        set_active: model.filter.interactive == Some(false),
+                        connect_active_notify[sender] => move |sw| {
+                            sender.input(LibraryMsg::HideInteractiveChanged(sw.is_active()));
+                        },
+                    },
+
+                    gtk::Label {
+                        set_label: "Hide interactive",
+                    },
                 },
 
                 #[wrap(Some)]
@@ -388,8 +415,12 @@ impl Component for LibraryPage {
             client: init.client,
             // Default view: untracked-only. The user can toggle this off
             // from the toolbar; we don't persist the choice across launches.
+            // `hide_interactive` IS persisted via Config — collapse the
+            // boolean into the wire-format `Option<bool>` (Some(false) keeps
+            // only non-interactive scenes; None doesn't filter).
             filter: SceneFilter {
                 hide_tracked: true,
+                interactive: if init.hide_interactive { Some(false) } else { None },
                 ..SceneFilter::new()
             },
             page: 0,
@@ -483,6 +514,17 @@ impl Component for LibraryPage {
                     self.filter.hide_tracked = active;
                     self.reset(widgets);
                     self.fetch_next_page(&sender);
+                }
+            }
+            LibraryMsg::HideInteractiveChanged(active) => {
+                // `Some(false)` excludes interactive scenes; `None` means no
+                // filter. Match the binary toolbar control to that shape.
+                let new_value = if active { Some(false) } else { None };
+                if new_value != self.filter.interactive {
+                    self.filter.interactive = new_value;
+                    self.reset(widgets);
+                    self.fetch_next_page(&sender);
+                    let _ = sender.output(LibraryOutput::HideInteractiveChanged(active));
                 }
             }
             LibraryMsg::ChildActivatedAt(index) => {

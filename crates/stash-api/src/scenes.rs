@@ -90,6 +90,11 @@ pub struct SceneFilter {
     /// `Some(true)` keeps only organized scenes, `Some(false)` keeps only
     /// unorganized; `None` doesn't filter on this field.
     pub organized: Option<bool>,
+    /// `Some(true)` keeps only scenes Stash marked interactive (funscript
+    /// present), `Some(false)` keeps only non-interactive; `None` doesn't
+    /// filter on this field. Wire shape is a plain `Boolean` on Stash's
+    /// `SceneFilterType.interactive`, same as `organized`.
+    pub interactive: Option<bool>,
     /// When true, restrict results to `o_counter = 0` (untracked scenes).
     /// Maps to Stash's `IntCriterionInput { value: 0, modifier: EQUALS }`.
     pub hide_tracked: bool,
@@ -107,6 +112,7 @@ impl SceneFilter {
             direction: SortDirection::Desc,
             min_rating: None,
             organized: None,
+            interactive: None,
             hide_tracked: false,
             random_seed: None,
         }
@@ -341,6 +347,9 @@ pub(crate) fn find_scenes_variables(
     if let Some(org) = filter.organized {
         scene_filter.insert("organized".into(), serde_json::Value::Bool(org));
     }
+    if let Some(interactive) = filter.interactive {
+        scene_filter.insert("interactive".into(), serde_json::Value::Bool(interactive));
+    }
     if filter.hide_tracked {
         scene_filter.insert(
             "o_counter".into(),
@@ -443,6 +452,32 @@ mod tests {
         f.organized = Some(false);
         let v = find_scenes_variables(&f, 1, 10);
         assert_eq!(v["scene_filter"]["organized"], false);
+    }
+
+    #[test]
+    fn variables_interactive_false_excludes_funscript_scenes() {
+        // Stash's SceneFilterType.interactive is a plain Boolean (same shape
+        // as `organized`), not an IntCriterion. Sending `false` is the
+        // "hide interactive scenes" path the library toggle exercises.
+        let mut f = SceneFilter::new();
+        f.interactive = Some(false);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["interactive"], false);
+    }
+
+    #[test]
+    fn variables_interactive_true_keeps_only_funscript_scenes() {
+        let mut f = SceneFilter::new();
+        f.interactive = Some(true);
+        let v = find_scenes_variables(&f, 1, 10);
+        assert_eq!(v["scene_filter"]["interactive"], true);
+    }
+
+    #[test]
+    fn variables_default_filter_omits_interactive() {
+        let f = SceneFilter::new();
+        let v = find_scenes_variables(&f, 1, 10);
+        assert!(v["scene_filter"].get("interactive").is_none());
     }
 
     #[test]

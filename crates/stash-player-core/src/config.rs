@@ -38,6 +38,11 @@ pub struct Config {
     /// previously chosen level.
     #[serde(default)]
     pub muted: bool,
+    /// Whether the library should exclude scenes Stash flagged as
+    /// interactive (funscript-bearing). Persisted so the "Hide interactive"
+    /// toolbar toggle survives app restarts.
+    #[serde(default)]
+    pub hide_interactive: bool,
 }
 
 fn default_volume() -> f64 {
@@ -51,6 +56,7 @@ impl Default for Config {
             autoplay: false,
             volume: default_volume(),
             muted: false,
+            hide_interactive: false,
         }
     }
 }
@@ -100,6 +106,7 @@ mod tests {
         assert!(!c.autoplay);
         assert_eq!(c.volume, 1.0);
         assert!(!c.muted);
+        assert!(!c.hide_interactive);
     }
 
     #[test]
@@ -109,6 +116,7 @@ mod tests {
             autoplay: true,
             volume: 0.42,
             muted: true,
+            hide_interactive: true,
         };
         let text = toml::to_string_pretty(&original).unwrap();
         let parsed: Config = toml::from_str(&text).unwrap();
@@ -116,18 +124,21 @@ mod tests {
         assert_eq!(parsed.autoplay, original.autoplay);
         assert_eq!(parsed.volume, original.volume);
         assert_eq!(parsed.muted, original.muted);
+        assert_eq!(parsed.hide_interactive, original.hide_interactive);
     }
 
     #[test]
     fn tolerates_missing_optional_fields() {
-        // Older config files (written before autoplay/volume/muted existed)
-        // only carry stash_url. #[serde(default)] should let them load
-        // without error and fall back to the documented defaults.
+        // Older config files (written before autoplay/volume/muted/
+        // hide_interactive existed) only carry stash_url. #[serde(default)]
+        // should let them load without error and fall back to the documented
+        // defaults.
         let parsed: Config = toml::from_str(r#"stash_url = "https://x.test""#).unwrap();
         assert_eq!(parsed.stash_url, "https://x.test");
         assert!(!parsed.autoplay);
         assert_eq!(parsed.volume, 1.0);
         assert!(!parsed.muted);
+        assert!(!parsed.hide_interactive);
     }
 
     #[test]
@@ -146,6 +157,7 @@ mod tests {
             autoplay: false,
             volume: 1.0,
             muted: false,
+            hide_interactive: false,
         }
         .has_custom_stash_url());
         assert!(Config {
@@ -153,6 +165,7 @@ mod tests {
             autoplay: false,
             volume: 1.0,
             muted: false,
+            hide_interactive: false,
         }
         .has_custom_stash_url());
     }

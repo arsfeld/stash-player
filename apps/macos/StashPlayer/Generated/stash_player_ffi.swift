@@ -1242,17 +1242,29 @@ public struct FfiSceneFilter {
     public var minRating: Int32?
     public var organized: Bool?
     public var hideTracked: Bool
+    /**
+     * `Some(false)` hides scenes Stash flagged as interactive; `Some(true)`
+     * keeps only those; `None` doesn't filter. Mirrors
+     * `stash_api::SceneFilter::interactive`.
+     */
+    public var interactive: Bool?
     public var randomSeed: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(query: String?, sort: FfiSortKey, direction: FfiSortDirection, minRating: Int32?, organized: Bool?, hideTracked: Bool, randomSeed: UInt32?) {
+    public init(query: String?, sort: FfiSortKey, direction: FfiSortDirection, minRating: Int32?, organized: Bool?, hideTracked: Bool, 
+        /**
+         * `Some(false)` hides scenes Stash flagged as interactive; `Some(true)`
+         * keeps only those; `None` doesn't filter. Mirrors
+         * `stash_api::SceneFilter::interactive`.
+         */interactive: Bool?, randomSeed: UInt32?) {
         self.query = query
         self.sort = sort
         self.direction = direction
         self.minRating = minRating
         self.organized = organized
         self.hideTracked = hideTracked
+        self.interactive = interactive
         self.randomSeed = randomSeed
     }
 }
@@ -1282,6 +1294,9 @@ extension FfiSceneFilter: Equatable, Hashable {
         if lhs.hideTracked != rhs.hideTracked {
             return false
         }
+        if lhs.interactive != rhs.interactive {
+            return false
+        }
         if lhs.randomSeed != rhs.randomSeed {
             return false
         }
@@ -1295,6 +1310,7 @@ extension FfiSceneFilter: Equatable, Hashable {
         hasher.combine(minRating)
         hasher.combine(organized)
         hasher.combine(hideTracked)
+        hasher.combine(interactive)
         hasher.combine(randomSeed)
     }
 }
@@ -1314,6 +1330,7 @@ public struct FfiConverterTypeFfiSceneFilter: FfiConverterRustBuffer {
                 minRating: FfiConverterOptionInt32.read(from: &buf), 
                 organized: FfiConverterOptionBool.read(from: &buf), 
                 hideTracked: FfiConverterBool.read(from: &buf), 
+                interactive: FfiConverterOptionBool.read(from: &buf), 
                 randomSeed: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
@@ -1325,6 +1342,7 @@ public struct FfiConverterTypeFfiSceneFilter: FfiConverterRustBuffer {
         FfiConverterOptionInt32.write(value.minRating, into: &buf)
         FfiConverterOptionBool.write(value.organized, into: &buf)
         FfiConverterBool.write(value.hideTracked, into: &buf)
+        FfiConverterOptionBool.write(value.interactive, into: &buf)
         FfiConverterOptionUInt32.write(value.randomSeed, into: &buf)
     }
 }

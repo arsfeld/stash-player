@@ -51,6 +51,9 @@ pub(crate) enum AppMsg {
     /// Player reported a volume/mute change — write through to disk so the
     /// next scene + next launch start at this level.
     SetVolume { volume: f64, muted: bool },
+    /// Library toggled "Hide interactive" — persist so the choice survives
+    /// app restarts.
+    SetHideInteractive(bool),
     Configured(Box<Configured>),
     SecretsLoaded(Option<String>),
 }
@@ -89,13 +92,17 @@ impl Component for AppModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let library = LibraryPage::builder()
-            .launch(LibraryInit { client: None })
+            .launch(LibraryInit {
+                client: None,
+                hide_interactive: init.config.hide_interactive,
+            })
             .forward(sender.input_sender(), |out| match out {
                 LibraryOutput::OpenSettings => AppMsg::OpenSettings,
                 LibraryOutput::OpenScene { id, index, filter, total } => AppMsg::OpenScene {
                     id,
                     context: Some(SceneNavContext { filter, index, total }),
                 },
+                LibraryOutput::HideInteractiveChanged(on) => AppMsg::SetHideInteractive(on),
             });
 
         let settings = SettingsPage::builder()
@@ -190,6 +197,14 @@ impl Component for AppModel {
             AppMsg::SetAutoplay(on) => {
                 if self.config.autoplay != on {
                     self.config.autoplay = on;
+                    if let Err(e) = self.config.save() {
+                        tracing::warn!("could not save config: {e}");
+                    }
+                }
+            }
+            AppMsg::SetHideInteractive(on) => {
+                if self.config.hide_interactive != on {
+                    self.config.hide_interactive = on;
                     if let Err(e) = self.config.save() {
                         tracing::warn!("could not save config: {e}");
                     }
