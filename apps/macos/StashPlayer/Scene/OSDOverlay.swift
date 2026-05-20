@@ -31,19 +31,24 @@ struct OSDOverlay: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top header: always-visible row that sits inline with the
-            // window's traffic lights. No background — the back button +
-            // title float directly on the video with text shadows for
+            // Top header: floating row that sits inline with the window's
+            // traffic lights. No background — the back button + title
+            // float directly on the video with text shadows for
             // readability. `.ignoresSafeArea(.container, edges: .top)` so
             // the row sits flush with the window edge instead of being
-            // pushed below the (transparent) title bar.
+            // pushed below the (transparent) title bar. Fades with the
+            // OSD reveal state so it auto-hides during inactivity along
+            // with the bottom panel.
             OSDTopHeader(
                 title: scene.displayTitle,
                 subtitle: subtitleLine,
-                onClose: onClose
+                onClose: { vm.bumpReveal(); onClose() }
             )
             .frame(maxWidth: .infinity)
             .ignoresSafeArea(.container, edges: .top)
+            .opacity(vm.revealed ? 1 : 0)
+            .offset(y: vm.revealed ? 0 : -8)
+            .allowsHitTesting(vm.revealed)
 
             Spacer(minLength: 0)
                 .allowsHitTesting(false)

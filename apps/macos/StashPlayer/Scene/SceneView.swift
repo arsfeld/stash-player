@@ -90,15 +90,35 @@ struct SceneView: View {
     var body: some View {
         videoSurface
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Extend the video + OSD under the toolbar so the bare video
+            // shows behind the (transparent) traffic-light strip instead
+            // of a safe-area-inset black bar.
+            .ignoresSafeArea()
             .background(Color.black.ignoresSafeArea())
             .background(WindowAccessor { window in
                 self.hostWindow = window
                 applyWindowChrome(window)
             })
             .navigationTitle(scene.displayTitle)
-            // Hide everything that would normally render a toolbar strip
-            // — we render our own top bar inside the OSD instead.
-            .toolbar(.hidden, for: .windowToolbar)
+            // Keep the unifiedCompact toolbar area present (empty
+            // principal item) so the window's traffic lights stay visible
+            // — hiding the toolbar entirely with `.toolbar(.hidden, ...)`
+            // collapses the title-bar strip and the traffic lights with
+            // it.
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1)
+                }
+            }
+            // Make the toolbar background transparent so the video shows
+            // through behind the traffic lights. Per Apple docs, hiding
+            // the toolbar itself (via `.toolbar(.hidden, for: .windowToolbar)`)
+            // also hides the traffic lights — `.toolbarBackground(.hidden, ...)`
+            // is the supported way to keep the controls but drop the chrome.
+            .toolbarBackground(.hidden, for: .windowToolbar)
+            // Suppress the SwiftUI-auto-generated back button — the OSD
+            // top header carries our own auto-fading back chevron.
+            .navigationBarBackButtonHidden(true)
             .onChange(of: scene.id) { _, _ in applyWindowChrome(hostWindow) }
             .task(id: scene.id) { await reloadPlayer() }
             .onAppear(perform: installMouseMoveMonitor)
@@ -440,9 +460,6 @@ struct SceneView: View {
         if !window.styleMask.contains(.titled) {
             window.styleMask.insert(.titled)
         }
-        // Drop any previously-installed library/scene NSToolbar; the OSD
-        // top bar carries the chrome now.
-        window.toolbar = nil
 
         // Defensive: `.windowStyle(.hiddenTitleBar)` at the app level
         // ships with the standard window buttons visible, but anything
