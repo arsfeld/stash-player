@@ -195,18 +195,19 @@ the system keyring.
 
 ## Local development backend
 
-Two options for running the app against something other than your real Stash
-server:
+Three options for running the app against something other than your real
+Stash server, all driven by the same `tools/dev-stash/populate.sh`:
 
-| | `tools/mock-stash/` | `tools/dev-stash/` |
-| --- | --- | --- |
-| Backend | Python stub | Real `stashapp/stash` in Docker |
-| Video playback | No (404s on `/stream`) | Yes |
-| Setup | `python3 server.py` | `docker compose up -d` + `populate.sh` |
-| Library content | 12 SFW gradient thumbnails | Sample CC-BY clips (Blender) |
-| Good for | Screenshots, offline UI work | Player, scrub, scan, activity writeback |
+| | `tools/mock-stash/` | `compose.yml` | `devenv.nix` |
+| --- | --- | --- | --- |
+| Backend | Python stub | `stashapp/stash` in Docker | Native `pkgs.stash` (Nix) |
+| Video playback | No (404s on `/stream`) | Yes | Yes |
+| Setup | `python3 server.py` | `docker compose up -d` | `devenv up` |
+| State location | none | named Docker volumes | `.devenv/state/stash/` |
+| Reset | restart | `docker compose down -v` | `rm -rf .devenv/state/stash` |
+| Good for | Screenshots, offline UI work | Linux/macOS, no Nix needed | Fastest on Nix dev machines |
 
-To boot the real one:
+### Compose (Docker)
 
 ```sh
 docker compose up -d                 # boots Stash at http://127.0.0.1:9999
@@ -216,6 +217,17 @@ STASH_URL=http://127.0.0.1:9999 cargo run -p stash-player-ui
 
 `docker compose down -v` wipes the Stash DB; the gitignored
 `tools/dev-stash/media/` survives so clips don't re-download.
+
+### devenv (native, Nix-based)
+
+```sh
+devenv up                            # boots stash on :9999
+devenv shell                         # in another terminal — sets DEV_STASH_LIBRARY
+tools/dev-stash/populate.sh          # same script, native backend
+```
+
+Stop with Ctrl-C / `devenv processes stop`. State (DB, blobs, generated)
+lives under `.devenv/state/stash/`; remove it to reset.
 
 See [`tools/dev-stash/README.md`](tools/dev-stash/README.md) for details and
 [`tools/dev-stash/ATTRIBUTION.md`](tools/dev-stash/ATTRIBUTION.md) for clip

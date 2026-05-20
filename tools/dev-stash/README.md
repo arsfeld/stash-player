@@ -18,26 +18,45 @@ use `tools/mock-stash/` instead.
   (Blender open-movie derivatives at various resolutions / codecs /
   sizes), runs setup, and triggers a metadata scan.
 
-## Usage
+## Two ways to boot Stash, one script to populate
+
+Pick whichever fits your machine: Docker for portability, devenv for a
+native binary on a Nix dev box. `populate.sh` works against either.
+
+### Docker (compose.yml at repo root)
 
 ```sh
-# From the repo root:
-
-docker compose up -d                     # boots Stash
+docker compose up -d                     # boots Stash on :9999
 tools/dev-stash/populate.sh              # downloads clips + scans
 
 STASH_URL=http://127.0.0.1:9999 \
   cargo run -p stash-player-ui           # point the app at it
 ```
 
-Re-running `populate.sh` is a no-op once the library is populated.
-
-To stop:
+Stop:
 
 ```sh
 docker compose stop                      # keep the DB / clips
 docker compose down -v                   # wipe the Stash DB (clips survive)
 ```
+
+### devenv (devenv.nix at repo root)
+
+```sh
+devenv up                                # boots stash on :9999 (foreground)
+# in another shell:
+devenv shell                             # sets DEV_STASH_LIBRARY
+tools/dev-stash/populate.sh              # same script, native backend
+
+STASH_URL=http://127.0.0.1:9999 \
+  cargo run -p stash-player-ui
+```
+
+Stop with Ctrl-C in the `devenv up` shell (or `devenv processes stop`).
+Reset all Stash state with `rm -rf .devenv/state/stash` between runs.
+Clips in `media/` survive.
+
+Re-running `populate.sh` is a no-op once the library is populated.
 
 The `media/` directory is gitignored — host-visible, easy to inspect,
 never committed.
@@ -49,6 +68,7 @@ The populate script honours a few env vars:
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `DEV_STASH_URL` | `http://127.0.0.1:9999` | Where to talk to Stash. |
+| `DEV_STASH_LIBRARY` | `/data` | Library path to register on first run. Compose uses `/data` (bind mount); devenv shell sets this to the absolute host path automatically. |
 | `DEV_STASH_READY_TIMEOUT` | `60` | Seconds to wait for Stash to answer GraphQL on startup. |
 | `DEV_STASH_SCAN_TIMEOUT` | `300` | Seconds to wait for `metadataScan` to finish. |
 
@@ -83,11 +103,16 @@ screenshots. But it serves a 404 for `/scene/<id>/stream`, so anything
 that depends on real playback can't be exercised against it. That's
 exactly the gap this directory fills.
 
-## Pinning the Stash image
+## Pinning Stash's version
 
-The image tag in `compose.yml` is intentionally pinned to a specific
-release (not `:latest`). Stash's GraphQL surface changes between
-versions and the populate script's mutations (`metadataScan`,
-`findJob`) shift shape occasionally — pinning eliminates that whole
-class of silent breakage. Bump deliberately and re-test `populate.sh`
-when updating.
+- **Compose**: `compose.yml` pins the image tag (e.g.
+  `stashapp/stash:v0.31.1`). Stash's GraphQL surface changes between
+  versions and the populate script's mutations (`setup`,
+  `metadataScan`, `findJob`) shift shape occasionally — pinning
+  eliminates that whole class of silent breakage.
+- **devenv**: tracks `pkgs.stash` from the pinned nixpkgs in
+  `devenv.lock`. Update by editing `devenv.yaml` or running
+  `devenv update`. The nixpkgs version may lag the upstream release
+  that the compose tag points at (typically by a few months); if a
+  mutation shifts shape between them, `populate.sh` will surface a
+  GraphQL error rather than silently misbehave.

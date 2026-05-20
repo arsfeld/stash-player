@@ -2,6 +2,12 @@
 /result
 /docs
 /tools/dev-stash/media
+
+# devenv (https://devenv.sh) — see devenv.nix at repo root.
+# devenv.lock IS committed; everything else is local state.
+/.devenv
+/.devenv.flake.nix
+devenv.local.nix
 /.antigravitycli
 /.direnv
 /.envrc.local

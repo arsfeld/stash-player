@@ -1,0 +1,8 @@
+# devenv input pins. See https://devenv.sh/inputs/.
+#
+# This devenv shell is a *peer* dev backend to `compose.yml`: same
+# populate.sh, but a native Stash binary instead of a container. Use
+# it when you want fast iteration and don't need container isolation.
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling

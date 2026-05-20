@@ -7,6 +7,10 @@
 #
 # Overrides:
 #   DEV_STASH_URL           default http://127.0.0.1:9999
+#   DEV_STASH_LIBRARY       library path Stash should scan
+#                           (default /data, matching compose.yml's bind
+#                           mount; devenv runs use the absolute host
+#                           path to tools/dev-stash/media/)
 #   DEV_STASH_SCAN_TIMEOUT  seconds to wait for metadataScan to finish
 #                           (default 300)
 #   DEV_STASH_READY_TIMEOUT seconds to wait for Stash to answer GraphQL
@@ -21,6 +25,7 @@ MANIFEST="$HERE/clips.json"
 MEDIA_DIR="$HERE/media"
 
 DEV_STASH_URL="${DEV_STASH_URL:-http://127.0.0.1:9999}"
+DEV_STASH_LIBRARY="${DEV_STASH_LIBRARY:-/data}"
 DEV_STASH_SCAN_TIMEOUT="${DEV_STASH_SCAN_TIMEOUT:-300}"
 DEV_STASH_READY_TIMEOUT="${DEV_STASH_READY_TIMEOUT:-60}"
 GRAPHQL="${DEV_STASH_URL%/}/graphql"
@@ -104,29 +109,29 @@ scene_count() {
 # Run Stash's first-run setup if it hasn't been done. setup() is what
 # actually initializes the database; calling configureGeneral on a
 # fresh instance writes config.yml but leaves Stash with a nil DB
-# handle, which makes the scan job panic. Idempotent: skipped when
-# /data is already registered as a library.
+# handle, which makes the scan job panic. Idempotent: skipped when the
+# library path is already registered.
 ensure_setup() {
   local response existing
   response=$(gql '{ configuration { general { stashes { path } } } }')
   existing=$(jq -r '.data.configuration.general.stashes[]?.path // empty' <<<"$response")
-  if grep -qxF /data <<<"$existing"; then
-    log "library /data already registered"
+  if grep -qxF "$DEV_STASH_LIBRARY" <<<"$existing"; then
+    log "library $DEV_STASH_LIBRARY already registered"
     return 0
   fi
-  log "running first-run setup (library /data, default paths)"
+  log "running first-run setup (library $DEV_STASH_LIBRARY, default paths)"
   # Empty strings let Stash fall back to its STASH_GENERATED /
   # STASH_CACHE / STASH_BLOBS / databaseFile defaults from env / config.
   local result
-  result=$(gql 'mutation { setup(input: {
-    configLocation: "",
-    stashes: [{ path: "/data", excludeVideo: false, excludeImage: true }],
-    databaseFile: "",
-    generatedLocation: "",
-    cacheLocation: "",
-    blobsLocation: "",
+  result=$(gql "mutation { setup(input: {
+    configLocation: \"\",
+    stashes: [{ path: \"$DEV_STASH_LIBRARY\", excludeVideo: false, excludeImage: true }],
+    databaseFile: \"\",
+    generatedLocation: \"\",
+    cacheLocation: \"\",
+    blobsLocation: \"\",
     storeBlobsInDatabase: false
-  }) }')
+  }) }")
   local errors
   errors=$(jq -r '.errors // empty | tostring' <<<"$result")
   if [ -n "$errors" ] && [ "$errors" != "null" ]; then
