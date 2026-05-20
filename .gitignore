@@ -1,5 +1,7 @@
 /target
 /result
+/docs
+/.antigravitycli
 /.direnv
 /.envrc.local
 *.swp
