@@ -264,6 +264,9 @@ impl From<FfiSceneFilter> for SceneFilter {
             direction: f.direction.into(),
             min_rating: f.min_rating,
             organized: f.organized,
+            // U4 will wire this through from FfiSceneFilter; until then the
+            // FFI path can't carry the interactive filter.
+            interactive: None,
             hide_tracked: f.hide_tracked,
             random_seed: f.random_seed,
         }
