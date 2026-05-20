@@ -212,7 +212,10 @@ impl Component for AppModel {
                             self.client = Some(client.clone());
                             self.library.emit(LibraryMsg::SetClient(client));
                         }
-                        Err(e) => tracing::warn!("could not build client: {e}"),
+                        Err(e) => {
+                            tracing::warn!("could not build client: {e}");
+                            widgets.nav.push(self.settings.widget());
+                        }
                     }
                 } else {
                     widgets.nav.push(self.settings.widget());
