@@ -106,6 +106,7 @@ struct SceneView: View {
             .background(WindowAccessor { window in
                 self.hostWindow = window
                 applyWindowChrome(window)
+                installFullScreenObservers()
             })
             .navigationTitle(scene.displayTitle)
             // Keep the unifiedCompact toolbar area present (empty
@@ -527,6 +528,7 @@ struct SceneView: View {
     @MainActor
     private func installMouseMoveMonitor() {
         installKeyDownMonitor()
+        installFullScreenObservers()
         guard mouseMoveMonitor == nil else { return }
         lastMouseLocation = NSEvent.mouseLocation
         mouseMoveMonitor = NSEvent.addLocalMonitorForEvents(
@@ -579,6 +581,29 @@ struct SceneView: View {
                 return event
             }
         }
+    }
+
+    /// Subscribe to the host window's fullscreen transitions and mirror
+    /// the state in `isFullScreen` so SwiftUI re-evaluates the toolbar
+    /// visibility modifier. Seeds the initial state from `styleMask` in
+    /// case we attach mid-fullscreen (e.g. after a NavigationStack push
+    /// from an already-fullscreen library window).
+    @MainActor
+    private func installFullScreenObservers() {
+        guard fullScreenObservers.isEmpty, let window = hostWindow else { return }
+        isFullScreen = window.styleMask.contains(.fullScreen)
+        let center = NotificationCenter.default
+        let enter = center.addObserver(
+            forName: NSWindow.willEnterFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { _ in Task { @MainActor in isFullScreen = true } }
+        let exit = center.addObserver(
+            forName: NSWindow.willExitFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { _ in Task { @MainActor in isFullScreen = false } }
+        fullScreenObservers = [enter, exit]
     }
 
     // MARK: - Prev / next
