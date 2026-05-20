@@ -23,6 +23,9 @@ pub async fn load_api_key() -> Result<Option<String>> {
 }
 
 pub async fn store_api_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return delete_api_key().await;
+    }
     let bytes = key.as_bytes().to_vec();
     tokio::task::spawn_blocking(move || set_generic_password(SERVICE, ACCOUNT, &bytes))
         .await?

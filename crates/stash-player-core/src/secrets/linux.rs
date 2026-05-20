@@ -27,6 +27,9 @@ pub async fn load_api_key() -> Result<Option<String>> {
 }
 
 pub async fn store_api_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return delete_api_key().await;
+    }
     let ss = SecretService::connect(EncryptionType::Dh).await?;
     let collection = ss.get_default_collection().await?;
     if collection.is_locked().await? {

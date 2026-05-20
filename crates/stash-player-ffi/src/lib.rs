@@ -385,7 +385,13 @@ impl StashPlayer {
 
     pub fn load_saved_credentials(&self) -> Result<Option<FfiCredentials>, FfiError> {
         let cfg = Config::load()?;
-        let key = rt().block_on(secrets::load_api_key())?;
+        let key = match rt().block_on(secrets::load_api_key()) {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!("failed to load API key from keychain: {e}");
+                None
+            }
+        };
         if !cfg.has_custom_stash_url() {
             return Ok(None);
         }
