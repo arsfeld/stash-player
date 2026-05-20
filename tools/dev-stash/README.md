@@ -116,3 +116,28 @@ exactly the gap this directory fills.
   that the compose tag points at (typically by a few months); if a
   mutation shifts shape between them, `populate.sh` will surface a
   GraphQL error rather than silently misbehave.
+
+## State isolation gotchas (devenv only)
+
+Stash 0.29 has several behaviours that fight isolation, all of which
+`devenv.nix` works around:
+
+- `$HOME` is ignored on macOS — Stash resolves the home dir via
+  `user.Current()` / passwd lookup, not the env var. HOME-redirect is
+  not a viable isolation strategy.
+- `--config` silently falls back to `~/.stash/config.yml` when the
+  target file doesn't yet exist.
+- The `setup()` GraphQL mutation (the recommended first-run entry
+  point) writes config + DB to the default `~/.stash/` location even
+  when `--config` points elsewhere, leaving state split across two
+  directories. Once split, subsequent `findScenes` calls can panic
+  with `runtime error: invalid memory address or nil pointer
+  dereference` because the running process and `setup()`'s writes
+  disagree on which DB is canonical.
+
+`devenv.nix` sidesteps all of this by **pre-baking the full
+`config.yml`** (with the library path already populated) before
+launching Stash. `setup()` then never needs to run — `populate.sh`'s
+`ensure_setup` sees the library already registered and skips the
+mutation — so none of the leak vectors fire. Everything stays under
+`.devenv/state/stash/`.

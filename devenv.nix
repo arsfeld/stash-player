@@ -37,23 +37,45 @@
     mkdir -p "$DEVENV_ROOT/tools/dev-stash/media"
   '';
 
-  # Run stash with all state under .devenv/state/stash/ so `rm -rf`
-  # gives a clean reset and the host's ~/.stash dir stays untouched.
-  # STASH_GENERATED / STASH_METADATA / STASH_CACHE / STASH_BLOBS steer
-  # Stash's generated content; --config pins the config file path so
-  # first-run setup() lands inside the devenv state dir.
+  # Isolate Stash's state under .devenv/state/stash/.
+  #
+  # Stash 0.29 has several leak vectors that fight isolation:
+  #   - It ignores $HOME on macOS (resolves home via user.Current() /
+  #     passwd lookup), so HOME-redirect doesn't contain it.
+  #   - `--config` silently falls back to ~/.stash/config.yml when the
+  #     file doesn't exist yet.
+  #   - The `setup()` GraphQL mutation -- the recommended first-run
+  #     entry point -- writes config + DB to the *default* ~/.stash/
+  #     location even when --config points elsewhere, leaving split
+  #     state across two directories.
+  #
+  # Workaround: pre-bake the full config.yml with the library path
+  # already populated. Stash sees a complete config on first boot, the
+  # migration runs against the configured DB path, and setup() never
+  # needs to run -- so the home-dir leak vector never triggers.
+  #
+  # Reset = `rm -rf .devenv/state/stash`. Nothing lands in ~/.stash/.
   processes.stash.exec = ''
     set -euo pipefail
     STATE="$DEVENV_STATE/stash"
-    mkdir -p "$STATE"/{generated,metadata,cache,blobs}
-    export STASH_GENERATED="$STATE/generated"
-    export STASH_METADATA="$STATE/metadata"
-    export STASH_CACHE="$STATE/cache"
-    export STASH_BLOBS="$STATE/blobs"
-    exec stash \
-      --nobrowser \
-      --host 127.0.0.1 \
-      --port 9999 \
-      --config "$STATE/config.yml"
+    LIBRARY="$DEVENV_ROOT/tools/dev-stash/media"
+    mkdir -p "$STATE"/{generated,cache,blobs} "$LIBRARY"
+    if [ ! -f "$STATE/config.yml" ]; then
+      cat > "$STATE/config.yml" <<EOF
+host: 127.0.0.1
+port: 9999
+nobrowser: true
+database: $STATE/stash-go.sqlite
+generated: $STATE/generated
+cache: $STATE/cache
+blobs_path: $STATE/blobs
+blobs_storage: FILESYSTEM
+stash:
+  - path: $LIBRARY
+    excludeVideo: false
+    excludeImage: true
+EOF
+    fi
+    exec stash --config "$STATE/config.yml"
   '';
 }
