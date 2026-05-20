@@ -53,6 +53,7 @@ async fn find_scenes_sends_expected_request_shape() {
     filter.direction = SortDirection::Asc;
     filter.min_rating = Some(60);
     filter.organized = Some(true);
+    filter.interactive = Some(false);
 
     let page = client.find_scenes(&filter, 2, 25).await.unwrap();
     assert_eq!(page.count, 357);
@@ -74,6 +75,8 @@ async fn find_scenes_sends_expected_request_shape() {
     assert_eq!(vars["scene_filter"]["rating100"]["value"], 59);
     assert_eq!(vars["scene_filter"]["rating100"]["modifier"], "GREATER_THAN");
     assert_eq!(vars["scene_filter"]["organized"], true);
+    // `interactive: false` is the "hide interactive scenes" wire shape.
+    assert_eq!(vars["scene_filter"]["interactive"], false);
 }
 
 #[tokio::test]

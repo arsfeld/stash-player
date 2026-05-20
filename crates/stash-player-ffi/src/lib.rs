@@ -253,6 +253,10 @@ pub struct FfiSceneFilter {
     pub min_rating: Option<i32>,
     pub organized: Option<bool>,
     pub hide_tracked: bool,
+    /// `Some(false)` hides scenes Stash flagged as interactive; `Some(true)`
+    /// keeps only those; `None` doesn't filter. Mirrors
+    /// `stash_api::SceneFilter::interactive`.
+    pub interactive: Option<bool>,
     pub random_seed: Option<u32>,
 }
 
@@ -264,6 +268,7 @@ impl From<FfiSceneFilter> for SceneFilter {
             direction: f.direction.into(),
             min_rating: f.min_rating,
             organized: f.organized,
+            interactive: f.interactive,
             hide_tracked: f.hide_tracked,
             random_seed: f.random_seed,
         }
