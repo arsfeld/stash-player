@@ -98,6 +98,19 @@ jobs:
         # is already enabled in project.yml; --timestamp gives us the
         # secure timestamp notarytool requires.
         run: |
+          set -euo pipefail
+
+          # Derive the marketing version from the tag (v0.3.0 → 0.3.0). On
+          # non-tag builds (push to main, PRs), fall back to 0.0.0 so the
+          # bundle still builds — Sparkle's appcast comparison never trips
+          # against 0.0.0 because the production appcast is only published
+          # from tag builds (see the `appcast` job).
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ -z "$VERSION" || "$VERSION" == "$GITHUB_REF_NAME" ]]; then
+            VERSION="0.0.0"
+          fi
+          echo "Building bundle version: $VERSION"
+
           if [ "$SIGN_MODE" = "developer-id" ]; then
             SIGN_IDENTITY="Developer ID Application"
             TEAM_ID="$DEVELOPMENT_TEAM_ID"
@@ -118,6 +131,9 @@ jobs:
           # would otherwise build a universal binary, but the xcframework
           # only ships an aarch64-apple-darwin staticlib so x86_64 linking
           # fails. Drop these once the build script lipos in x86_64.
+          # MARKETING_VERSION / CURRENT_PROJECT_VERSION flow through to
+          # Info.plist's $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
+          # substitutions declared in apps/macos/project.yml's info.properties.
           xcodebuild \
             -project apps/macos/StashPlayer.xcodeproj \
             -scheme StashPlayer \
@@ -126,6 +142,8 @@ jobs:
             -destination 'generic/platform=macOS' \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$VERSION" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
@@ -133,6 +151,24 @@ jobs:
             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
             OTHER_CODE_SIGN_FLAGS="$EXTRA_FLAGS" \
             build
+
+      - name: Verify Info.plist version (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        # Cheap belt-and-suspenders check: if xcodegen ever regenerates the
+        # project and drops the $(MARKETING_VERSION) substitution from
+        # info.properties, the bundle would ship with the literal string,
+        # Sparkle would compare it against future appcast items, and the
+        # entire update channel would silently break. Fail the build loudly
+        # before notarization wastes anyone's time.
+        run: |
+          set -euo pipefail
+          EXPECTED="${GITHUB_REF_NAME#v}"
+          ACTUAL=$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "Info.plist CFBundleShortVersionString=$ACTUAL does not match tag $EXPECTED" >&2
+            exit 1
+          fi
+          echo "Info.plist version: $ACTUAL (matches tag)"
 
       - name: Verify signature
         if: steps.signing.outputs.mode == 'developer-id'
@@ -221,3 +257,158 @@ jobs:
         with:
           files: StashPlayer-macos-arm64.zip
           generate_release_notes: true
+
+  appcast:
+    name: Publish Sparkle appcast
+    needs: release
+    # Stable channel only — `!contains(...,'-')` rejects pre-release tags
+    # like `v0.3.0-beta.1`. CFBundleVersion comparison would behave badly
+    # against hyphenated strings; the brainstorm scoped beta out of v1.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+    runs-on: macos-15
+    permissions:
+      contents: write
+    # Job-level group serializes all `appcast` jobs across every tag —
+    # the workflow-level `macos-${{ github.ref }}` group only covers same-ref
+    # cancellations, so two different tags pushed in quick succession would
+    # otherwise race on the `git push gh-pages`. `cancel-in-progress: false`
+    # ensures both tags' appcast updates land in order.
+    concurrency:
+      group: appcast-publish
+      cancel-in-progress: false
+    env:
+      # Pin Sparkle release + digest. Bumping SPARKLE_VERSION requires
+      # re-computing SPARKLE_SHA256 in the same commit (without it, an
+      # attacker who replaces the GitHub release asset gets `generate_appcast`
+      # running with the EdDSA private key on stdin — total compromise).
+      # Compute: curl ...tar.xz | shasum -a 256
+      SPARKLE_VERSION: "2.9.2"
+      SPARKLE_SHA256: "1cb340cbbef04c6c0d162078610c25e2221031d794a3449d89f2f56f4df77c95"
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Download current + prior release zips
+        # Pull the just-released zip plus the prior 9 releases so the
+        # regenerated appcast carries up to 10 historical entries. Needed
+        # for the dual-key rotation procedure to work (users on the old key
+        # need a transition release in the feed) and so users on an older
+        # macOS who cannot install the latest can still find an installable
+        # intermediate version.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          # Take up to the 10 most recent v* tags (current release plus 9
+          # historicals). `gh release list` returns newest first.
+          TAGS=$(gh release list --limit 10 --json tagName -q '.[].tagName')
+
+          for TAG in $TAGS; do
+            echo "==> Fetching StashPlayer-macos-arm64.zip from $TAG"
+            # `|| true` tolerates pre-Sparkle releases that don't have the
+            # canonical asset name; missing historical assets shouldn't fail
+            # the whole publish.
+            gh release download "$TAG" \
+              --pattern 'StashPlayer-macos-arm64.zip' \
+              --dir "release-assets/$TAG" || echo "  (no matching asset, skipping)"
+          done
+
+          # Flatten into a single dir so `generate_appcast` sees them all.
+          # Rename each to `StashPlayer-macos-arm64-<tag>.zip` so they have
+          # unique stems and so a same-stem release-notes sidecar only pairs
+          # with the current release.
+          for TAG in $TAGS; do
+            SRC="release-assets/$TAG/StashPlayer-macos-arm64.zip"
+            [ -f "$SRC" ] || continue
+            if [ "$TAG" = "$GITHUB_REF_NAME" ]; then
+              # Current release keeps the canonical name so the .html
+              # sidecar (next step) auto-pairs to it.
+              cp "$SRC" "release-assets/StashPlayer-macos-arm64.zip"
+            else
+              cp "$SRC" "release-assets/StashPlayer-macos-arm64-${TAG}.zip"
+            fi
+          done
+
+          rm -rf release-assets/v*  # drop the per-tag subdirs after flattening
+          ls -lh release-assets/
+
+      - name: Install pandoc + generate release notes HTML sidecar
+        # pandoc is NOT pre-installed on macos-15 runners (verified against
+        # actions/runner-images manifest). `generate_appcast` auto-pairs a
+        # `.html` file with the matching `.zip` stem and emits it as
+        # `<sparkle:releaseNotesLink>`.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          brew install pandoc
+
+          BODY=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          if [ -z "$BODY" ]; then
+            BODY="No release notes for this version."
+          fi
+          printf '%s' "$BODY" | pandoc -f gfm -t html \
+            -o release-assets/StashPlayer-macos-arm64.html
+          echo "Generated release-assets/StashPlayer-macos-arm64.html"
+
+      - name: Install Sparkle (pinned tarball + SHA-256 verify)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          echo "${SPARKLE_SHA256}  sparkle.tar.xz" | shasum -a 256 -c -
+          tar -xJf sparkle.tar.xz
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - name: Sign + regenerate appcast
+        # Owned `run:` block so a non-zero exit aborts before the next step
+        # touches the live gh-pages/appcast.xml. EdDSA private key is written
+        # to a mode-600 mktemp file (not piped via `echo`, which would put
+        # the value in the shell's argument space briefly) and shredded in a
+        # trap so it never persists on disk after the step.
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$(mktemp -t sparkle_ed.XXXXXX)"
+          chmod 600 "$KEY_FILE"
+          trap 'rm -P "$KEY_FILE" 2>/dev/null || rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
+
+          generate_appcast \
+            --ed-key-file "$KEY_FILE" \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --maximum-versions 10 \
+            release-assets/
+
+          # Sanity-check the generated feed has an item for this tag.
+          grep -q "sparkle:version" release-assets/appcast.xml
+          echo "Appcast generated for ${GITHUB_REF_NAME}"
+
+      - name: Publish appcast to gh-pages
+        # Separate `run:` block — runs only if signing succeeded. Push has
+        # a single pull --rebase retry as belt-and-suspenders in case the
+        # appcast-publish concurrency group ever fails to serialize two
+        # cross-tag jobs.
+        run: |
+          set -euo pipefail
+          cp release-assets/appcast.xml gh-pages/appcast.xml
+
+          cd gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+
+          if git diff --cached --quiet; then
+            echo "No appcast changes to commit"
+            exit 0
+          fi
+
+          git commit -m "appcast: ${GITHUB_REF_NAME}"
+          git push || { git pull --rebase origin gh-pages && git push; }
