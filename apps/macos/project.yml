@@ -65,7 +65,7 @@ targets:
         # launches honor NSUserDefaults (written by Settings/SettingsView's
         # toggle), so the user's toggle wins.
         SUFeedURL: https://arsfeld.github.io/stash-player/appcast.xml
-        SUPublicEDKey: PLACEHOLDER_REPLACE_WITH_REAL_EDDSA_PUBLIC_KEY
+        SUPublicEDKey: Fx+Cc8kj5pSdtx3i/E+AhMmLUgefc8EXD1CxFh2VO5A=
         SUEnableAutomaticChecks: true
     dependencies:
       - framework: StashPlayerFFI.xcframework
