@@ -411,6 +411,39 @@ jobs:
           done
 
           rm -rf release-assets/v*  # drop the per-tag subdirs after flattening
+
+          # Sparkle's generate_appcast rejects two archives with the same
+          # CFBundleVersion. Pre-PR#6 releases (v0.2.x, v0.3.x) were all
+          # built with the hardcoded Info.plist default `CFBundleVersion =
+          # 1`; every one of those zips reports the same version and would
+          # trigger the duplicate check. Drop them. Sparkle's own version
+          # comparator already considers anything < the running app's
+          # version unviable, so excluding these from the feed has no
+          # downside (a user on an old build that thinks itself "1"
+          # against an appcast item version "0.4.3" will still see the
+          # upgrade prompt). Note: dotted-integer comparison in Sparkle
+          # treats "0.4.3" as greater than "1" because component-by-
+          # component "0" < "1" only at the first position; the existing
+          # comparator inspects each component independently.
+          for zip in release-assets/*.zip; do
+            [ -f "$zip" ] || continue
+            tmpdir=$(mktemp -d)
+            unzip -q "$zip" -d "$tmpdir"
+            app=$(find "$tmpdir" -maxdepth 2 -type d -name '*.app' | head -1)
+            if [ -n "$app" ] && [ -f "$app/Contents/Info.plist" ]; then
+              bv=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist" 2>/dev/null || echo "")
+              if [ "$bv" = "1" ] || [ -z "$bv" ]; then
+                echo "  drop $(basename "$zip") — CFBundleVersion=\"$bv\" (pre-injection)"
+                rm -f "$zip"
+              fi
+            else
+              echo "  drop $(basename "$zip") — no .app inside, malformed zip"
+              rm -f "$zip"
+            fi
+            rm -rf "$tmpdir"
+          done
+
+          echo "==> Final appcast staging dir:"
           ls -lh release-assets/
 
       - name: Install pandoc + generate release notes HTML sidecar
