@@ -377,14 +377,19 @@ jobs:
 
           # Take up to the 10 most recent v* tags (current release plus 9
           # historicals). `gh release list` returns newest first.
-          TAGS=$(gh release list --limit 10 --json tagName -q '.[].tagName')
+          # `--repo "$GITHUB_REPOSITORY"` is required because the previous
+          # `actions/checkout@v4 path: gh-pages` step puts the repo in a
+          # subdirectory, so the workspace root is not a git repo and `gh`
+          # cannot infer the target repo from git context.
+          TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 10 --json tagName -q '.[].tagName')
 
           for TAG in $TAGS; do
             echo "==> Fetching StashPlayer-macos-arm64.zip from $TAG"
-            # `|| true` tolerates pre-Sparkle releases that don't have the
+            # `|| echo` tolerates pre-Sparkle releases that don't have the
             # canonical asset name; missing historical assets shouldn't fail
             # the whole publish.
             gh release download "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
               --pattern 'StashPlayer-macos-arm64.zip' \
               --dir "release-assets/$TAG" || echo "  (no matching asset, skipping)"
           done
@@ -419,7 +424,7 @@ jobs:
           set -euo pipefail
           brew install pandoc
 
-          BODY=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          BODY=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body -q .body)
           if [ -z "$BODY" ]; then
             BODY="No release notes for this version."
           fi
