@@ -24,10 +24,13 @@ env:
 jobs:
   build:
     name: Build StashPlayer.app
-    # macos-15 is Apple Silicon and ships Xcode 16.x — needed because
-    # xcodegen produces objectVersion=77 project files which Xcode 15
-    # (the macos-14 default) can't parse. Matches the aarch64-apple-darwin
-    # staticlib that build-macos-xcframework.sh produces.
+    # macos-15 is Apple Silicon and now ships multiple Xcode versions —
+    # the setup-xcode step below pins to a release that includes the
+    # macOS 26 (Tahoe) SDK so the player's `.glassEffect(_:in:)` calls
+    # resolve at compile time. The `if #available(macOS 26.0, *)` guard
+    # only gates *execution*; the symbol must still exist in the SDK
+    # being linked against. Matches the aarch64-apple-darwin staticlib
+    # that build-macos-xcframework.sh produces.
     runs-on: macos-15
     env:
       APP_PATH: build-aux/macos-derived/Build/Products/Release/StashPlayer.app
@@ -35,6 +38,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode (macOS 26 SDK)
+        # Tahoe SDK is required because Scene/VisualEffectView.swift uses
+        # `.glassEffect(_:in:)` (macOS 26+). `latest-stable` picks the
+        # newest non-beta Xcode installed on the runner image; if the
+        # image ever lags and stops shipping Tahoe-capable Xcode, pin to
+        # an explicit version (e.g. xcode-version: "26.0") here.
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
