@@ -1,19 +1,58 @@
 import SwiftUI
 import AppKit
 
-/// Thin SwiftUI wrapper around `NSVisualEffectView` so the OSD bars and the
-/// info popover share a single Infuse-style HUD vibrancy backdrop.
+/// Native macOS glass backdrop for the OSD.
 ///
-/// `.hudWindow` is what Apple ships their own video / fullscreen HUDs with —
-/// it gives the dark, frosted-glass look that reads well over arbitrary
-/// video frames without needing a custom tint. `.withinWindow` blends the
-/// blur against in-window content rather than the desktop, which keeps
-/// the panel feeling attached to the window rather than floating in space.
+/// On macOS 26+ (Tahoe) we use the system Liquid Glass material via
+/// `.glassEffect(_:in:)`. That is the only first-party API for the
+/// translucent / refractive look the OSD wants — Apple ships it as the
+/// material for floating navigation controls over media.
 ///
-/// Setting `cornerRadius` rounds the actual NSVisualEffectView's backing
-/// layer (with `.continuous` corner curve for the smooth Apple curvature),
-/// so the blurred sample mask matches the visible edge — `.clipShape` on
-/// the SwiftUI side leaves a subpixel halo at the corners.
+/// On macOS 14–25 we fall back to `NSVisualEffectView(.hudWindow,
+/// .withinWindow)`, the same vibrancy material the system uses for the
+/// volume / brightness HUDs. It is *not* Liquid Glass — it is the
+/// pre-Tahoe equivalent, and we keep it only so the player still works
+/// on Sonoma / Sequoia.
+
+extension View {
+    /// Native glass panel backdrop. On Tahoe we use
+    /// `.glassEffect(.regular.tint(.black.opacity(0.35)), in: shape)`.
+    /// `.regular` is the standard glass variant; the partial black
+    /// tint blends just enough darkness into the material to keep
+    /// white text/icons readable over bright video frames without
+    /// flattening the refraction (a solid `.tint(.black)` kills the
+    /// glass character). 0.35 puts us close to Apple's own media
+    /// chrome density. Older macOS falls back to a tinted
+    /// NSVisualEffectView using a slightly heavier 0.38 overlay for
+    /// panels and a lighter 0.32 overlay for pills to visually match
+    /// the Tahoe glass treatment.
+    @ViewBuilder
+    func osdGlassPanel(cornerRadius: CGFloat = 18) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(
+                .regular.tint(.black.opacity(0.35)),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+        } else {
+            self.background(LegacyOSDPanelBackground(cornerRadius: cornerRadius))
+        }
+    }
+
+    /// Native glass pill backdrop (default capsule on Tahoe). Same
+    /// black tint level as the panel so the two read as one control
+    /// surface.
+    @ViewBuilder
+    func osdGlassPill() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.tint(.black.opacity(0.35)))
+        } else {
+            self.background(LegacyOSDPillBackground())
+        }
+    }
+}
+
+/// Thin SwiftUI wrapper around `NSVisualEffectView`. Only referenced from
+/// the legacy fallback path — Tahoe code does not touch it.
 struct VisualEffectView: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     var blendingMode: NSVisualEffectView.BlendingMode = .withinWindow
@@ -48,14 +87,9 @@ struct VisualEffectView: NSViewRepresentable {
     }
 }
 
-/// Reusable "floating dark glass panel" backdrop — vibrancy + a substantial
-/// black tint to darken `hudWindow`'s otherwise-greyish translucency over
-/// arbitrary video frames + rounded corners + subtle 1pt white-stroke edge
-/// + soft drop shadow. Apple's own HUDs (system volume / brightness OSD,
-/// Now Playing) skip the stroke, but Infuse and most premium third-party
-/// OSDs include it because it gives the glass a defined edge against
-/// varying-brightness video.
-struct OSDPanelBackground: View {
+// MARK: - Pre-Tahoe fallbacks
+
+private struct LegacyOSDPanelBackground: View {
     var cornerRadius: CGFloat = 18
 
     var body: some View {
@@ -65,17 +99,32 @@ struct OSDPanelBackground: View {
                 blendingMode: .withinWindow,
                 cornerRadius: cornerRadius
             )
-            // hudWindow on its own reads as light-grey glass over bright
-            // video frames. A 50%-black tint lands on the dark side of
-            // Infuse's "black rounded rectangle" look while still letting
-            // the underlying video bleed through at ~10% — feels alive,
-            // not a flat black panel.
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.black.opacity(0.5))
+                .fill(Color.black.opacity(0.38))
                 .allowsHitTesting(false)
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(0.10), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.45), radius: 28, x: 0, y: 12)
+    }
+}
+
+private struct LegacyOSDPillBackground: View {
+    var cornerRadius: CGFloat = 12
+
+    var body: some View {
+        ZStack {
+            VisualEffectView(
+                material: .hudWindow,
+                blendingMode: .withinWindow,
+                cornerRadius: cornerRadius
+            )
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.black.opacity(0.32))
+                .allowsHitTesting(false)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 14, x: 0, y: 6)
     }
 }

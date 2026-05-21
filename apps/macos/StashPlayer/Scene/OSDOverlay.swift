@@ -1,18 +1,20 @@
 import SwiftUI
 import AppKit
 
-/// Infuse-style OSD overlay — two floating dark-glass panels with rounded
-/// corners, soft drop shadows, and a subtle 1pt edge stroke. Top panel
-/// carries metadata (chevron-back + title + subtitle); bottom panel
-/// carries the unified scrubber + transport + Stash extras.
+/// Infuse-style OSD overlay built on the native macOS Liquid Glass
+/// material (`.glassEffect(_:in:)` on macOS 26+, NSVisualEffectView
+/// fallback on macOS 14–25 via `.osdGlassPanel` / `.osdGlassPill`).
 ///
-/// Layout rules:
-///   - Both panels float with margins (top: 40pt to clear traffic lights,
-///     bottom: 24pt, sides: 24pt). They are never edge-to-edge.
-///   - Corner radius 18pt — matches Apple's system HUD constant.
-///   - The `Spacer` between panels is `allowsHitTesting(false)` so clicks
-///     on the bare video reach `PlayerView` (single-click → play/pause,
-///     double-click → fullscreen, drag → window move).
+/// Layout:
+///   - Top: floating glass "Close" pill (top-left, clear of traffic
+///     lights) + scene title centered at the top with a text shadow,
+///     no panel.
+///   - Bottom: a single rounded glass panel with three rows —
+///     scrubber, transport (volume left, transport buttons centered,
+///     extras right), and time labels (elapsed left, -remaining right).
+///   - The middle `Spacer` between top and bottom is
+///     `allowsHitTesting(false)` so clicks on the bare video reach
+///     `PlayerView`.
 struct OSDOverlay: View {
     @ObservedObject var vm: OSDViewModel
     let scene: FfiScene
@@ -31,20 +33,10 @@ struct OSDOverlay: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top header: floating row that sits inline with the window's
-            // traffic lights. No background — the back button + title
-            // float directly on the video with text shadows for
-            // readability. `.ignoresSafeArea(.container, edges: .top)` so
-            // the row sits flush with the window edge instead of being
-            // pushed below the (transparent) title bar. Fades with the
-            // OSD reveal state so it auto-hides during inactivity along
-            // with the bottom panel.
-            OSDTopHeader(
+            OSDTopBar(
                 title: scene.displayTitle,
-                subtitle: subtitleLine,
                 onClose: { vm.bumpReveal(); onClose() }
             )
-            .frame(maxWidth: .infinity)
             .ignoresSafeArea(.container, edges: .top)
             .opacity(vm.revealed ? 1 : 0)
             .offset(y: vm.revealed ? 0 : -8)
@@ -53,7 +45,6 @@ struct OSDOverlay: View {
             Spacer(minLength: 0)
                 .allowsHitTesting(false)
 
-            // Bottom panel: compact rounded glass, ≤640pt, centered.
             OSDBottomPanel(
                 vm: vm,
                 oCount: oCount,
@@ -67,13 +58,8 @@ struct OSDOverlay: View {
                 onBumpO: { vm.bumpReveal(); onBumpO() },
                 onResetO: { vm.bumpReveal(); onResetO() }
             )
-            // No `.frame(maxWidth:)` — the panel sizes to its content
-            // (scrubber row + transport row) so the right cluster sits
-            // flush against the left cluster instead of being pushed to
-            // a far edge by a Spacer that fills empty width. Centered by
-            // the outer VStack's default alignment.
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.bottom, 24)
+            .padding(.bottom, 28)
             .opacity(vm.revealed ? 1 : 0)
             .offset(y: vm.revealed ? 0 : 12)
             .allowsHitTesting(vm.revealed)
@@ -84,65 +70,60 @@ struct OSDOverlay: View {
             InfoPopover(scene: scene, onOpenInStash: onOpenInStash)
         }
     }
-
-    private var subtitleLine: String {
-        var parts: [String] = []
-        if let studio = scene.studio?.name { parts.append(studio) }
-        if let date = scene.date { parts.append(date) }
-        if let f = scene.files.first, let w = f.width, let h = f.height {
-            parts.append("\(w)×\(h)")
-        }
-        if let r = scene.rating100, r > 0 {
-            parts.append(String(format: "★ %.1f", Double(r) / 20.0))
-        }
-        return parts.joined(separator: " · ")
-    }
 }
 
-// MARK: - Top panel
+// MARK: - Top bar
 
-/// Always-visible header strip that sits inline with the window's traffic
-/// lights. Fully transparent background so the video shows through behind
-/// the window controls; title + back-button rely on text shadows for
-/// readability over bright video frames.
-private struct OSDTopHeader: View {
+/// Floating top strip with a glass Close pill on the left and the scene
+/// title centered. ZStack so the title centers on the window's full
+/// width regardless of the pill's width.
+private struct OSDTopBar: View {
     let title: String
-    let subtitle: String
     let onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            OSDIconButton(
-                systemName: "chevron.backward",
-                help: "Back to library",
-                action: onClose
-            )
+        ZStack {
+            HStack {
+                OSDClosePill(action: onClose)
+                    .padding(.leading, 78)
+                Spacer(minLength: 0)
+            }
 
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
+                .shadow(color: .black.opacity(0.85), radius: 4, x: 0, y: 1)
                 .lineLimit(1)
-
-            if !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
-                    .lineLimit(1)
-                    .layoutPriority(-1)
-            }
-            Spacer(minLength: 0)
+                .padding(.horizontal, 200)
         }
-        // Left padding clears the window's traffic lights so the back
-        // button sits flush against them.
-        .padding(.leading, 78)
-        .padding(.trailing, 16)
-        // Vertical padding sized to match the standard 28pt title-bar
-        // height — the back button + title row visually aligns with the
-        // traffic lights instead of floating below them.
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Glass pill with an X glyph + "Close" label. Uses the native capsule
+/// glass on Tahoe and the legacy NSVisualEffectView pill on older macOS.
+private struct OSDClosePill: View {
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Close")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white.opacity(hovered ? 1 : 0.92))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .osdGlassPill()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Close")
+        .onHover { hovered = $0 }
     }
 }
 
@@ -161,14 +142,20 @@ private struct OSDBottomPanel: View {
     let onBumpO: () -> Void
     let onResetO: () -> Void
 
+    /// Width of the slider tracks and time row. Drives the panel's
+    /// overall width — the panel sizes to its content.
+    private let trackWidth: CGFloat = 460
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             scrubberRow
             transportRow
+            timeRow
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(OSDPanelBackground(cornerRadius: 16))
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .osdGlassPanel(cornerRadius: 18)
         .foregroundStyle(.white)
     }
 
@@ -177,103 +164,108 @@ private struct OSDBottomPanel: View {
     }
 
     private var scrubberRow: some View {
-        HStack(spacing: 10) {
-            Text(playhead(displayedSeconds))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .frame(width: 48, alignment: .trailing)
-
-            Slider(
-                value: Binding(
-                    get: { displayedSeconds },
-                    set: { newValue in
-                        if vm.seekDraftSeconds == nil {
-                            vm.beginSeekDraft(newValue)
-                        } else {
-                            vm.updateSeekDraft(newValue)
-                        }
-                    }
-                ),
-                in: 0...max(1, vm.durationSeconds),
-                onEditingChanged: { editing in
-                    vm.bumpReveal()
-                    if !editing {
-                        vm.commitSeekDraft()
+        Slider(
+            value: Binding(
+                get: { displayedSeconds },
+                set: { newValue in
+                    if vm.seekDraftSeconds == nil {
+                        vm.beginSeekDraft(newValue)
+                    } else {
+                        vm.updateSeekDraft(newValue)
                     }
                 }
-            )
-            .controlSize(.small)
-            .tint(.white)
-            // Pin the slider's width so the panel sizes to a predictable
-            // compact width regardless of duration's label digits.
-            .frame(width: 320)
-
-            Text(playhead(vm.durationSeconds))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .frame(width: 48, alignment: .leading)
-        }
+            ),
+            in: 0...max(1, vm.durationSeconds),
+            onEditingChanged: { editing in
+                vm.bumpReveal()
+                if !editing {
+                    vm.commitSeekDraft()
+                }
+            }
+        )
+        .controlSize(.small)
+        .tint(.white)
+        .frame(width: trackWidth)
     }
 
     private var transportRow: some View {
-        HStack(spacing: 4) {
-            // Left cluster — primary transport
-            OSDIconButton(systemName: "backward.end.fill", help: "Previous scene") {
-                onPrev()
-            }
-            .disabled(!canGoPrev)
-            .opacity(canGoPrev ? 1 : 0.35)
-
-            OSDIconButton(systemName: "gobackward.10", help: "Back 10s (j)") {
-                vm.bumpReveal()
-                vm.skip(by: -10)
+        ZStack {
+            // Left cluster — always-visible volume control.
+            HStack(spacing: 0) {
+                volumeCluster
+                Spacer(minLength: 0)
             }
 
-            playPauseButton
+            // Right cluster — Stash extras + system extras anchored
+            // trailing.
+            HStack(spacing: 2) {
+                Spacer(minLength: 0)
+                oCounterCluster
 
-            OSDIconButton(systemName: "goforward.10", help: "Forward 10s (l)") {
-                vm.bumpReveal()
-                vm.skip(by: 10)
+                OSDIconButton(
+                    systemName: autoplay ? "play.square.fill" : "play.square",
+                    help: autoplay ? "Autoplay on — click to disable" : "Autoplay off — click to enable",
+                    tinted: autoplay
+                ) {
+                    vm.bumpReveal()
+                    autoplay.toggle()
+                }
+
+                OSDIconButton(systemName: "info.circle", help: "Scene details (i)") {
+                    vm.bumpReveal()
+                    showInfo.toggle()
+                }
+
+                OSDIconButton(
+                    systemName: "arrow.up.left.and.arrow.down.right",
+                    help: "Fullscreen (f)"
+                ) {
+                    onToggleFullscreen()
+                }
             }
 
-            OSDIconButton(systemName: "forward.end.fill", help: "Next scene") {
-                onNext()
-            }
-            .disabled(!canGoNext)
-            .opacity(canGoNext ? 1 : 0.35)
+            // Center cluster — primary transport. Geometrically centered
+            // by the ZStack regardless of left / right cluster widths.
+            HStack(spacing: 2) {
+                OSDIconButton(systemName: "backward.end.fill", help: "Previous scene") {
+                    onPrev()
+                }
+                .disabled(!canGoPrev)
+                .opacity(canGoPrev ? 1 : 0.35)
 
-            volumeCluster
-                .padding(.leading, 8)
+                OSDIconButton(systemName: "gobackward.10", help: "Back 10s (j)") {
+                    vm.bumpReveal()
+                    vm.skip(by: -10)
+                }
 
-            // 14pt visual gap separates transport from the Stash-extras
-            // cluster without the elastic Spacer that was stretching the
-            // panel out to maxWidth.
-            Color.clear.frame(width: 14, height: 0)
+                playPauseButton
 
-            // Right cluster — Stash extras + system extras
-            oCounterCluster
+                OSDIconButton(systemName: "goforward.10", help: "Forward 10s (l)") {
+                    vm.bumpReveal()
+                    vm.skip(by: 10)
+                }
 
-            OSDIconButton(
-                systemName: autoplay ? "play.square.fill" : "play.square",
-                help: autoplay ? "Autoplay on — click to disable" : "Autoplay off — click to enable",
-                tinted: autoplay
-            ) {
-                vm.bumpReveal()
-                autoplay.toggle()
-            }
-
-            OSDIconButton(systemName: "info.circle", help: "Scene details (i)") {
-                vm.bumpReveal()
-                showInfo.toggle()
-            }
-
-            OSDIconButton(
-                systemName: "arrow.up.left.and.arrow.down.right",
-                help: "Fullscreen (f)"
-            ) {
-                onToggleFullscreen()
+                OSDIconButton(systemName: "forward.end.fill", help: "Next scene") {
+                    onNext()
+                }
+                .disabled(!canGoNext)
+                .opacity(canGoNext ? 1 : 0.35)
             }
         }
+        .frame(width: trackWidth)
+    }
+
+    private var timeRow: some View {
+        HStack {
+            Text(playhead(displayedSeconds))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.80))
+            Spacer(minLength: 0)
+            Text(remainingPlayhead(displayedSeconds, total: vm.durationSeconds))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.80))
+        }
+        .frame(width: trackWidth)
     }
 
     private var playPauseButton: some View {
@@ -284,48 +276,46 @@ private struct OSDBottomPanel: View {
             Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
+                .frame(width: 40, height: 36)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(vm.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
 
-    /// Volume is mute-button only by default; the slider only renders on
-    /// hover to keep the transport row compact, matching Infuse's
-    /// expandable speaker control.
-    @State private var volumeHovered = false
-
+    /// Always-visible volume: mute toggle + 60pt slider. No hover
+    /// expand; matches the request to keep the control discoverable
+    /// without a reveal interaction.
     private var volumeCluster: some View {
-        HStack(spacing: 2) {
-            OSDIconButton(
-                systemName: volumeIcon,
-                help: vm.isMuted ? "Unmute (m)" : "Mute (m)"
-            ) {
+        HStack(spacing: 4) {
+            Button {
                 vm.bumpReveal()
                 vm.toggleMute()
+            } label: {
+                Image(systemName: volumeIcon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .frame(width: 20, height: 22)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(vm.isMuted ? "Unmute (m)" : "Mute (m)")
 
-            if volumeHovered {
-                Slider(
-                    value: Binding(
-                        get: { Double(vm.isMuted ? 0 : vm.volume) },
-                        set: { newValue in
-                            vm.bumpReveal()
-                            if vm.isMuted, newValue > 0 { vm.toggleMute() }
-                            vm.setVolume(Float(newValue))
-                        }
-                    ),
-                    in: 0...1
-                )
-                .controlSize(.small)
-                .frame(width: 70)
-                .tint(.white)
-                .transition(.opacity.combined(with: .move(edge: .leading)))
-            }
+            Slider(
+                value: Binding(
+                    get: { Double(vm.isMuted ? 0 : vm.volume) },
+                    set: { newValue in
+                        vm.bumpReveal()
+                        if vm.isMuted, newValue > 0 { vm.toggleMute() }
+                        vm.setVolume(Float(newValue))
+                    }
+                ),
+                in: 0...1
+            )
+            .controlSize(.mini)
+            .frame(width: 64)
+            .tint(.white)
         }
-        .onHover { volumeHovered = $0 }
-        .animation(.easeInOut(duration: 0.15), value: volumeHovered)
     }
 
     private var volumeIcon: String {
@@ -359,14 +349,12 @@ private struct OSDBottomPanel: View {
 
 // MARK: - Shared icon button
 
-/// Square icon button used throughout the OSD. White SF Symbol at 16pt,
-/// 32pt hit target, gentle hover background. The frame is intentionally
-/// just larger than the glyph so the buttons pack tightly together when
-/// the row has many of them.
+/// Square icon button used throughout the OSD. SF Symbol with a gentle
+/// hover background. Sized to pack tightly in the transport row.
 private struct OSDIconButton: View {
     let systemName: String
     let help: String
-    var size: CGFloat = 16
+    var size: CGFloat = 15
     var tinted: Bool = false
     let action: () -> Void
 
@@ -377,7 +365,7 @@ private struct OSDIconButton: View {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(tinted ? .white : .white.opacity(hovered ? 1 : 0.88))
-                .frame(width: 32, height: 32)
+                .frame(width: 30, height: 30)
                 .background(
                     Circle()
                         .fill(.white.opacity(hovered ? 0.14 : 0))
@@ -393,4 +381,11 @@ private struct OSDIconButton: View {
 private func playhead(_ seconds: Double) -> String {
     guard seconds.isFinite, seconds >= 0 else { return "--:--" }
     return formatDuration(seconds)
+}
+
+/// "-HH:MM:SS" / "-MM:SS" remaining-time label, Infuse-style.
+private func remainingPlayhead(_ current: Double, total: Double) -> String {
+    guard total.isFinite, total > 0, current.isFinite else { return "--:--" }
+    let remaining = max(0, total - current)
+    return "-" + formatDuration(remaining)
 }

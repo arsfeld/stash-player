@@ -133,6 +133,16 @@ final class OSDViewModel: ObservableObject {
         if !revealed { revealed = true }
     }
 
+    /// Hide the OSD immediately without waiting out the auto-hide timer.
+    /// Used when the cursor leaves the window, matching Infuse's behaviour:
+    /// the OSD belongs to the cursor, so a cursor outside the window means
+    /// no OSD.
+    func hideImmediately() {
+        hideTask?.cancel()
+        hideTask = nil
+        if revealed { revealed = false }
+    }
+
     private func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task { @MainActor [weak self] in
