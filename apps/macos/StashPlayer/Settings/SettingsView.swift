@@ -1,16 +1,31 @@
+import Sparkle
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
+    @StateObject private var updaterViewModel: CheckForUpdatesViewModel
     @State private var url: String = ""
     @State private var apiKey: String = ""
     @State private var status: TestStatus = .idle
+    @State private var autoCheck: Bool
+
+    private let updater: SPUUpdater
 
     enum TestStatus {
         case idle
         case testing
         case success(version: String)
         case failure(message: String)
+    }
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        // Property wrappers require their backing storage to be initialized
+        // through their wrapper type when set from a custom init.
+        self._updaterViewModel = StateObject(
+            wrappedValue: CheckForUpdatesViewModel(updater: updater)
+        )
+        self._autoCheck = State(initialValue: updater.automaticallyChecksForUpdates)
     }
 
     var body: some View {
@@ -37,6 +52,25 @@ struct SettingsView: View {
                     statusLabel
                 }
             }
+
+            Section("Updates") {
+                LabeledContent("Version", value: Bundle.main.versionDisplay)
+                Toggle("Automatically check for updates", isOn: $autoCheck)
+                    .onChange(of: autoCheck) { _, newValue in
+                        // Sparkle's docs: write only in response to direct user
+                        // interaction. Do not re-read on view appearance.
+                        updater.automaticallyChecksForUpdates = newValue
+                    }
+                HStack {
+                    Button("Check for Updates Now") {
+                        updater.checkForUpdates()
+                    }
+                    .disabled(!updaterViewModel.canCheckForUpdates)
+                    Spacer()
+                    Text("Last checked: \(lastCheckedLabel)")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
@@ -46,6 +80,14 @@ struct SettingsView: View {
     private var isTesting: Bool {
         if case .testing = status { return true }
         return false
+    }
+
+    private var lastCheckedLabel: String {
+        if let date = updaterViewModel.lastUpdateCheckDate {
+            return date.formatted(.relative(presentation: .named))
+        } else {
+            return "Never"
+        }
     }
 
     @ViewBuilder
@@ -98,5 +140,13 @@ struct SettingsView: View {
         case .NotConnected:
             return "Not connected"
         }
+    }
+}
+
+private extension Bundle {
+    var versionDisplay: String {
+        let short = infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
     }
 }

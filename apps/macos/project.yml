@@ -7,6 +7,11 @@ options:
   groupSortPosition: top
   createIntermediateGroups: true
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.2
+
 settings:
   base:
     SWIFT_VERSION: "5.9"
@@ -30,6 +35,13 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Version defaults for local dev builds. CI overrides both via
+        # `xcodebuild MARKETING_VERSION=... CURRENT_PROJECT_VERSION=...`
+        # derived from the git tag (see .github/workflows/macos.yml). Local
+        # `nix run .#macos` builds keep `0.0.0`, which never trips Sparkle's
+        # version comparator against the production appcast.
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "0"
     info:
       path: StashPlayer/Info.plist
       properties:
@@ -39,6 +51,23 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Version strings flow through `$(MARKETING_VERSION)` /
+        # `$(CURRENT_PROJECT_VERSION)` build settings. xcodegen owns this
+        # plist — editing Info.plist directly would be silently clobbered on
+        # every `xcodegen generate` (which runs in CI before xcodebuild).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Sparkle auto-update keys. SUPublicEDKey is the base64 EdDSA public
+        # key from one-time maintainer bootstrap (run `bin/generate_keys`
+        # from the pinned Sparkle 2.9.2 tarball; private half stays in the
+        # login Keychain + SPARKLE_ED_PRIVATE_KEY Actions secret).
+        # SUEnableAutomaticChecks sets the first-launch default; subsequent
+        # launches honor NSUserDefaults (written by Settings/SettingsView's
+        # toggle), so the user's toggle wins.
+        SUFeedURL: https://arsfeld.github.io/stash-player/appcast.xml
+        SUPublicEDKey: Fx+Cc8kj5pSdtx3i/E+AhMmLUgefc8EXD1CxFh2VO5A=
+        SUEnableAutomaticChecks: true
     dependencies:
       - framework: StashPlayerFFI.xcframework
         embed: false
+      - package: Sparkle
