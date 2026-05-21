@@ -183,11 +183,69 @@ jobs:
           fi
           echo "Info.plist version: $ACTUAL (matches tag)"
 
+      - name: Re-sign Sparkle.framework nested binaries
+        if: steps.signing.outputs.mode == 'developer-id'
+        # Sparkle ships its nested helpers (Updater.app, Autoupdate, XPC
+        # services) pre-signed with the Sparkle project's cert and without
+        # a secure timestamp. SPM embeds the framework verbatim; xcodebuild
+        # signs the outer .app but does NOT recurse into the framework's
+        # bundled executables. Apple's notary service rejects the result
+        # with "not signed with a valid Developer ID certificate" + "the
+        # signature does not include a secure timestamp" for each of these
+        # nested binaries. Re-sign them deepest-first, then the framework,
+        # then the outer .app (so the framework's new signature is sealed
+        # into the app's signature).
+        env:
+          SIGN_MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          set -euo pipefail
+          SIGN_IDENTITY="Developer ID Application"
+          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+          ENTITLEMENTS="$PWD/apps/macos/StashPlayer/StashPlayer.Release.entitlements"
+
+          if [ ! -d "$SPARKLE_FW" ]; then
+            echo "No Sparkle.framework at $SPARKLE_FW — nothing to re-sign" >&2
+            exit 0
+          fi
+
+          # `Versions/B` is Sparkle 2.x's current-version directory; the
+          # symlink `Versions/Current` points at it. Sign through the
+          # versioned path so the symlinked references resolve to the
+          # re-signed copy.
+          NESTED=(
+            "Versions/B/XPCServices/Downloader.xpc"
+            "Versions/B/XPCServices/Installer.xpc"
+            "Versions/B/Autoupdate"
+            "Versions/B/Updater.app"
+          )
+
+          for item in "${NESTED[@]}"; do
+            target="$SPARKLE_FW/$item"
+            if [ -e "$target" ]; then
+              echo "==> Re-signing $item"
+              codesign --force --sign "$SIGN_IDENTITY" \
+                --timestamp --options runtime "$target"
+            fi
+          done
+
+          echo "==> Re-signing Sparkle.framework"
+          codesign --force --sign "$SIGN_IDENTITY" \
+            --timestamp --options runtime "$SPARKLE_FW"
+
+          echo "==> Re-signing outer StashPlayer.app"
+          codesign --force --sign "$SIGN_IDENTITY" \
+            --timestamp --options runtime \
+            --entitlements "$ENTITLEMENTS" \
+            "$APP_PATH"
+
       - name: Verify signature
         if: steps.signing.outputs.mode == 'developer-id'
         run: |
           codesign -dv --verbose=4 "$APP_PATH"
-          codesign --verify --strict --verbose=2 "$APP_PATH"
+          # --deep --strict recurses into nested binaries — catches a
+          # missed Sparkle.framework re-sign before the much slower
+          # notarization round-trip does.
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Package .app into zip
         # `ditto -c -k --keepParent` preserves symlinks and Apple metadata
