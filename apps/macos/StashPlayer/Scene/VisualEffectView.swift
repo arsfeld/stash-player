@@ -23,7 +23,9 @@ extension View {
     /// flattening the refraction (a solid `.tint(.black)` kills the
     /// glass character). 0.35 puts us close to Apple's own media
     /// chrome density. Older macOS falls back to a tinted
-    /// NSVisualEffectView with the same target opacity.
+    /// NSVisualEffectView using a slightly heavier 0.38 overlay for
+    /// panels and a lighter 0.32 overlay for pills to visually match
+    /// the Tahoe glass treatment.
     @ViewBuilder
     func osdGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         if #available(macOS 26.0, *) {

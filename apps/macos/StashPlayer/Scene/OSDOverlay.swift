@@ -122,7 +122,7 @@ private struct OSDClosePill: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Back to library")
+        .help("Close")
         .onHover { hovered = $0 }
     }
 }
