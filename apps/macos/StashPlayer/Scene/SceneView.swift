@@ -147,7 +147,10 @@ struct SceneView: View {
                         osdVM.bumpReveal()
                     }
                 case .ended:
-                    break
+                    // Cursor left the window — hide the OSD right away
+                    // instead of waiting out the 2.5s timer. Matches
+                    // Infuse: the OSD follows the cursor.
+                    osdVM.hideImmediately()
                 }
             }
             // Deliberately no `.focusable()` — that would compete with
@@ -541,6 +544,13 @@ struct SceneView: View {
             // the ground truth.
             Task { @MainActor in
                 let cur = NSEvent.mouseLocation
+                // Skip if the cursor has already left the window.
+                // Without this guard a tail mouseMoved (dispatched
+                // async to MainActor) lands after onContinuousHover's
+                // .ended branch hid the OSD, reviving it for ~2.5s.
+                if let win = hostWindow, !win.frame.contains(cur) {
+                    return
+                }
                 let dx = cur.x - lastMouseLocation.x
                 let dy = cur.y - lastMouseLocation.y
                 if abs(dx) + abs(dy) > 1.5 {
