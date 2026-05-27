@@ -142,6 +142,19 @@ final class AppState: ObservableObject {
         let data = try await offMain { try player.fetchThumbnail(url: url) }
         return NSImage(data: data)
     }
+
+    /// Trigger a metadata scan on the server. Returns the job ID so the
+    /// caller can poll progress via `jobs()`.
+    func metadataScan() async throws -> String {
+        let player = self.player
+        return try await offMain { try player.metadataScan() }
+    }
+
+    /// List all currently tracked jobs (running + recently completed).
+    func jobs() async throws -> [FfiJob] {
+        let player = self.player
+        return try await offMain { try player.jobs() }
+    }
 }
 
 private func offMain<T: Sendable>(
