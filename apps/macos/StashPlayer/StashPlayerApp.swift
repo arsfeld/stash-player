@@ -46,6 +46,10 @@ struct StashPlayerMacApp: App {
             // hidden or customized.
             CommandGroup(after: .toolbar) {
                 Divider()
+                Button("Tasks") {
+                    app.tasksTrigger += 1
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
                 Button("Refresh") {
                     app.refreshTrigger += 1
                 }

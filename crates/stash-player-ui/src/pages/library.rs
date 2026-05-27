@@ -84,8 +84,9 @@ pub(crate) enum LibraryMsg {
     OpenSettings,
     PlayRandom,
     StartScan,
-    ShowScanPopover,
+    ShowTasks,
     PollJobs,
+    TasksPopoverClosed,
     ClearJobs,
 }
 
@@ -199,6 +200,15 @@ impl Component for LibraryPage {
                             set_sensitive: model.client.is_some(),
                             connect_clicked => LibraryMsg::PlayRandom,
                         },
+                    },
+
+                    #[name = "tasks_btn"]
+                    pack_end = &gtk::Button {
+                        set_icon_name: "view-list-symbolic",
+                        set_tooltip_text: Some("Background tasks"),
+                        #[watch]
+                        set_sensitive: model.client.is_some(),
+                        connect_clicked => LibraryMsg::ShowTasks,
                     },
 
                     #[name = "menu_btn"]
@@ -475,11 +485,12 @@ impl Component for LibraryPage {
                 },
             },
 
-            #[name = "scan_popover"]
+            #[name = "tasks_popover"]
             gtk::Popover {
                 set_autohide: true,
                 set_position: gtk::PositionType::Bottom,
                 set_width_request: 300,
+                connect_closed => LibraryMsg::TasksPopoverClosed,
 
                 #[wrap(Some)]
                 set_child = &gtk::Box {
@@ -544,8 +555,8 @@ impl Component for LibraryPage {
         let widgets = view_output!();
 
         widgets
-            .scan_popover
-            .set_parent(&widgets.menu_btn);
+            .tasks_popover
+            .set_parent(&widgets.tasks_btn);
 
         if model.client.is_some() {
             sender.input(LibraryMsg::Refresh);
@@ -645,10 +656,13 @@ impl Component for LibraryPage {
             }
             LibraryMsg::PlayRandom => self.spawn_play_random(&sender),
             LibraryMsg::StartScan => self.start_scan(widgets, &sender),
-            LibraryMsg::ShowScanPopover => {
-                widgets.scan_popover.popup();
-            }
+            LibraryMsg::ShowTasks => self.show_tasks(widgets, &sender),
             LibraryMsg::PollJobs => self.poll_jobs(&sender),
+            LibraryMsg::TasksPopoverClosed => {
+                if !self.scanning {
+                    self.stop_job_polling();
+                }
+            }
             LibraryMsg::ClearJobs => {
                 self.active_jobs.clear();
                 self.rebuild_job_list(widgets);
@@ -887,6 +901,16 @@ impl LibraryPage {
         }
     }
 
+    fn show_tasks(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+    ) {
+        self.poll_jobs(sender);
+        self.start_job_polling(sender);
+        widgets.tasks_popover.popup();
+    }
+
     fn start_scan(
         &mut self,
         widgets: &<Self as Component>::Widgets,
@@ -897,39 +921,28 @@ impl LibraryPage {
         widgets.menu_btn.popdown();
 
         if self.scanning {
-            // Defer so the menu popover finishes closing first.
-            let tx = sender.input_sender().clone();
-            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
-                let _ = tx.send(LibraryMsg::ShowScanPopover);
-                glib::ControlFlow::Break
-            });
-        } else if let Some(client) = self.client.clone() {
-            self.scanning = true;
-            self.active_jobs.clear();
-            // Show a synthetic entry immediately so the user sees feedback
-            // even when the server-side job finishes before the first poll.
-            self.active_jobs.push(Job {
-                id: "__scan__".into(),
-                status: JobStatus::Running,
-                progress: None,
-                description: "Starting scan…".into(),
-            });
-            self.rebuild_job_list(widgets);
-            self.start_job_polling(sender);
-
-            // Defer the scan-progress popover to the next main-loop tick
-            // so the menu popover finishes closing first.
-            let tx = sender.input_sender().clone();
-            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
-                let _ = tx.send(LibraryMsg::ShowScanPopover);
-                glib::ControlFlow::Break
-            });
-
-            sender.oneshot_command(async move {
-                let result = client.metadata_scan().await.map_err(|e| e.to_string());
-                LibraryCmd::ScanTriggered(result)
-            });
+            return;
         }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.scanning = true;
+        self.active_jobs.clear();
+        // Show a synthetic entry immediately so the user sees feedback
+        // even when the server-side job finishes before the first poll.
+        self.active_jobs.push(Job {
+            id: "__scan__".into(),
+            status: JobStatus::Running,
+            progress: None,
+            description: "Starting scan…".into(),
+        });
+        self.rebuild_job_list(widgets);
+        self.start_job_polling(sender);
+
+        sender.oneshot_command(async move {
+            let result = client.metadata_scan().await.map_err(|e| e.to_string());
+            LibraryCmd::ScanTriggered(result)
+        });
     }
 
     fn poll_jobs(&self, sender: &ComponentSender<Self>) {

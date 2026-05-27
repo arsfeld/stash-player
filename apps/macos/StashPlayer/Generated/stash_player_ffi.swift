@@ -581,9 +581,20 @@ public protocol StashPlayerProtocol: AnyObject, Sendable {
     
     func isConnected()  -> Bool
     
+    /**
+     * List all currently tracked jobs (running + recently completed).
+     */
+    func jobs() throws  -> [FfiJob]
+    
     func listScenes(filter: FfiSceneFilter, page: UInt32, perPage: UInt32) throws  -> FfiScenesPage
     
     func loadSavedCredentials() throws  -> FfiCredentials?
+    
+    /**
+     * Trigger a metadata scan on the server. Returns the job ID so the
+     * caller can poll progress via `jobs()`.
+     */
+    func metadataScan() throws  -> String
     
     /**
      * Zero the scene's O-counter. Returns the new value (always 0 on
@@ -727,6 +738,16 @@ open func isConnected() -> Bool  {
 })
 }
     
+    /**
+     * List all currently tracked jobs (running + recently completed).
+     */
+open func jobs()throws  -> [FfiJob]  {
+    return try  FfiConverterSequenceTypeFfiJob.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_stash_player_ffi_fn_method_stashplayer_jobs(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
 open func listScenes(filter: FfiSceneFilter, page: UInt32, perPage: UInt32)throws  -> FfiScenesPage  {
     return try  FfiConverterTypeFfiScenesPage_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_list_scenes(self.uniffiClonePointer(),
@@ -740,6 +761,17 @@ open func listScenes(filter: FfiSceneFilter, page: UInt32, perPage: UInt32)throw
 open func loadSavedCredentials()throws  -> FfiCredentials?  {
     return try  FfiConverterOptionTypeFfiCredentials.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_load_saved_credentials(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Trigger a metadata scan on the server. Returns the job ID so the
+     * caller can poll progress via `jobs()`.
+     */
+open func metadataScan()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_stash_player_ffi_fn_method_stashplayer_metadata_scan(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -897,6 +929,92 @@ public func FfiConverterTypeFfiCredentials_lift(_ buf: RustBuffer) throws -> Ffi
 #endif
 public func FfiConverterTypeFfiCredentials_lower(_ value: FfiCredentials) -> RustBuffer {
     return FfiConverterTypeFfiCredentials.lower(value)
+}
+
+
+public struct FfiJob {
+    public var id: String
+    public var status: FfiJobStatus
+    public var progress: Double?
+    public var description: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, status: FfiJobStatus, progress: Double?, description: String) {
+        self.id = id
+        self.status = status
+        self.progress = progress
+        self.description = description
+    }
+}
+
+#if compiler(>=6)
+extension FfiJob: Sendable {}
+#endif
+
+
+extension FfiJob: Equatable, Hashable {
+    public static func ==(lhs: FfiJob, rhs: FfiJob) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.progress != rhs.progress {
+            return false
+        }
+        if lhs.description != rhs.description {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(status)
+        hasher.combine(progress)
+        hasher.combine(description)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiJob: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiJob {
+        return
+            try FfiJob(
+                id: FfiConverterString.read(from: &buf), 
+                status: FfiConverterTypeFfiJobStatus.read(from: &buf), 
+                progress: FfiConverterOptionDouble.read(from: &buf), 
+                description: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiJob, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeFfiJobStatus.write(value.status, into: &buf)
+        FfiConverterOptionDouble.write(value.progress, into: &buf)
+        FfiConverterString.write(value.description, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiJob_lift(_ buf: RustBuffer) throws -> FfiJob {
+    return try FfiConverterTypeFfiJob.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiJob_lower(_ value: FfiJob) -> RustBuffer {
+    return FfiConverterTypeFfiJob.lower(value)
 }
 
 
@@ -1723,6 +1841,97 @@ extension FfiError: Foundation.LocalizedError {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FfiJobStatus {
+    
+    case ready
+    case running
+    case finished
+    case cancelled
+    case failed
+}
+
+
+#if compiler(>=6)
+extension FfiJobStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiJobStatus: FfiConverterRustBuffer {
+    typealias SwiftType = FfiJobStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiJobStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .ready
+        
+        case 2: return .running
+        
+        case 3: return .finished
+        
+        case 4: return .cancelled
+        
+        case 5: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiJobStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .ready:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .running:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .finished:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .cancelled:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiJobStatus_lift(_ buf: RustBuffer) throws -> FfiJobStatus {
+    return try FfiConverterTypeFfiJobStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiJobStatus_lower(_ value: FfiJobStatus) -> RustBuffer {
+    return FfiConverterTypeFfiJobStatus.lower(value)
+}
+
+
+extension FfiJobStatus: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum FfiSortDirection {
     
     case asc
@@ -2102,6 +2311,31 @@ fileprivate struct FfiConverterOptionTypeFfiStudio: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiJob: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiJob]
+
+    public static func write(_ value: [FfiJob], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiJob.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiJob] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiJob]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiJob.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiPerformer: FfiConverterRustBuffer {
     typealias SwiftType = [FfiPerformer]
 
@@ -2222,10 +2456,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_is_connected() != 16096) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_jobs() != 47017) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_list_scenes() != 2715) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_load_saved_credentials() != 30259) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_metadata_scan() != 34791) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_reset_o() != 63229) {
@@ -2258,67 +2498,3 @@ public func uniffiEnsureStashPlayerFfiInitialized() {
 }
 
 // swiftlint:enable all
-
-// ---- Added by stash-api metadata_scan / jobs support ----
-// Re-run `nix run .#macos-build` on macOS to regenerate proper bindings
-// after any changes to crates/stash-player-ffi/src/lib.rs.
-
-public enum FfiJobStatus {
-    case ready
-    case running
-    case finished
-    case cancelled
-    case failed
-}
-
-#if compiler(>=6)
-extension FfiJobStatus: Sendable {}
-#endif
-
-extension FfiJobStatus: Equatable, Hashable {}
-
-public struct FfiJob {
-    public var id: String
-    public var status: FfiJobStatus
-    public var progress: Double?
-    public var description: String
-
-    public init(id: String, status: FfiJobStatus, progress: Double?, description: String) {
-        self.id = id
-        self.status = status
-        self.progress = progress
-        self.description = description
-    }
-}
-
-#if compiler(>=6)
-extension FfiJob: Sendable {}
-#endif
-
-extension FfiJob: Equatable, Hashable {
-    public static func ==(lhs: FfiJob, rhs: FfiJob) -> Bool {
-        lhs.id == rhs.id
-            && lhs.status == rhs.status
-            && lhs.progress == rhs.progress
-            && lhs.description == rhs.description
-    }
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(status)
-        hasher.combine(progress)
-        hasher.combine(description)
-    }
-}
-
-// Protocol additions — the class implementations live in the ``StashPlayer``
-// class above and are regenerated by uniffi-bindgen.
-extension StashPlayerProtocol {
-    /// Trigger a metadata scan on the server. Returns the job ID.
-    func metadataScan() throws -> String {
-        fatalError("Regenerate bindings with: nix run .#macos-build")
-    }
-    /// List all currently tracked jobs.
-    func jobs() throws -> [FfiJob] {
-        fatalError("Regenerate bindings with: nix run .#macos-build")
-    }
-}

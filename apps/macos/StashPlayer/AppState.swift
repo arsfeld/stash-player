@@ -52,6 +52,7 @@ final class AppState: ObservableObject {
     /// library view. The view observes these with `.onChange(of:)`.
     @Published var refreshTrigger = 0
     @Published var scanTrigger = 0
+    @Published var tasksTrigger = 0
 
     init() {
         initLogging()
