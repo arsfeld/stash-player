@@ -99,6 +99,12 @@ struct LibraryView: View {
             // Skip the initial run; bootstrap covers it.
             if didFirstLoad { await reload() }
         }
+        .onChange(of: app.refreshTrigger) {
+            Task { await reload() }
+        }
+        .onChange(of: app.scanTrigger) {
+            Task { await scanAndShowTasks() }
+        }
     }
 
     @ViewBuilder
@@ -181,17 +187,9 @@ struct LibraryView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Refresh scene list")
-
-            Button {
-                Task { await scanAndShowTasks() }
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-            }
-            .help("Re-scan library")
             .popover(isPresented: $showTasksPopover) {
                 tasksPopoverContent
             }
-            .disabled(isScanning)
 
             Button {
                 Task { await playRandom() }

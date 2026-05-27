@@ -48,6 +48,11 @@ final class AppState: ObservableObject {
     let player: StashPlayer
     @Published var status: ConnectionStatus = .disconnected
 
+    /// Incremented by menu commands to trigger actions in the active
+    /// library view. The view observes these with `.onChange(of:)`.
+    @Published var refreshTrigger = 0
+    @Published var scanTrigger = 0
+
     init() {
         initLogging()
         self.player = StashPlayer()
