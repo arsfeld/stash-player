@@ -32,6 +32,25 @@ struct StashPlayerMacApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: updaterController.updater)
             }
+
+            // File > Re-scan Library
+            CommandGroup(before: .newItem) {
+                Button("Re-scan Library…") {
+                    app.scanTrigger += 1
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+
+            // View > Refresh — HIG requires every toolbar command to also
+            // be in the menu bar so users can find it when the toolbar is
+            // hidden or customized.
+            CommandGroup(after: .toolbar) {
+                Divider()
+                Button("Refresh") {
+                    app.refreshTrigger += 1
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
         }
 
         // Standard macOS Settings scene. SwiftUI wires Cmd-, to it

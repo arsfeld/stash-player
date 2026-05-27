@@ -282,3 +282,75 @@ struct SceneResetOResponse {
     #[serde(rename = "sceneResetO")]
     scene_reset_o: i32,
 }
+
+/// Job status as returned by Stash's GraphQL API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum JobStatus {
+    Ready,
+    Running,
+    Finished,
+    Cancelled,
+    Failed,
+}
+
+/// A server-side job (scan, generate, etc.) as returned by Stash.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Job {
+    pub id: String,
+    pub status: JobStatus,
+    #[serde(default)]
+    pub progress: Option<f64>,
+    #[serde(default)]
+    pub description: String,
+}
+
+const METADATA_SCAN_MUTATION: &str = r#"
+mutation MetadataScan {
+  metadataScan(input: {})
+}
+"#;
+
+#[derive(Deserialize)]
+struct MetadataScanResponse {
+    #[serde(rename = "metadataScan")]
+    metadata_scan: String,
+}
+
+const JOBS_QUERY: &str = r#"
+query Jobs {
+  jobQueue {
+    id
+    status
+    progress
+    description
+  }
+}
+"#;
+
+#[derive(Deserialize)]
+struct JobsResponse {
+    #[serde(rename = "jobQueue")]
+    jobs: Option<Vec<Job>>,
+}
+
+impl Client {
+    /// Trigger a metadata scan on the server. Returns the job ID so the
+    /// caller can poll progress via `jobs()`.
+    pub async fn metadata_scan(&self) -> Result<String> {
+        let resp: MetadataScanResponse = self
+            .graphql(METADATA_SCAN_MUTATION, &serde_json::json!({}))
+            .await?;
+        Ok(resp.metadata_scan)
+    }
+
+    /// List all currently tracked jobs on the server (running + recently
+    /// completed). Once a job finishes, Stash may drop it from the
+    /// response after a short window.
+    pub async fn jobs(&self) -> Result<Vec<Job>> {
+        let resp: JobsResponse = self
+            .graphql(JOBS_QUERY, &serde_json::json!({}))
+            .await?;
+        Ok(resp.jobs.unwrap_or_default())
+    }
+}

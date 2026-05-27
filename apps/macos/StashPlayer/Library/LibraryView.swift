@@ -48,6 +48,10 @@ struct LibraryView: View {
     /// `filter.hideInteractive` together so `.task(id: filter)` reloads
     /// the grid in lockstep with the saved value.
     @AppStorage("library.hideInteractive") private var persistedHideInteractive: Bool = false
+    /// Tasks popover state.
+    @State private var activeJobs: [FfiJob] = []
+    @State private var showTasksPopover = false
+    @State private var isScanning = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 240, maximum: 280), spacing: 16, alignment: .top)
@@ -94,6 +98,12 @@ struct LibraryView: View {
         .task(id: filter) {
             // Skip the initial run; bootstrap covers it.
             if didFirstLoad { await reload() }
+        }
+        .onChange(of: app.refreshTrigger) {
+            Task { await reload() }
+        }
+        .onChange(of: app.scanTrigger) {
+            Task { await scanAndShowTasks() }
         }
     }
 
@@ -170,6 +180,16 @@ struct LibraryView: View {
             .help(filter.hideInteractive
                   ? "Hiding interactive scenes — click to show all"
                   : "Showing all scenes — click to hide interactive")
+
+            Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh scene list")
+            .popover(isPresented: $showTasksPopover) {
+                tasksPopoverContent
+            }
 
             Button {
                 Task { await playRandom() }
@@ -282,6 +302,130 @@ struct LibraryView: View {
             ))
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Tasks popover
+
+    @ViewBuilder
+    private var tasksPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Tasks")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+
+            Divider()
+
+            if activeJobs.isEmpty {
+                Text("No active tasks")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                List(activeJobs, id: \.id) { job in
+                    HStack(spacing: 8) {
+                        jobIcon(for: job.status)
+                            .frame(width: 16, height: 16)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(job.description)
+                                .font(.callout)
+                                .lineLimit(2)
+                            if let progress = job.progress, progress > 0 {
+                                ProgressView(value: progress, total: 1.0)
+                                    .progressViewStyle(.linear)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.plain)
+                .frame(minHeight: 0, idealHeight: 120)
+            }
+        }
+        .frame(width: 300)
+    }
+
+    @ViewBuilder
+    private func jobIcon(for status: FfiJobStatus) -> some View {
+        switch status {
+        case .running, .ready:
+            ProgressView()
+                .scaleEffect(0.5)
+                .frame(width: 16, height: 16)
+        case .finished:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed, .cancelled:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private func scanAndShowTasks() async {
+        isScanning = true
+        showTasksPopover = true
+        // Show a synthetic entry immediately so the user sees feedback
+        // even when the server-side job finishes before the first poll.
+        activeJobs = [FfiJob(
+            id: "__scan__",
+            status: .running,
+            progress: nil,
+            description: "Starting scan…"
+        )]
+        do {
+            _ = try await app.metadataScan()
+            await pollJobs()
+        } catch {
+            activeJobs = [FfiJob(
+                id: "error",
+                status: .failed,
+                progress: nil,
+                description: "Scan failed: \(error.localizedDescription)"
+            )]
+        }
+        isScanning = false
+    }
+
+    private func pollJobs() async {
+        var didComplete = false
+        while showTasksPopover {
+            do {
+                let jobs = try await app.jobs()
+                if jobs.isEmpty && activeJobs.contains(where: { $0.id == "__scan__" }) {
+                    // The server-side job finished before our first poll.
+                    // Show "Scan complete" briefly, then clear.
+                    activeJobs = [FfiJob(
+                        id: "__scan__",
+                        status: .finished,
+                        progress: 1,
+                        description: "Scan complete"
+                    )]
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    activeJobs = []
+                    didComplete = true
+                    break
+                }
+                activeJobs = jobs
+                let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
+                if !anyActive {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    didComplete = true
+                    break
+                }
+            } catch {
+                activeJobs = []
+                break
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        if didComplete {
+            await reload()
         }
     }
 }

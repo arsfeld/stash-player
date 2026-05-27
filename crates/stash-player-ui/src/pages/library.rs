@@ -13,7 +13,7 @@ use adw::prelude::*;
 use gtk::glib;
 use tokio::sync::Semaphore;
 
-use stash_api::{FindScenesPage, Scene, SceneFilter, SortDirection, SortKey};
+use stash_api::{FindScenesPage, Job, JobStatus, Scene, SceneFilter, SortDirection, SortKey};
 
 /// Stash's rating100 increments per "star" — 1 ★ = 20, 5 ★ = 100. The min-rating
 /// dropdown indexes into this list (index 0 == no filter).
@@ -60,6 +60,12 @@ pub(crate) struct LibraryPage {
     /// stashing user data on the child via gtk-rs's unsafe `set_data` API.
     scene_ids: Rc<RefCell<Vec<String>>>,
     fetch_sem: Arc<Semaphore>,
+    /// Server-side jobs the user cares about (scan, generate, etc.).
+    active_jobs: Vec<Job>,
+    /// Handle for the periodic job-poll timer. `None` when not polling.
+    job_poll_handle: Option<glib::SourceId>,
+    /// Guards against double-scan — true while a metadataScan is in flight.
+    scanning: bool,
 }
 
 #[derive(Debug)]
@@ -77,12 +83,18 @@ pub(crate) enum LibraryMsg {
     ChildActivatedAt(u32),
     OpenSettings,
     PlayRandom,
+    StartScan,
+    ShowScanPopover,
+    PollJobs,
+    ClearJobs,
 }
 
 pub(crate) enum LibraryCmd {
     Page(Result<FindScenesPage, String>),
     Random(Result<Box<RandomPick>, String>),
     Thumbnail(Box<ThumbnailPayload>),
+    ScanTriggered(Result<String, String>),
+    JobsFetched(Result<Vec<Job>, String>),
 }
 
 pub(crate) struct ThumbnailPayload {
@@ -115,6 +127,11 @@ impl std::fmt::Debug for LibraryCmd {
                     "size",
                     &format_args!("{}x{}", payload.width, payload.height),
                 )
+                .finish(),
+            LibraryCmd::ScanTriggered(res) => f.debug_tuple("ScanTriggered").field(res).finish(),
+            LibraryCmd::JobsFetched(res) => f
+                .debug_tuple("JobsFetched")
+                .field(&res.as_ref().map(|js| js.len()))
                 .finish(),
         }
     }
@@ -151,20 +168,74 @@ impl Component for LibraryPage {
             set_tag: Some("library"),
 
             #[wrap(Some)]
-            set_child = &adw::ToolbarView {
-                add_top_bar = &adw::HeaderBar {
-                    pack_start = &gtk::Button {
-                        set_icon_name: "media-playlist-shuffle-symbolic",
-                        set_tooltip_text: Some("Play random scene"),
-                        #[watch]
-                        set_sensitive: model.client.is_some(),
-                        connect_clicked => LibraryMsg::PlayRandom,
+            set_child = &gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_hexpand: true,
+                set_vexpand: true,
+
+                adw::ToolbarView {
+                    add_top_bar = &adw::HeaderBar {
+                    pack_start = &gtk::Box {
+                        set_spacing: 6,
+
+                        gtk::Button {
+                            set_icon_name: "view-refresh-symbolic",
+                            set_tooltip_text: Some("Refresh scene list"),
+                            #[watch]
+                            set_sensitive: model.client.is_some(),
+                            connect_clicked => LibraryMsg::Refresh,
+                        },
+
+                        gtk::Separator {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_margin_start: 6,
+                            set_margin_end: 6,
+                        },
+
+                        gtk::Button {
+                            set_icon_name: "media-playlist-shuffle-symbolic",
+                            set_tooltip_text: Some("Play random scene"),
+                            #[watch]
+                            set_sensitive: model.client.is_some(),
+                            connect_clicked => LibraryMsg::PlayRandom,
+                        },
                     },
 
-                    pack_end = &gtk::Button {
-                        set_icon_name: "preferences-system-symbolic",
-                        set_tooltip_text: Some("Settings"),
-                        connect_clicked => LibraryMsg::OpenSettings,
+                    #[name = "menu_btn"]
+                    pack_end = &gtk::MenuButton {
+                        set_icon_name: "open-menu-symbolic",
+                        set_tooltip_text: Some("Main menu"),
+                        set_direction: gtk::ArrowType::None,
+
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 0,
+                                set_margin_start: 6,
+                                set_margin_end: 6,
+                                set_margin_top: 6,
+                                set_margin_bottom: 6,
+
+                                #[name = "menu_scan_btn"]
+                                gtk::Button {
+                                    set_label: "Re-scan library",
+                                    set_halign: gtk::Align::Fill,
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_sensitive: model.client.is_some(),
+                                    connect_clicked => LibraryMsg::StartScan,
+                                },
+
+                                gtk::Button {
+                                    set_label: "Settings",
+                                    set_halign: gtk::Align::Fill,
+                                    add_css_class: "flat",
+                                    connect_clicked => LibraryMsg::OpenSettings,
+                                },
+                            },
+                        },
                     },
 
                     #[wrap(Some)]
@@ -403,8 +474,42 @@ impl Component for LibraryPage {
                     set_visible_child_name: model.stack_name(),
                 },
             },
-        }
+
+            #[name = "scan_popover"]
+            gtk::Popover {
+                set_autohide: true,
+                set_position: gtk::PositionType::Bottom,
+                set_width_request: 300,
+
+                #[wrap(Some)]
+                set_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 6,
+                    set_margin_start: 12,
+                    set_margin_end: 12,
+                    set_margin_top: 12,
+                    set_margin_bottom: 12,
+
+                    gtk::Label {
+                        set_label: "Tasks",
+                        set_halign: gtk::Align::Start,
+                        add_css_class: "heading",
+                    },
+
+                    gtk::Separator {
+                        set_orientation: gtk::Orientation::Horizontal,
+                    },
+
+                    #[name = "job_list"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 4,
+                    },
+                },
+            },
+        },
     }
+}
 
     fn init(
         init: Self::Init,
@@ -431,9 +536,16 @@ impl Component for LibraryPage {
             cells: Rc::new(RefCell::new(HashMap::new())),
             scene_ids: Rc::new(RefCell::new(Vec::new())),
             fetch_sem: Arc::new(Semaphore::new(MAX_PARALLEL_THUMBS)),
+            active_jobs: Vec::new(),
+            job_poll_handle: None,
+            scanning: false,
         };
 
         let widgets = view_output!();
+
+        widgets
+            .scan_popover
+            .set_parent(&widgets.menu_btn);
 
         if model.client.is_some() {
             sender.input(LibraryMsg::Refresh);
@@ -527,25 +639,20 @@ impl Component for LibraryPage {
                     let _ = sender.output(LibraryOutput::HideInteractiveChanged(active));
                 }
             }
-            LibraryMsg::ChildActivatedAt(index) => {
-                let id = self
-                    .scene_ids
-                    .borrow()
-                    .get(index as usize)
-                    .cloned();
-                if let Some(id) = id {
-                    let _ = sender.output(LibraryOutput::OpenScene {
-                        id,
-                        index,
-                        filter: self.filter.clone(),
-                        total: self.total,
-                    });
-                }
-            }
+            LibraryMsg::ChildActivatedAt(index) => self.open_scene_at(widgets, &sender, index),
             LibraryMsg::OpenSettings => {
                 let _ = sender.output(LibraryOutput::OpenSettings);
             }
             LibraryMsg::PlayRandom => self.spawn_play_random(&sender),
+            LibraryMsg::StartScan => self.start_scan(widgets, &sender),
+            LibraryMsg::ShowScanPopover => {
+                widgets.scan_popover.popup();
+            }
+            LibraryMsg::PollJobs => self.poll_jobs(&sender),
+            LibraryMsg::ClearJobs => {
+                self.active_jobs.clear();
+                self.rebuild_job_list(widgets);
+            }
         }
         self.update_view(widgets, sender);
     }
@@ -610,6 +717,14 @@ impl Component for LibraryPage {
                     );
                     picture.set_paintable(Some(&texture));
                 }
+            }
+            LibraryCmd::ScanTriggered(Ok(_job_id)) => {
+                self.scanning = false;
+            }
+            LibraryCmd::ScanTriggered(Err(e)) => self.handle_scan_error(widgets, e),
+            LibraryCmd::JobsFetched(Ok(jobs)) => self.handle_jobs_fetched(widgets, &sender, jobs),
+            LibraryCmd::JobsFetched(Err(e)) => {
+                tracing::warn!("jobs query failed: {e}");
             }
         }
         self.update_view(widgets, sender);
@@ -677,6 +792,228 @@ impl LibraryPage {
             }
             LibraryCmd::Page(result.map_err(|e| e.to_string()))
         });
+    }
+
+    fn rebuild_job_list(&self, widgets: &<Self as Component>::Widgets) {
+        let container = widgets.job_list.clone();
+        // Remove all existing children.
+        while let Some(child) = container.first_child() {
+            container.remove(&child);
+        }
+
+        if self.active_jobs.is_empty() {
+            let placeholder = gtk::Label::builder()
+                .label("No active tasks")
+                .css_classes(["dim-label"])
+                .halign(gtk::Align::Start)
+                .margin_top(4)
+                .build();
+            container.append(&placeholder);
+            return;
+        }
+
+        for job in &self.active_jobs {
+            let row = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .spacing(8)
+                .margin_top(4)
+                .build();
+
+            let (icon_name, spinning) = match job.status {
+                JobStatus::Running | JobStatus::Ready => ("content-loading-symbolic", true),
+                JobStatus::Finished => ("emblem-ok-symbolic", false),
+                JobStatus::Cancelled | JobStatus::Failed => ("dialog-error-symbolic", false),
+            };
+
+            if spinning {
+                let spinner = gtk::Spinner::builder()
+                    .spinning(true)
+                    .width_request(16)
+                    .height_request(16)
+                    .build();
+                row.append(&spinner);
+            } else {
+                let icon = gtk::Image::builder()
+                    .icon_name(icon_name)
+                    .pixel_size(16)
+                    .build();
+                row.append(&icon);
+            }
+
+            let info_box = gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .spacing(2)
+                .hexpand(true)
+                .build();
+
+            let desc_label = gtk::Label::builder()
+                .label(&job.description)
+                .halign(gtk::Align::Start)
+                .wrap(true)
+                .wrap_mode(gtk::pango::WrapMode::WordChar)
+                .xalign(0.0)
+                .build();
+            info_box.append(&desc_label);
+
+            if let Some(progress) = job.progress
+                && progress > 0.0
+            {
+                let bar = gtk::ProgressBar::builder()
+                    .fraction(progress)
+                    .show_text(false)
+                    .margin_top(2)
+                    .build();
+                info_box.append(&bar);
+            }
+
+            row.append(&info_box);
+            container.append(&row);
+        }
+    }
+
+    fn start_job_polling(&mut self, sender: &ComponentSender<Self>) {
+        self.stop_job_polling();
+        let tx = sender.input_sender().clone();
+        let handle = glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+            let _ = tx.send(LibraryMsg::PollJobs);
+            glib::ControlFlow::Continue
+        });
+        self.job_poll_handle = Some(handle);
+    }
+
+    fn stop_job_polling(&mut self) {
+        if let Some(handle) = self.job_poll_handle.take() {
+            handle.remove();
+        }
+    }
+
+    fn start_scan(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+    ) {
+        // Close the primary menu popover — it's still open when this
+        // handler fires from the "Re-scan library" menu item.
+        widgets.menu_btn.popdown();
+
+        if self.scanning {
+            // Defer so the menu popover finishes closing first.
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
+                let _ = tx.send(LibraryMsg::ShowScanPopover);
+                glib::ControlFlow::Break
+            });
+        } else if let Some(client) = self.client.clone() {
+            self.scanning = true;
+            self.active_jobs.clear();
+            // Show a synthetic entry immediately so the user sees feedback
+            // even when the server-side job finishes before the first poll.
+            self.active_jobs.push(Job {
+                id: "__scan__".into(),
+                status: JobStatus::Running,
+                progress: None,
+                description: "Starting scan…".into(),
+            });
+            self.rebuild_job_list(widgets);
+            self.start_job_polling(sender);
+
+            // Defer the scan-progress popover to the next main-loop tick
+            // so the menu popover finishes closing first.
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
+                let _ = tx.send(LibraryMsg::ShowScanPopover);
+                glib::ControlFlow::Break
+            });
+
+            sender.oneshot_command(async move {
+                let result = client.metadata_scan().await.map_err(|e| e.to_string());
+                LibraryCmd::ScanTriggered(result)
+            });
+        }
+    }
+
+    fn poll_jobs(&self, sender: &ComponentSender<Self>) {
+        if let Some(client) = self.client.clone() {
+            sender.oneshot_command(async move {
+                let result = client.jobs().await.map_err(|e| e.to_string());
+                LibraryCmd::JobsFetched(result)
+            });
+        }
+    }
+
+    fn handle_scan_error(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        error: String,
+    ) {
+        self.scanning = false;
+        self.stop_job_polling();
+        self.active_jobs.clear();
+        self.rebuild_job_list(widgets);
+        tracing::warn!("metadata scan failed: {error}");
+    }
+
+    fn open_scene_at(
+        &self,
+        _widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+        index: u32,
+    ) {
+        let id = self
+            .scene_ids
+            .borrow()
+            .get(index as usize)
+            .cloned();
+        if let Some(id) = id {
+            let _ = sender.output(LibraryOutput::OpenScene {
+                id,
+                index,
+                filter: self.filter.clone(),
+                total: self.total,
+            });
+        }
+    }
+
+    fn handle_jobs_fetched(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+        jobs: Vec<Job>,
+    ) {
+        if jobs.is_empty() && self.active_jobs.iter().any(|j| j.id == "__scan__") {
+            self.active_jobs = vec![Job {
+                id: "__scan__".into(),
+                status: JobStatus::Finished,
+                progress: Some(1.0),
+                description: "Scan complete".into(),
+            }];
+            self.rebuild_job_list(widgets);
+            self.stop_job_polling();
+            self.scanning = false;
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+                let _ = tx.send(LibraryMsg::ClearJobs);
+                let _ = tx.send(LibraryMsg::Refresh);
+                glib::ControlFlow::Break
+            });
+        } else {
+            self.active_jobs = jobs;
+            self.rebuild_job_list(widgets);
+            let any_active = self
+                .active_jobs
+                .iter()
+                .any(|j| matches!(j.status, JobStatus::Ready | JobStatus::Running));
+            if !any_active {
+                self.stop_job_polling();
+                self.scanning = false;
+                // Refresh the scene grid now that server-side jobs are done.
+                let tx = sender.input_sender().clone();
+                glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+                    let _ = tx.send(LibraryMsg::Refresh);
+                    glib::ControlFlow::Break
+                });
+            }
+        }
     }
 
     fn append_cell(
