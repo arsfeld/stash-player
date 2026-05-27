@@ -52,6 +52,7 @@ struct LibraryView: View {
     @State private var activeJobs: [FfiJob] = []
     @State private var showTasksPopover = false
     @State private var isScanning = false
+    @State private var jobTrackingTask: Task<Void, Never>?
 
     private let columns = [
         GridItem(.adaptive(minimum: 240, maximum: 280), spacing: 16, alignment: .top)
@@ -103,7 +104,17 @@ struct LibraryView: View {
             Task { await reload() }
         }
         .onChange(of: app.scanTrigger) {
-            Task { await scanAndShowTasks() }
+            Task { await startScan() }
+        }
+        .onChange(of: app.tasksTrigger) {
+            showTasksPopover = true
+        }
+        .onChange(of: showTasksPopover) { _, isOpen in
+            if isOpen {
+                Task { await refreshTasks() }
+            } else {
+                stopJobTrackingIfIdle()
+            }
         }
     }
 
@@ -129,9 +140,62 @@ struct LibraryView: View {
         }
     }
 
+    /// True while a scan is in flight or Stash reports running/ready jobs.
+    private var hasActiveWork: Bool {
+        isScanning
+            || activeJobs.contains { $0.status == .running || $0.status == .ready }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            leadingToolbarCluster
+        }
+
+        // Flexible space — without this, `.primaryAction` sits next to the
+        // leading cluster instead of the trailing edge (especially with
+        // `.searchable(placement: .toolbar)`).
+        ToolbarItem {
+            Spacer()
+        }
+
         ToolbarItemGroup(placement: .primaryAction) {
+            trailingToolbarCluster
+        }
+    }
+
+    /// Left: shuffle → inline filters.
+    private var leadingToolbarCluster: some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await playRandom() }
+            } label: {
+                Image(systemName: "shuffle")
+            }
+            .help("Play a random scene matching the current filter")
+
+            sortToolbarGroup
+            ratingToolbarGroup
+            visibilityFiltersToolbarGroup
+        }
+    }
+
+    /// Right (before search): refresh → tasks.
+    private var trailingToolbarCluster: some View {
+        ControlGroup {
+            Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh scene list")
+
+            tasksToolbarButton
+        }
+    }
+
+    private var sortToolbarGroup: some View {
+        ControlGroup {
             Picker("Sort", selection: $filter.sort) {
                 ForEach(sortLabels, id: \.key) { item in
                     Text(item.label).tag(item.key)
@@ -148,7 +212,11 @@ struct LibraryView: View {
             .help(filter.direction == .asc
                   ? "Ascending — click for descending"
                   : "Descending — click for ascending")
+        }
+    }
 
+    private var ratingToolbarGroup: some View {
+        ControlGroup {
             Picker("Min rating", selection: minRatingBinding) {
                 ForEach(0..<minRatingOptions.count, id: \.self) { i in
                     Text(minRatingOptions[i].label).tag(i)
@@ -156,7 +224,11 @@ struct LibraryView: View {
             }
             .pickerStyle(.menu)
             .help("Minimum rating")
+        }
+    }
 
+    private var visibilityFiltersToolbarGroup: some View {
+        ControlGroup {
             Toggle(isOn: organizedBinding) {
                 Image(systemName: "checkmark.seal")
             }
@@ -180,23 +252,6 @@ struct LibraryView: View {
             .help(filter.hideInteractive
                   ? "Hiding interactive scenes — click to show all"
                   : "Showing all scenes — click to hide interactive")
-
-            Button {
-                Task { await reload() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .help("Refresh scene list")
-            .popover(isPresented: $showTasksPopover) {
-                tasksPopoverContent
-            }
-
-            Button {
-                Task { await playRandom() }
-            } label: {
-                Image(systemName: "shuffle")
-            }
-            .help("Play a random scene matching the current filter")
         }
     }
 
@@ -307,6 +362,30 @@ struct LibraryView: View {
 
     // MARK: - Tasks popover
 
+    private var tasksToolbarButton: some View {
+        Button {
+            showTasksPopover = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: hasActiveWork
+                      ? "arrow.triangle.2.circlepath"
+                      : "list.bullet.rectangle")
+                if hasActiveWork {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 7, height: 7)
+                        .offset(x: 5, y: -5)
+                }
+            }
+        }
+        .help(hasActiveWork
+              ? "Background tasks running — click for details"
+              : "Background tasks")
+        .popover(isPresented: $showTasksPopover, arrowEdge: .bottom) {
+            tasksPopoverContent
+        }
+    }
+
     @ViewBuilder
     private var tasksPopoverContent: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -367,20 +446,18 @@ struct LibraryView: View {
         }
     }
 
-    private func scanAndShowTasks() async {
+    private func startScan() async {
         isScanning = true
-        showTasksPopover = true
-        // Show a synthetic entry immediately so the user sees feedback
-        // even when the server-side job finishes before the first poll.
+        // Synthetic entry until the first poll lands — visible if Tasks is open.
         activeJobs = [FfiJob(
             id: "__scan__",
             status: .running,
             progress: nil,
             description: "Starting scan…"
         )]
+        ensureJobTracking()
         do {
             _ = try await app.metadataScan()
-            await pollJobs()
         } catch {
             activeJobs = [FfiJob(
                 id: "error",
@@ -388,44 +465,73 @@ struct LibraryView: View {
                 progress: nil,
                 description: "Scan failed: \(error.localizedDescription)"
             )]
+            isScanning = false
+            stopJobTrackingIfIdle()
         }
-        isScanning = false
+        // Job tracking clears `isScanning` when server jobs finish.
     }
 
-    private func pollJobs() async {
-        var didComplete = false
-        while showTasksPopover {
-            do {
-                let jobs = try await app.jobs()
-                if jobs.isEmpty && activeJobs.contains(where: { $0.id == "__scan__" }) {
-                    // The server-side job finished before our first poll.
-                    // Show "Scan complete" briefly, then clear.
-                    activeJobs = [FfiJob(
-                        id: "__scan__",
-                        status: .finished,
-                        progress: 1,
-                        description: "Scan complete"
-                    )]
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+    /// One-shot fetch when the Tasks popover opens.
+    private func refreshTasks() async {
+        do {
+            activeJobs = try await app.jobs()
+        } catch {
+            activeJobs = []
+        }
+        ensureJobTracking()
+    }
+
+    private func ensureJobTracking() {
+        guard jobTrackingTask == nil else { return }
+        jobTrackingTask = Task {
+            defer { jobTrackingTask = nil }
+            var didComplete = false
+            var sawActiveJobs = false
+            while !Task.isCancelled && (showTasksPopover || isScanning) {
+                do {
+                    let jobs = try await app.jobs()
+                    if jobs.isEmpty && activeJobs.contains(where: { $0.id == "__scan__" }) {
+                        activeJobs = [FfiJob(
+                            id: "__scan__",
+                            status: .finished,
+                            progress: 1,
+                            description: "Scan complete"
+                        )]
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        activeJobs = []
+                        didComplete = true
+                        break
+                    }
+                    activeJobs = jobs
+                    let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
+                    if anyActive {
+                        sawActiveJobs = true
+                    } else if isScanning {
+                        // Scan was triggered; keep polling until the server registers a job.
+                    } else if !sawActiveJobs {
+                        break
+                    } else {
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        activeJobs = []
+                        didComplete = true
+                        break
+                    }
+                } catch {
                     activeJobs = []
-                    didComplete = true
                     break
                 }
-                activeJobs = jobs
-                let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
-                if !anyActive {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    didComplete = true
-                    break
-                }
-            } catch {
-                activeJobs = []
-                break
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if didComplete {
+                isScanning = false
+                await reload()
+            }
         }
-        if didComplete {
-            await reload()
-        }
+    }
+
+    private func stopJobTrackingIfIdle() {
+        guard !isScanning else { return }
+        jobTrackingTask?.cancel()
+        jobTrackingTask = nil
     }
 }
