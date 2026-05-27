@@ -84,6 +84,7 @@ pub(crate) enum LibraryMsg {
     OpenSettings,
     PlayRandom,
     StartScan,
+    ShowScanPopover,
     PollJobs,
     ClearJobs,
 }
@@ -174,30 +175,66 @@ impl Component for LibraryPage {
 
                 adw::ToolbarView {
                     add_top_bar = &adw::HeaderBar {
-                    pack_start = &gtk::Button {
-                        set_icon_name: "media-playlist-shuffle-symbolic",
-                        set_tooltip_text: Some("Play random scene"),
-                        #[watch]
-                        set_sensitive: model.client.is_some(),
-                        connect_clicked => LibraryMsg::PlayRandom,
-                    },
-
-                    pack_end = &gtk::Box {
+                    pack_start = &gtk::Box {
                         set_spacing: 6,
 
-                        #[name = "scan_btn"]
                         gtk::Button {
                             set_icon_name: "view-refresh-symbolic",
-                            set_tooltip_text: Some("Re-scan library"),
+                            set_tooltip_text: Some("Refresh scene list"),
                             #[watch]
                             set_sensitive: model.client.is_some(),
-                            connect_clicked => LibraryMsg::StartScan,
+                            connect_clicked => LibraryMsg::Refresh,
+                        },
+
+                        gtk::Separator {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_margin_start: 6,
+                            set_margin_end: 6,
                         },
 
                         gtk::Button {
-                            set_icon_name: "preferences-system-symbolic",
-                            set_tooltip_text: Some("Settings"),
-                            connect_clicked => LibraryMsg::OpenSettings,
+                            set_icon_name: "media-playlist-shuffle-symbolic",
+                            set_tooltip_text: Some("Play random scene"),
+                            #[watch]
+                            set_sensitive: model.client.is_some(),
+                            connect_clicked => LibraryMsg::PlayRandom,
+                        },
+                    },
+
+                    #[name = "menu_btn"]
+                    pack_end = &gtk::MenuButton {
+                        set_icon_name: "open-menu-symbolic",
+                        set_tooltip_text: Some("Main menu"),
+                        set_direction: gtk::ArrowType::None,
+
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 0,
+                                set_margin_start: 6,
+                                set_margin_end: 6,
+                                set_margin_top: 6,
+                                set_margin_bottom: 6,
+
+                                #[name = "menu_scan_btn"]
+                                gtk::Button {
+                                    set_label: "Re-scan library",
+                                    set_halign: gtk::Align::Fill,
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_sensitive: model.client.is_some(),
+                                    connect_clicked => LibraryMsg::StartScan,
+                                },
+
+                                gtk::Button {
+                                    set_label: "Settings",
+                                    set_halign: gtk::Align::Fill,
+                                    add_css_class: "flat",
+                                    connect_clicked => LibraryMsg::OpenSettings,
+                                },
+                            },
                         },
                     },
 
@@ -508,7 +545,7 @@ impl Component for LibraryPage {
 
         widgets
             .scan_popover
-            .set_parent(&widgets.scan_btn);
+            .set_parent(&widgets.menu_btn);
 
         if model.client.is_some() {
             sender.input(LibraryMsg::Refresh);
@@ -608,6 +645,9 @@ impl Component for LibraryPage {
             }
             LibraryMsg::PlayRandom => self.spawn_play_random(&sender),
             LibraryMsg::StartScan => self.start_scan(widgets, &sender),
+            LibraryMsg::ShowScanPopover => {
+                widgets.scan_popover.popup();
+            }
             LibraryMsg::PollJobs => self.poll_jobs(&sender),
             LibraryMsg::ClearJobs => {
                 self.active_jobs.clear();
@@ -754,15 +794,6 @@ impl LibraryPage {
         });
     }
 
-    fn toggle_popover(&self, widgets: &<Self as Component>::Widgets) {
-        if widgets.scan_popover.is_visible() {
-            widgets.scan_popover.popdown();
-        } else {
-            // Refresh job list before showing, in case cached data is stale.
-            widgets.scan_popover.popup();
-        }
-    }
-
     fn rebuild_job_list(&self, widgets: &<Self as Component>::Widgets) {
         let container = widgets.job_list.clone();
         // Remove all existing children.
@@ -861,8 +892,17 @@ impl LibraryPage {
         widgets: &<Self as Component>::Widgets,
         sender: &ComponentSender<Self>,
     ) {
+        // Close the primary menu popover — it's still open when this
+        // handler fires from the "Re-scan library" menu item.
+        widgets.menu_btn.popdown();
+
         if self.scanning {
-            self.toggle_popover(widgets);
+            // Defer so the menu popover finishes closing first.
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
+                let _ = tx.send(LibraryMsg::ShowScanPopover);
+                glib::ControlFlow::Break
+            });
         } else if let Some(client) = self.client.clone() {
             self.scanning = true;
             self.active_jobs.clear();
@@ -875,8 +915,16 @@ impl LibraryPage {
                 description: "Starting scan…".into(),
             });
             self.rebuild_job_list(widgets);
-            widgets.scan_popover.popup();
             self.start_job_polling(sender);
+
+            // Defer the scan-progress popover to the next main-loop tick
+            // so the menu popover finishes closing first.
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(0), move || {
+                let _ = tx.send(LibraryMsg::ShowScanPopover);
+                glib::ControlFlow::Break
+            });
+
             sender.oneshot_command(async move {
                 let result = client.metadata_scan().await.map_err(|e| e.to_string());
                 LibraryCmd::ScanTriggered(result)
@@ -945,6 +993,7 @@ impl LibraryPage {
             let tx = sender.input_sender().clone();
             glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
                 let _ = tx.send(LibraryMsg::ClearJobs);
+                let _ = tx.send(LibraryMsg::Refresh);
                 glib::ControlFlow::Break
             });
         } else {
@@ -957,6 +1006,12 @@ impl LibraryPage {
             if !any_active {
                 self.stop_job_polling();
                 self.scanning = false;
+                // Refresh the scene grid now that server-side jobs are done.
+                let tx = sender.input_sender().clone();
+                glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+                    let _ = tx.send(LibraryMsg::Refresh);
+                    glib::ControlFlow::Break
+                });
             }
         }
     }

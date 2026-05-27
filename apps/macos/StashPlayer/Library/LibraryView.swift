@@ -176,6 +176,13 @@ struct LibraryView: View {
                   : "Showing all scenes — click to hide interactive")
 
             Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh scene list")
+
+            Button {
                 Task { await scanAndShowTasks() }
             } label: {
                 Image(systemName: "arrow.triangle.2.circlepath")
@@ -388,6 +395,7 @@ struct LibraryView: View {
     }
 
     private func pollJobs() async {
+        var didComplete = false
         while showTasksPopover {
             do {
                 let jobs = try await app.jobs()
@@ -402,12 +410,14 @@ struct LibraryView: View {
                     )]
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     activeJobs = []
+                    didComplete = true
                     break
                 }
                 activeJobs = jobs
                 let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
                 if !anyActive {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    didComplete = true
                     break
                 }
             } catch {
@@ -415,6 +425,9 @@ struct LibraryView: View {
                 break
             }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        if didComplete {
+            await reload()
         }
     }
 }
