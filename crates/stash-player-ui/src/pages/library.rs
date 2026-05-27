@@ -85,6 +85,7 @@ pub(crate) enum LibraryMsg {
     PlayRandom,
     StartScan,
     PollJobs,
+    ClearJobs,
 }
 
 pub(crate) enum LibraryCmd {
@@ -601,27 +602,17 @@ impl Component for LibraryPage {
                     let _ = sender.output(LibraryOutput::HideInteractiveChanged(active));
                 }
             }
-            LibraryMsg::ChildActivatedAt(index) => {
-                let id = self
-                    .scene_ids
-                    .borrow()
-                    .get(index as usize)
-                    .cloned();
-                if let Some(id) = id {
-                    let _ = sender.output(LibraryOutput::OpenScene {
-                        id,
-                        index,
-                        filter: self.filter.clone(),
-                        total: self.total,
-                    });
-                }
-            }
+            LibraryMsg::ChildActivatedAt(index) => self.open_scene_at(widgets, &sender, index),
             LibraryMsg::OpenSettings => {
                 let _ = sender.output(LibraryOutput::OpenSettings);
             }
             LibraryMsg::PlayRandom => self.spawn_play_random(&sender),
             LibraryMsg::StartScan => self.start_scan(widgets, &sender),
             LibraryMsg::PollJobs => self.poll_jobs(&sender),
+            LibraryMsg::ClearJobs => {
+                self.active_jobs.clear();
+                self.rebuild_job_list(widgets);
+            }
         }
         self.update_view(widgets, sender);
     }
@@ -690,25 +681,8 @@ impl Component for LibraryPage {
             LibraryCmd::ScanTriggered(Ok(_job_id)) => {
                 self.scanning = false;
             }
-            LibraryCmd::ScanTriggered(Err(e)) => {
-                self.scanning = false;
-                self.stop_job_polling();
-                self.active_jobs.clear();
-                self.rebuild_job_list(widgets);
-                tracing::warn!("metadata scan failed: {e}");
-            }
-            LibraryCmd::JobsFetched(Ok(jobs)) => {
-                self.active_jobs = jobs;
-                self.rebuild_job_list(widgets);
-                let any_active = self
-                    .active_jobs
-                    .iter()
-                    .any(|j| matches!(j.status, JobStatus::Ready | JobStatus::Running));
-                if !any_active {
-                    self.stop_job_polling();
-                    self.scanning = false;
-                }
-            }
+            LibraryCmd::ScanTriggered(Err(e)) => self.handle_scan_error(widgets, e),
+            LibraryCmd::JobsFetched(Ok(jobs)) => self.handle_jobs_fetched(widgets, &sender, jobs),
             LibraryCmd::JobsFetched(Err(e)) => {
                 tracing::warn!("jobs query failed: {e}");
             }
@@ -892,6 +866,14 @@ impl LibraryPage {
         } else if let Some(client) = self.client.clone() {
             self.scanning = true;
             self.active_jobs.clear();
+            // Show a synthetic entry immediately so the user sees feedback
+            // even when the server-side job finishes before the first poll.
+            self.active_jobs.push(Job {
+                id: "__scan__".into(),
+                status: JobStatus::Running,
+                progress: None,
+                description: "Starting scan…".into(),
+            });
             self.rebuild_job_list(widgets);
             widgets.scan_popover.popup();
             self.start_job_polling(sender);
@@ -908,6 +890,74 @@ impl LibraryPage {
                 let result = client.jobs().await.map_err(|e| e.to_string());
                 LibraryCmd::JobsFetched(result)
             });
+        }
+    }
+
+    fn handle_scan_error(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        error: String,
+    ) {
+        self.scanning = false;
+        self.stop_job_polling();
+        self.active_jobs.clear();
+        self.rebuild_job_list(widgets);
+        tracing::warn!("metadata scan failed: {error}");
+    }
+
+    fn open_scene_at(
+        &self,
+        _widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+        index: u32,
+    ) {
+        let id = self
+            .scene_ids
+            .borrow()
+            .get(index as usize)
+            .cloned();
+        if let Some(id) = id {
+            let _ = sender.output(LibraryOutput::OpenScene {
+                id,
+                index,
+                filter: self.filter.clone(),
+                total: self.total,
+            });
+        }
+    }
+
+    fn handle_jobs_fetched(
+        &mut self,
+        widgets: &<Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+        jobs: Vec<Job>,
+    ) {
+        if jobs.is_empty() && self.active_jobs.iter().any(|j| j.id == "__scan__") {
+            self.active_jobs = vec![Job {
+                id: "__scan__".into(),
+                status: JobStatus::Finished,
+                progress: Some(1.0),
+                description: "Scan complete".into(),
+            }];
+            self.rebuild_job_list(widgets);
+            self.stop_job_polling();
+            self.scanning = false;
+            let tx = sender.input_sender().clone();
+            glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+                let _ = tx.send(LibraryMsg::ClearJobs);
+                glib::ControlFlow::Break
+            });
+        } else {
+            self.active_jobs = jobs;
+            self.rebuild_job_list(widgets);
+            let any_active = self
+                .active_jobs
+                .iter()
+                .any(|j| matches!(j.status, JobStatus::Ready | JobStatus::Running));
+            if !any_active {
+                self.stop_job_polling();
+                self.scanning = false;
+            }
         }
     }
 

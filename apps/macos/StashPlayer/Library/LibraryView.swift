@@ -365,7 +365,14 @@ struct LibraryView: View {
     private func scanAndShowTasks() async {
         isScanning = true
         showTasksPopover = true
-        activeJobs = []
+        // Show a synthetic entry immediately so the user sees feedback
+        // even when the server-side job finishes before the first poll.
+        activeJobs = [FfiJob(
+            id: "__scan__",
+            status: .running,
+            progress: nil,
+            description: "Starting scan…"
+        )]
         do {
             _ = try await app.metadataScan()
             await pollJobs()
@@ -381,10 +388,22 @@ struct LibraryView: View {
     }
 
     private func pollJobs() async {
-        // Keep polling while the popover is visible and jobs are active.
         while showTasksPopover {
             do {
                 let jobs = try await app.jobs()
+                if jobs.isEmpty && activeJobs.contains(where: { $0.id == "__scan__" }) {
+                    // The server-side job finished before our first poll.
+                    // Show "Scan complete" briefly, then clear.
+                    activeJobs = [FfiJob(
+                        id: "__scan__",
+                        status: .finished,
+                        progress: 1,
+                        description: "Scan complete"
+                    )]
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    activeJobs = []
+                    break
+                }
                 activeJobs = jobs
                 let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
                 if !anyActive {
