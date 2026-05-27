@@ -299,7 +299,9 @@ pub enum JobStatus {
 pub struct Job {
     pub id: String,
     pub status: JobStatus,
+    #[serde(default)]
     pub progress: Option<f64>,
+    #[serde(default)]
     pub description: String,
 }
 
@@ -318,12 +320,10 @@ struct MetadataScanResponse {
 const JOBS_QUERY: &str = r#"
 query Jobs {
   jobQueue {
-    ... on Job {
-      id
-      status
-      progress
-      description
-    }
+    id
+    status
+    progress
+    description
   }
 }
 "#;
