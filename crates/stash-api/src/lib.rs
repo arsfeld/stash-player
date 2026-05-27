@@ -331,7 +331,7 @@ query Jobs {
 #[derive(Deserialize)]
 struct JobsResponse {
     #[serde(rename = "jobQueue")]
-    jobs: Vec<Job>,
+    jobs: Option<Vec<Job>>,
 }
 
 impl Client {
@@ -351,6 +351,6 @@ impl Client {
         let resp: JobsResponse = self
             .graphql(JOBS_QUERY, &serde_json::json!({}))
             .await?;
-        Ok(resp.jobs)
+        Ok(resp.jobs.unwrap_or_default())
     }
 }
