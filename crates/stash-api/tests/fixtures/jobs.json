@@ -1,1 +1,1 @@
-{"data": {"jobs": [{"id": "42", "status": "RUNNING", "progress": 0.35, "description": "Scanning for new files"}]}}
+{"data": {"jobQueue": [{"id": "42", "status": "RUNNING", "progress": 0.35, "description": "Scanning for new files"}]}}

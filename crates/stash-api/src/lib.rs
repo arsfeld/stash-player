@@ -317,7 +317,7 @@ struct MetadataScanResponse {
 
 const JOBS_QUERY: &str = r#"
 query Jobs {
-  jobs {
+  jobQueue {
     ... on Job {
       id
       status
@@ -330,6 +330,7 @@ query Jobs {
 
 #[derive(Deserialize)]
 struct JobsResponse {
+    #[serde(rename = "jobQueue")]
     jobs: Vec<Job>,
 }
 
