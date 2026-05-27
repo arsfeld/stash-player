@@ -10,8 +10,8 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 use stash_api::{
-    Client, FindScenesPage, PerformerRef, Scene, SceneFile, SceneFilter, ScenePaths,
-    SortDirection, SortKey, StudioRef,
+    Client, FindScenesPage, Job, JobStatus, PerformerRef, Scene, SceneFile, SceneFilter,
+    ScenePaths, SortDirection, SortKey, StudioRef,
 };
 use stash_player_core::{Config, cache, secrets};
 
@@ -290,6 +290,46 @@ impl From<FindScenesPage> for FfiScenesPage {
     }
 }
 
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiJobStatus {
+    Ready,
+    Running,
+    Finished,
+    Cancelled,
+    Failed,
+}
+
+impl From<JobStatus> for FfiJobStatus {
+    fn from(s: JobStatus) -> Self {
+        match s {
+            JobStatus::Ready => FfiJobStatus::Ready,
+            JobStatus::Running => FfiJobStatus::Running,
+            JobStatus::Finished => FfiJobStatus::Finished,
+            JobStatus::Cancelled => FfiJobStatus::Cancelled,
+            JobStatus::Failed => FfiJobStatus::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiJob {
+    pub id: String,
+    pub status: FfiJobStatus,
+    pub progress: Option<f64>,
+    pub description: String,
+}
+
+impl From<Job> for FfiJob {
+    fn from(j: Job) -> Self {
+        Self {
+            id: j.id,
+            status: j.status.into(),
+            progress: j.progress,
+            description: j.description,
+        }
+    }
+}
+
 /// Idempotent tracing-subscriber setup. Safe to call from `App.init()` on
 /// the Swift side at every launch.
 #[uniffi::export]
@@ -428,6 +468,20 @@ impl StashPlayer {
         }
         let _ = std::fs::write(&path, &bytes);
         Ok(bytes)
+    }
+
+    /// Trigger a metadata scan on the server. Returns the job ID so the
+    /// caller can poll progress via `jobs()`.
+    pub fn metadata_scan(&self) -> Result<String, FfiError> {
+        let client = self.client()?;
+        Ok(rt().block_on(client.metadata_scan())?)
+    }
+
+    /// List all currently tracked jobs (running + recently completed).
+    pub fn jobs(&self) -> Result<Vec<FfiJob>, FfiError> {
+        let client = self.client()?;
+        let jobs = rt().block_on(client.jobs())?;
+        Ok(jobs.into_iter().map(Into::into).collect())
     }
 }
 

@@ -4,7 +4,7 @@
 //! HTTP errors, null findScene) map onto the Client's public surface.
 
 use serde_json::json;
-use stash_api::{Client, Error, SceneFilter, SortDirection, SortKey};
+use stash_api::{Client, Error, JobStatus, SceneFilter, SortDirection, SortKey};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -242,4 +242,54 @@ async fn empty_api_key_omits_header_but_request_still_reaches_server() {
 
     let req = &server.received_requests().await.unwrap()[0];
     assert!(req.headers.get("ApiKey").is_none());
+}
+
+#[tokio::test]
+async fn metadata_scan_returns_job_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fixture_json("metadata_scan.json")),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "test-key").unwrap();
+    let job_id = client.metadata_scan().await.unwrap();
+    assert_eq!(job_id, "42");
+}
+
+#[tokio::test]
+async fn jobs_returns_running_jobs() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture_json("jobs.json")))
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "test-key").unwrap();
+    let jobs = client.jobs().await.unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].id, "42");
+    assert_eq!(jobs[0].status, JobStatus::Running);
+    assert_eq!(jobs[0].progress, Some(0.35));
+    assert_eq!(jobs[0].description, "Scanning for new files");
+}
+
+#[tokio::test]
+async fn jobs_handles_empty_list() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fixture_json("jobs_empty.json")),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "test-key").unwrap();
+    let jobs = client.jobs().await.unwrap();
+    assert!(jobs.is_empty());
 }
