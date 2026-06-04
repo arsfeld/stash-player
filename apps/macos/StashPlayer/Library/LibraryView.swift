@@ -164,9 +164,16 @@ struct LibraryView: View {
         }
     }
 
-    /// Left: shuffle → inline filters.
+    /// Left: refresh → shuffle → inline filters.
     private var leadingToolbarCluster: some View {
         HStack(spacing: 8) {
+            Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh scene list")
+
             Button {
                 Task { await playRandom() }
             } label: {
@@ -180,15 +187,17 @@ struct LibraryView: View {
         }
     }
 
-    /// Right (before search): refresh → tasks.
+    /// Right: a re-scan + tasks group. (Refresh lives in the leading
+    /// cluster, before shuffle.)
     private var trailingToolbarCluster: some View {
         ControlGroup {
             Button {
-                Task { await reload() }
+                Task { await startScan() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Image(systemName: "externaldrive.badge.plus")
             }
-            .help("Refresh scene list")
+            .help("Re-scan library for new media")
+            .disabled(hasActiveWork)
 
             tasksToolbarButton
         }
@@ -487,50 +496,66 @@ struct LibraryView: View {
             defer { jobTrackingTask = nil }
             var didComplete = false
             var sawActiveJobs = false
-            while !Task.isCancelled && (showTasksPopover || isScanning) {
+            var hasActive = false
+            // Bounds the "waiting for the server to register the scan job"
+            // window so an instant scan (nothing to find) still concludes.
+            var emptyScanPolls = 0
+            // Keep polling while the popover is open, a local scan is in
+            // flight, OR the server still reports active jobs. That last
+            // clause is what keeps the toolbar badge honest after the
+            // popover closes — without it, polling stops on close and the
+            // badge freezes on its last snapshot (a stale "scanning" icon).
+            while !Task.isCancelled && (showTasksPopover || isScanning || hasActive) {
                 do {
                     let jobs = try await app.jobs()
-                    if jobs.isEmpty && activeJobs.contains(where: { $0.id == "__scan__" }) {
+                    let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
+                    hasActive = anyActive
+
+                    if anyActive {
+                        sawActiveJobs = true
+                        emptyScanPolls = 0
+                        activeJobs = jobs
+                    } else if isScanning && !sawActiveJobs && emptyScanPolls < 3 {
+                        // Scan requested but the server hasn't registered the
+                        // job yet — hold the "Starting scan…" marker and wait.
+                        emptyScanPolls += 1
+                    } else if sawActiveJobs || isScanning {
+                        // We watched work run (or a scan we can't keep waiting
+                        // on) and the queue has settled — it finished.
                         activeJobs = [FfiJob(
                             id: "__scan__",
                             status: .finished,
                             progress: 1,
                             description: "Scan complete"
                         )]
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                        activeJobs = []
                         didComplete = true
-                        break
-                    }
-                    activeJobs = jobs
-                    let anyActive = jobs.contains { $0.status == .running || $0.status == .ready }
-                    if anyActive {
-                        sawActiveJobs = true
-                    } else if isScanning {
-                        // Scan was triggered; keep polling until the server registers a job.
-                    } else if !sawActiveJobs {
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        if !showTasksPopover { activeJobs = [] }
                         break
                     } else {
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                        activeJobs = []
-                        didComplete = true
+                        // Opened with nothing running and no scan in flight.
+                        activeJobs = showTasksPopover ? jobs : []
                         break
                     }
                 } catch {
-                    activeJobs = []
+                    if !showTasksPopover { activeJobs = [] }
                     break
                 }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
+            // Clear the scan flag *before* the final reload so the badge drops
+            // the moment tracking ends, even if the reload takes a beat.
+            isScanning = false
             if didComplete {
-                isScanning = false
                 await reload()
             }
         }
     }
 
     private func stopJobTrackingIfIdle() {
-        guard !isScanning else { return }
+        // Don't tear down the poller while work is still in flight — let it
+        // keep the toolbar badge live and self-terminate once jobs finish.
+        guard !isScanning && !hasActiveWork else { return }
         jobTrackingTask?.cancel()
         jobTrackingTask = nil
     }
