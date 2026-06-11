@@ -77,14 +77,11 @@ struct SceneView: View {
     @State private var hostWindow: NSWindow?
     /// Notification observer for end-of-playback → autoplay next.
     @State private var endObserver: NSObjectProtocol?
-    /// `NSWindow.willEnter/willExitFullScreenNotification` observers. We
-    /// hide the SwiftUI toolbar entirely in fullscreen because the OS
-    /// slide-down strip ignores `.toolbarBackground(.hidden, ...)` and
-    /// renders as an opaque white bar over the video. Traffic lights are
-    /// already hidden by AppKit in fullscreen, so losing the toolbar
-    /// there is invisible to the user.
-    @State private var fullScreenObservers: [NSObjectProtocol] = []
-    @State private var isFullScreen: Bool = false
+    /// The shared window's chrome as it was before we applied the immersive
+    /// look, captured once on first appear and restored verbatim on
+    /// disappear so the Library gets back exactly the OS default — not a
+    /// hardcoded approximation of it.
+    @State private var savedChrome: WindowChromeSnapshot?
 
     init(initial: SceneNavigation, navigationPath: Binding<NavigationPath>) {
         self.initial = initial
@@ -98,7 +95,7 @@ struct SceneView: View {
     var body: some View {
         videoSurface
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Extend the video + OSD under the toolbar so the bare video
+            // Extend the video + OSD under the titlebar so the bare video
             // shows behind the (transparent) traffic-light strip instead
             // of a safe-area-inset black bar.
             .ignoresSafeArea()
@@ -106,32 +103,14 @@ struct SceneView: View {
             .background(WindowAccessor { window in
                 self.hostWindow = window
                 applyWindowChrome(window)
-                installFullScreenObservers()
             })
-            .navigationTitle(scene.displayTitle)
-            // Keep the unifiedCompact toolbar area present (empty
-            // principal item) so the window's traffic lights stay visible
-            // — hiding the toolbar entirely with `.toolbar(.hidden, ...)`
-            // collapses the title-bar strip and the traffic lights with
-            // it.
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Color.clear.frame(width: 1, height: 1)
-                }
-            }
-            // Make the toolbar background transparent so the video shows
-            // through behind the traffic lights. Per Apple docs, hiding
-            // the toolbar itself (via `.toolbar(.hidden, for: .windowToolbar)`)
-            // also hides the traffic lights — `.toolbarBackground(.hidden, ...)`
-            // is the supported way to keep the controls but drop the chrome.
-            .toolbarBackground(.hidden, for: .windowToolbar)
-            // In fullscreen, fully hide the toolbar — the OS slide-down
-            // toolbar renders opaque (ignores toolbarBackground hidden)
-            // and traffic lights are already gone, so a hidden toolbar
-            // is invisible loss with visible gain.
-            .toolbar(isFullScreen ? .hidden : .visible, for: .windowToolbar)
-            // Suppress the SwiftUI-auto-generated back button — the OSD
-            // top header carries our own auto-fading back chevron.
+            // No toolbar and no navigationTitle on the scene page: the
+            // window is a normal titled window whose traffic lights float
+            // over the video via the transparent, full-size-content-view
+            // titlebar set in `applyWindowChrome`. The OSD top bar carries
+            // the scene title and our own auto-fading back chevron, so a
+            // SwiftUI toolbar here would only add a redundant inline title
+            // and a macOS 27 section divider over the video.
             .navigationBarBackButtonHidden(true)
             .onChange(of: scene.id) { _, _ in applyWindowChrome(hostWindow) }
             .task(id: scene.id) { await reloadPlayer() }
@@ -479,15 +458,13 @@ struct SceneView: View {
             NSEvent.removeMonitor(k)
             keyDownMonitor = nil
         }
-        for obs in fullScreenObservers {
-            NotificationCenter.default.removeObserver(obs)
+        // Hand the shared window back to exactly the chrome it had before
+        // this scene page touched it, so the Library keeps the OS-default
+        // (vanilla) toolbar behaviour for whatever macOS version we're on.
+        if let window = hostWindow, let snapshot = savedChrome {
+            snapshot.restore(to: window)
         }
-        fullScreenObservers = []
-        // Drop the aspect-ratio constraint so the library window isn't
-        // stuck snapping to the last scene's dimensions.
-        if let window = hostWindow {
-            window.contentAspectRatio = .zero
-        }
+        savedChrome = nil
         tearDownPlayer(flush: true)
     }
 
@@ -498,6 +475,12 @@ struct SceneView: View {
     @MainActor
     private func applyWindowChrome(_ window: NSWindow?) {
         guard let window else { return }
+        // Capture the OS-default chrome before the first mutation so we can
+        // hand it back untouched on disappear (applyWindowChrome also runs
+        // on scene.id changes — only the first call snapshots).
+        if savedChrome == nil {
+            savedChrome = WindowChromeSnapshot(window)
+        }
         window.isMovableByWindowBackground = true
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -511,10 +494,9 @@ struct SceneView: View {
             window.styleMask.insert(.titled)
         }
 
-        // Defensive: `.windowStyle(.hiddenTitleBar)` at the app level
-        // ships with the standard window buttons visible, but anything
-        // that flipped `isHidden` upstream (e.g. a fullscreen exit) would
-        // leave them off. Force them on every time we apply chrome.
+        // Defensive: anything that flipped `isHidden` upstream (e.g. a
+        // fullscreen exit) would leave the standard window buttons off.
+        // Force them on every time we apply chrome.
         window.standardWindowButton(.closeButton)?.isHidden = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = false
         window.standardWindowButton(.zoomButton)?.isHidden = false
@@ -531,7 +513,6 @@ struct SceneView: View {
     @MainActor
     private func installMouseMoveMonitor() {
         installKeyDownMonitor()
-        installFullScreenObservers()
         guard mouseMoveMonitor == nil else { return }
         lastMouseLocation = NSEvent.mouseLocation
         mouseMoveMonitor = NSEvent.addLocalMonitorForEvents(
@@ -591,29 +572,6 @@ struct SceneView: View {
                 return event
             }
         }
-    }
-
-    /// Subscribe to the host window's fullscreen transitions and mirror
-    /// the state in `isFullScreen` so SwiftUI re-evaluates the toolbar
-    /// visibility modifier. Seeds the initial state from `styleMask` in
-    /// case we attach mid-fullscreen (e.g. after a NavigationStack push
-    /// from an already-fullscreen library window).
-    @MainActor
-    private func installFullScreenObservers() {
-        guard fullScreenObservers.isEmpty, let window = hostWindow else { return }
-        isFullScreen = window.styleMask.contains(.fullScreen)
-        let center = NotificationCenter.default
-        let enter = center.addObserver(
-            forName: NSWindow.willEnterFullScreenNotification,
-            object: window,
-            queue: .main
-        ) { _ in Task { @MainActor in isFullScreen = true } }
-        let exit = center.addObserver(
-            forName: NSWindow.willExitFullScreenNotification,
-            object: window,
-            queue: .main
-        ) { _ in Task { @MainActor in isFullScreen = false } }
-        fullScreenObservers = [enter, exit]
     }
 
     // MARK: - Prev / next
