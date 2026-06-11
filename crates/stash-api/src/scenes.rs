@@ -295,7 +295,7 @@ query FindScene($id: ID!) {
     play_duration
     o_counter
     paths { screenshot preview sprite stream webp }
-    files { duration width height video_codec frame_rate }
+    files { path duration width height video_codec frame_rate }
     studio { id name }
     performers { id name }
   }
