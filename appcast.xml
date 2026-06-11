@@ -3,65 +3,74 @@
     <channel>
         <title>StashPlayer</title>
         <item>
+            <title>0.4.6</title>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
+            <sparkle:version>0.4.6</sparkle:version>
+            <sparkle:shortVersionString>0.4.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<p><strong>Full Changelog</strong>: <a
+href="https://github.com/arsfeld/stash-player/compare/v0.4.5...v0.4.6">https://github.com/arsfeld/stash-player/compare/v0.4.5...v0.4.6</a></p>
+]]></description>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64.zip" length="4438018" type="application/octet-stream" sparkle:edSignature="gQHl6O1v8TQUQdMKHkTD70KhgWO1wQW+gBNCz2ko018JEukPGYRxNy5QQIrNUrK/sBgYmsjOY6Q2wpfGKbPfDw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer0.4.6-0.4.5.delta" sparkle:deltaFrom="0.4.5" length="305762" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="+28uxUwBWJhEJ75feWnUSbQaZuQdyWStRv2gOEwlJ/+gtC+n9LYnwybDBxL4nI+lGGXBEg+iUm3GZr72qyZmBQ=="/>
+                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer0.4.6-0.4.4.delta" sparkle:deltaFrom="0.4.4" length="528758" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="A7XWrelKoH9uNLhpOX2KfcdvEfHylh4g00byWfb0/5u/UOEeJINmnCM3uc1srwQqdKMspXWqnjeLNMB8+O3vAQ=="/>
+                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer0.4.6-0.4.3.delta" sparkle:deltaFrom="0.4.3" length="632618" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="mRP246dLWvMVcGSXH4sOBt4FR4WmFxrB8LcHWyma9QBM4bdQrvp5+Ukm6ItGX/CHAvtgcVhFSdCNSv8lDDrECA=="/>
+                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer0.4.6-0.4.2.delta" sparkle:deltaFrom="0.4.2" length="631470" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="au+wfZ5hL7eWLzKkVuSvG+//2LgsGwBvBkx8RxOR3Be/V0nKoUWZ8RlaDvYAi1G/cx71/MPIJo4PZ+K+W70aBg=="/>
+                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer0.4.6-0.4.1.delta" sparkle:deltaFrom="0.4.1" length="633074" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="GlWjdjBVuu228EZ3IUTOvRVyZ2rugRKUh+330vpy6khGFCqLtGGX3Iszf4q3U6hm34N3gkFQ3dyyy1Sh5ERiDQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.4.5</title>
-            <pubDate>Thu, 04 Jun 2026 18:34:06 +0000</pubDate>
-            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.5</link>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
             <sparkle:version>0.4.5</sparkle:version>
             <sparkle:shortVersionString>0.4.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description><![CDATA[<p><strong>Full Changelog</strong>: <a
-href="https://github.com/arsfeld/stash-player/compare/v0.4.4...v0.4.5">https://github.com/arsfeld/stash-player/compare/v0.4.4...v0.4.5</a></p>
-<p><strong>Full Changelog</strong>: <a
-href="https://github.com/arsfeld/stash-player/compare/v0.4.4...v0.4.5">https://github.com/arsfeld/stash-player/compare/v0.4.4...v0.4.5</a></p>
-]]></description>
-            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer-macos-arm64.zip" length="4442838" type="application/octet-stream" sparkle:edSignature="pZW+Efdjn4H8QMLNnJzGcLhftMayJFylxp0ZRBewv0GpRbnYTyWkPG+r9/1EBVCvYra1zHu78fbwtBnKHVJaAA=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer0.4.5-0.4.4.delta" sparkle:deltaFrom="0.4.4" length="425850" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="yvSCF+tkiOC3joD6c51xvXr32RzsFKrkBoPDesMK2BeSuqFKpEuVzHWEEGqz4jLX71aCYnEYdhNeKqQepEdDBw=="/>
-                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer0.4.5-0.4.3.delta" sparkle:deltaFrom="0.4.3" length="542354" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="lYAJ35PajkbXHfVWRtFE+gczp9wSq9cJJD0MWNry+ZtP/4FTDoQ5I1r4QJSOmfDBk2S3N5+bcluXOwtkSgqZBw=="/>
-                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer0.4.5-0.4.2.delta" sparkle:deltaFrom="0.4.2" length="542090" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="l+LdZbcuwGzRIj0FGzBoeGi6b8dwvsVXMg6nnyJ9AE6jUxdGiNjkXL9xIhpLwDRhdhPPTm6Zl1iCDaFVZaaWAA=="/>
-                <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer0.4.5-0.4.1.delta" sparkle:deltaFrom="0.4.1" length="543338" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="QceX6CFPHGqwYsP9XRAgelthJk3pDeOCVlt4r4MKJR1Rydl/IzQ1C2cvTyqRuTqufWj7it/R+u5okMt7Y7RHCw=="/>
-            </sparkle:deltas>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64-v0.4.5.zip" length="4442838" type="application/octet-stream" sparkle:edSignature="pZW+Efdjn4H8QMLNnJzGcLhftMayJFylxp0ZRBewv0GpRbnYTyWkPG+r9/1EBVCvYra1zHu78fbwtBnKHVJaAA=="/>
         </item>
         <item>
             <title>0.4.4</title>
-            <pubDate>Thu, 04 Jun 2026 18:34:06 +0000</pubDate>
-            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.5</link>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
             <sparkle:version>0.4.4</sparkle:version>
             <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer-macos-arm64-v0.4.4.zip" length="4440597" type="application/octet-stream" sparkle:edSignature="rUuKDVPAdESFG0v9F6/BXdcVwhdCPWYr+SKS6lzxHGuh9C1IKQab3pA2YX0gJi+IklRw3f1oyyOugaJqmlelDw=="/>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64-v0.4.4.zip" length="4440597" type="application/octet-stream" sparkle:edSignature="rUuKDVPAdESFG0v9F6/BXdcVwhdCPWYr+SKS6lzxHGuh9C1IKQab3pA2YX0gJi+IklRw3f1oyyOugaJqmlelDw=="/>
         </item>
         <item>
             <title>0.4.3</title>
-            <pubDate>Thu, 04 Jun 2026 18:34:06 +0000</pubDate>
-            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.5</link>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
             <sparkle:version>0.4.3</sparkle:version>
             <sparkle:shortVersionString>0.4.3</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer-macos-arm64-v0.4.3.zip" length="4369507" type="application/octet-stream" sparkle:edSignature="HNXrhVpg/zcxzZU+/7Ojtnpdhsm2txzkDAiF2xpbpNVQfHIwvmZ5ZZhKtnvLo9gjArrMRmpLNeeBIF9eaTKmCQ=="/>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64-v0.4.3.zip" length="4369507" type="application/octet-stream" sparkle:edSignature="HNXrhVpg/zcxzZU+/7Ojtnpdhsm2txzkDAiF2xpbpNVQfHIwvmZ5ZZhKtnvLo9gjArrMRmpLNeeBIF9eaTKmCQ=="/>
         </item>
         <item>
             <title>0.4.2</title>
-            <pubDate>Thu, 04 Jun 2026 18:34:06 +0000</pubDate>
-            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.5</link>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
             <sparkle:version>0.4.2</sparkle:version>
             <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer-macos-arm64-v0.4.2.zip" length="4369522" type="application/octet-stream" sparkle:edSignature="5EeMwbmkxRCDTwQ8Pd15csSeeR7VwfkCAVLvXQB7wYo+kDHRmq/BTyKq2hTsTO9naX0dWK276Ep94dcyNULKBw=="/>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64-v0.4.2.zip" length="4369522" type="application/octet-stream" sparkle:edSignature="5EeMwbmkxRCDTwQ8Pd15csSeeR7VwfkCAVLvXQB7wYo+kDHRmq/BTyKq2hTsTO9naX0dWK276Ep94dcyNULKBw=="/>
         </item>
         <item>
             <title>0.4.1</title>
-            <pubDate>Thu, 04 Jun 2026 18:34:06 +0000</pubDate>
-            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.5</link>
+            <pubDate>Thu, 11 Jun 2026 14:25:41 +0000</pubDate>
+            <link>https://github.com/arsfeld/stash-player/releases/tag/v0.4.6</link>
             <sparkle:version>0.4.1</sparkle:version>
             <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.5/StashPlayer-macos-arm64-v0.4.1.zip" length="4369487" type="application/octet-stream" sparkle:edSignature="P+6sjUCEXpFxSFGGyQy6kxRK9u6s5lClUUsMRMhnBEid45ejO+oDKlQj52yT/dypZG2N7uH26oGQXP8fMJKYCg=="/>
+            <enclosure url="https://github.com/arsfeld/stash-player/releases/download/v0.4.6/StashPlayer-macos-arm64-v0.4.1.zip" length="4369487" type="application/octet-stream" sparkle:edSignature="P+6sjUCEXpFxSFGGyQy6kxRK9u6s5lClUUsMRMhnBEid45ejO+oDKlQj52yT/dypZG2N7uH26oGQXP8fMJKYCg=="/>
         </item>
     </channel>
 </rss>
