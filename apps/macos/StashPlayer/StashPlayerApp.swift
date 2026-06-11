@@ -23,10 +23,10 @@ struct StashPlayerMacApp: App {
                 .frame(minWidth: 640, minHeight: 360)
                 .task { await app.bootstrap() }
         }
-        // Hide the title bar so the scene page can let the video flow
-        // edge-to-edge under a compact, translucent toolbar.
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+        // Vanilla window chrome so the Library gets the system Liquid Glass
+        // toolbar (incl. the macOS 27 toolbar/content divider). The scene
+        // page establishes its own immersive, edge-to-edge video chrome in
+        // SceneView.applyWindowChrome and reverts it on the way out.
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {

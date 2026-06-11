@@ -24,3 +24,41 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 }
+
+/// Snapshot of the window-chrome properties `SceneView` mutates for its
+/// immersive video look, so they can be restored to whatever the OS gave us
+/// rather than to hardcoded "vanilla" guesses (the actual defaults differ
+/// between macOS versions). Captured once, before the first immersive
+/// mutation; reapplied verbatim when the scene page tears down.
+struct WindowChromeSnapshot {
+    let isMovableByWindowBackground: Bool
+    let titlebarAppearsTransparent: Bool
+    let titleVisibility: NSWindow.TitleVisibility
+    let titlebarSeparatorStyle: NSTitlebarSeparatorStyle
+    let hadFullSizeContentView: Bool
+    let contentAspectRatio: NSSize
+
+    @MainActor
+    init(_ window: NSWindow) {
+        isMovableByWindowBackground = window.isMovableByWindowBackground
+        titlebarAppearsTransparent = window.titlebarAppearsTransparent
+        titleVisibility = window.titleVisibility
+        titlebarSeparatorStyle = window.titlebarSeparatorStyle
+        hadFullSizeContentView = window.styleMask.contains(.fullSizeContentView)
+        contentAspectRatio = window.contentAspectRatio
+    }
+
+    @MainActor
+    func restore(to window: NSWindow) {
+        window.isMovableByWindowBackground = isMovableByWindowBackground
+        window.titlebarAppearsTransparent = titlebarAppearsTransparent
+        window.titleVisibility = titleVisibility
+        window.titlebarSeparatorStyle = titlebarSeparatorStyle
+        if hadFullSizeContentView {
+            window.styleMask.insert(.fullSizeContentView)
+        } else {
+            window.styleMask.remove(.fullSizeContentView)
+        }
+        window.contentAspectRatio = contentAspectRatio
+    }
+}
