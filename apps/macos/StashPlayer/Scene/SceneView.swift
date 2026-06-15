@@ -34,6 +34,14 @@ struct SceneView: View {
     @State private var statusObserver: NSKeyValueObservation?
     @State private var periodicToken: Any?
 
+    /// Power-management assertion held while the player is actively playing
+    /// so the display doesn't dim or sleep mid-scene. AVPlayer's implicit
+    /// `preventsDisplaySleepDuringVideoPlayback` is unreliable through this
+    /// custom `controlsStyle = .none` render path, so we hold an explicit
+    /// `ProcessInfo` activity instead. Begun on the rate 0→playing edge,
+    /// ended on pause and teardown.
+    @State private var sleepAssertion: NSObjectProtocol?
+
     @State private var liveOCount: Int32?
     @State private var oError: String?
     @State private var nowPlaying = NowPlayingController()
@@ -252,6 +260,10 @@ struct SceneView: View {
             ) as? Double) ?? 1.0
             player.volume = Float(max(0, min(1, savedVolume)))
             player.isMuted = UserDefaults.standard.bool(forKey: OSDViewModel.mutedDefaultsKey)
+            // Document intent at the source: the explicit ProcessInfo
+            // assertion (beginSleepAssertion) is the real safeguard, but
+            // keep the implicit flag on too so AVPlayer cooperates.
+            player.preventsDisplaySleepDuringVideoPlayback = true
             attachRateObserver(player)
             attachPeriodicObserver(player)
             attachEndObserver(player)
@@ -287,7 +299,9 @@ struct SceneView: View {
             Task { @MainActor in
                 if newRate > 0 && oldRate == 0 {
                     lastPlayStart = Date()
+                    beginSleepAssertion()
                 } else if newRate == 0 && oldRate > 0 {
+                    endSleepAssertion()
                     if let start = lastPlayStart {
                         accumulatedDelta += Date().timeIntervalSince(start)
                         lastPlayStart = nil
@@ -407,6 +421,24 @@ struct SceneView: View {
         )
     }
 
+    /// Hold a display-awake assertion while playing. Idempotent — a second
+    /// play→play edge won't stack a duplicate. `.userInitiated` also tells
+    /// the system this is active foreground work so App Nap doesn't throttle
+    /// the playback observers (the "as if it's idle" symptom).
+    private func beginSleepAssertion() {
+        guard sleepAssertion == nil else { return }
+        sleepAssertion = ProcessInfo.processInfo.beginActivity(
+            options: [.idleDisplaySleepDisabled, .userInitiated],
+            reason: "Playing video"
+        )
+    }
+
+    private func endSleepAssertion() {
+        guard let token = sleepAssertion else { return }
+        ProcessInfo.processInfo.endActivity(token)
+        sleepAssertion = nil
+    }
+
     private func tearDownPlayer(flush: Bool) {
         if let player = avPlayer, flush {
             // Synchronous final flush on disappear/swap. We snapshot the
@@ -441,6 +473,7 @@ struct SceneView: View {
             endObserver = nil
         }
         osdVM.detach()
+        endSleepAssertion()
         avPlayer?.pause()
         avPlayer = nil
         nowPlaying.tearDown()
