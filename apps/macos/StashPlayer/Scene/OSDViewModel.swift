@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import AppKit
 import Combine
 
 /// Owns the player-driven state and auto-hide lifecycle for the custom
@@ -97,6 +98,8 @@ final class OSDViewModel: ObservableObject {
         hideTask?.cancel(); hideTask = nil
         player = nil
         seekDraftSeconds = nil
+        // Never leave the pointer hidden after the player goes away.
+        NSCursor.setHiddenUntilMouseMoves(false)
     }
 
     /// Called from the SceneView periodic time observer (4 Hz). Skipping
@@ -131,6 +134,9 @@ final class OSDViewModel: ObservableObject {
         hideTask?.cancel()
         hideTask = nil
         if !revealed { revealed = true }
+        // Paused or otherwise pinned → the user is reaching for controls;
+        // make sure the pointer is back even if a prior auto-hide hid it.
+        NSCursor.setHiddenUntilMouseMoves(false)
     }
 
     /// Hide the OSD immediately without waiting out the auto-hide timer.
@@ -153,6 +159,14 @@ final class OSDViewModel: ObservableObject {
             // counts as "still playing" so a hiccup doesn't pin the OSD.
             guard self.player?.timeControlStatus != .paused else { return }
             self.revealed = false
+            // Hide the pointer alongside the OSD. `setHiddenUntilMouseMoves`
+            // auto-restores it on the next move — which also fires
+            // `bumpReveal()` — so the two stay in lockstep with no extra
+            // teardown. Only this inactivity path hides the cursor;
+            // `hideImmediately()` deliberately does not, because that path
+            // means the cursor left the window (it's over the menu bar or
+            // another app, where hiding it would be wrong).
+            NSCursor.setHiddenUntilMouseMoves(true)
         }
     }
 
