@@ -297,6 +297,7 @@ struct SceneView: View {
             let oldRate = change.oldValue ?? 0
             let newRate = change.newValue ?? 0
             Task { @MainActor in
+                nowPlaying.tick()
                 if newRate > 0 && oldRate == 0 {
                     lastPlayStart = Date()
                     beginSleepAssertion()
@@ -392,6 +393,7 @@ struct SceneView: View {
         }
         nowPlaying.bind(
             player: player,
+            sceneID: scene.id,
             title: scene.displayTitle,
             subtitle: scene.studio?.name ?? "",
             durationSeconds: scene.files.first?.duration,
