@@ -15,10 +15,12 @@ final class NowPlayingController {
     private var thumbnail: NSImage?
     private var title: String = ""
     private var subtitle: String = ""
-    private var registeredHandlers: [Any] = []
+    private var registeredHandlers: [(MPRemoteCommand, Any)] = []
+    private var currentInfo: [String: Any] = [:]
 
     func bind(
         player: AVPlayer,
+        sceneID: String,
         title: String,
         subtitle: String,
         durationSeconds: Double?,
@@ -30,6 +32,7 @@ final class NowPlayingController {
         self.thumbnail = thumbnail
 
         var info: [String: Any] = [
+            "StashPlayerSceneID": sceneID,
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: subtitle,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
@@ -42,12 +45,13 @@ final class NowPlayingController {
         if elapsed.isFinite {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         }
-        if let thumbnail {
+        if let thumbnail, thumbnail.size.width > 0, thumbnail.size.height > 0 {
             let size = thumbnail.size
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: size) { _ in
                 thumbnail
             }
         }
+        self.currentInfo = info
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = .playing
 
@@ -59,76 +63,109 @@ final class NowPlayingController {
     /// observer; we only update the two volatile fields.
     func tick() {
         guard let player else { return }
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPNowPlayingInfoPropertyPlaybackRate] = player.rate
+        currentInfo[MPNowPlayingInfoPropertyPlaybackRate] = player.rate
         let elapsed = player.currentTime().seconds
         if elapsed.isFinite {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+            currentInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo
         MPNowPlayingInfoCenter.default().playbackState =
             (player.timeControlStatus == .playing) ? .playing : .paused
     }
 
     func tearDown() {
-        let cc = MPRemoteCommandCenter.shared()
-        cc.playCommand.removeTarget(nil)
-        cc.pauseCommand.removeTarget(nil)
-        cc.togglePlayPauseCommand.removeTarget(nil)
-        cc.skipForwardCommand.removeTarget(nil)
-        cc.skipBackwardCommand.removeTarget(nil)
-        cc.changePlaybackPositionCommand.removeTarget(nil)
-        registeredHandlers.removeAll()
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        MPNowPlayingInfoCenter.default().playbackState = .stopped
+        clearRegisteredHandlers()
+
+        // Only clear the now playing info if we are the active controller.
+        // This prevents incoming views' info from being cleared by an outgoing view's teardown.
+        if let currentID = currentInfo["StashPlayerSceneID"] as? String,
+           let nowPlayingID = MPNowPlayingInfoCenter.default().nowPlayingInfo?["StashPlayerSceneID"] as? String,
+           currentID == nowPlayingID {
+            MPNowPlayingInfoCenter.default().playbackState = .stopped
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+
+        self.currentInfo = [:]
         player = nil
     }
 
     private func installHandlers() {
         let cc = MPRemoteCommandCenter.shared()
-        cc.playCommand.removeTarget(nil)
-        cc.pauseCommand.removeTarget(nil)
-        cc.togglePlayPauseCommand.removeTarget(nil)
-        cc.skipForwardCommand.removeTarget(nil)
-        cc.skipBackwardCommand.removeTarget(nil)
-        cc.changePlaybackPositionCommand.removeTarget(nil)
+        clearRegisteredHandlers()
 
         cc.skipForwardCommand.preferredIntervals = [10]
         cc.skipBackwardCommand.preferredIntervals = [10]
 
-        cc.playCommand.addTarget { [weak self] _ in
-            guard let self, let p = self.player else { return .commandFailed }
-            p.play()
+        let playTarget = cc.playCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            DispatchQueue.main.async {
+                self.player?.play()
+            }
             return .success
         }
-        cc.pauseCommand.addTarget { [weak self] _ in
-            guard let self, let p = self.player else { return .commandFailed }
-            p.pause()
+        registeredHandlers.append((cc.playCommand, playTarget))
+
+        let pauseTarget = cc.pauseCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            DispatchQueue.main.async {
+                self.player?.pause()
+            }
             return .success
         }
-        cc.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self, let p = self.player else { return .commandFailed }
-            if p.timeControlStatus == .playing { p.pause() } else { p.play() }
+        registeredHandlers.append((cc.pauseCommand, pauseTarget))
+
+        let toggleTarget = cc.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            DispatchQueue.main.async {
+                guard let p = self.player else { return }
+                if p.timeControlStatus == .playing { p.pause() } else { p.play() }
+            }
             return .success
         }
-        cc.skipForwardCommand.addTarget { [weak self] _ in
-            self?.skip(by: 10) ?? .commandFailed
+        registeredHandlers.append((cc.togglePlayPauseCommand, toggleTarget))
+
+        let skipForwardTarget = cc.skipForwardCommand.addTarget { [weak self] event in
+            guard let self else { return .commandFailed }
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
+            DispatchQueue.main.async {
+                _ = self.skip(by: interval)
+            }
+            return .success
         }
-        cc.skipBackwardCommand.addTarget { [weak self] _ in
-            self?.skip(by: -10) ?? .commandFailed
+        registeredHandlers.append((cc.skipForwardCommand, skipForwardTarget))
+
+        let skipBackwardTarget = cc.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self else { return .commandFailed }
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
+            DispatchQueue.main.async {
+                _ = self.skip(by: -interval)
+            }
+            return .success
         }
-        cc.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self, let p = self.player,
-                  let e = event as? MPChangePlaybackPositionCommandEvent else {
+        registeredHandlers.append((cc.skipBackwardCommand, skipBackwardTarget))
+
+        let seekTarget = cc.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let e = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed
             }
-            p.seek(
-                to: CMTime(seconds: e.positionTime, preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            )
+            let time = e.positionTime
+            DispatchQueue.main.async {
+                self.player?.seek(
+                    to: CMTime(seconds: time, preferredTimescale: 600),
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+            }
             return .success
         }
+        registeredHandlers.append((cc.changePlaybackPositionCommand, seekTarget))
+    }
+
+    private func clearRegisteredHandlers() {
+        for (command, target) in registeredHandlers {
+            command.removeTarget(target)
+        }
+        registeredHandlers.removeAll()
     }
 
     private func skip(by delta: Double) -> MPRemoteCommandHandlerStatus {
@@ -142,5 +179,14 @@ final class NowPlayingController {
             toleranceAfter: .zero
         )
         return .success
+    }
+
+    deinit {
+        let handlers = registeredHandlers
+        DispatchQueue.main.async {
+            for (command, target) in handlers {
+                command.removeTarget(target)
+            }
+        }
     }
 }
