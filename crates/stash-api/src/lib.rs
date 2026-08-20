@@ -22,6 +22,8 @@ pub enum Error {
     Http(#[from] reqwest::Error),
     #[error("invalid header value: {0}")]
     InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
+    #[error("invalid proxy URL: {0}")]
+    InvalidProxy(String),
     #[error("server returned HTTP {status}: {body}")]
     Status { status: u16, body: String },
     #[error("server returned GraphQL errors: {0}")]
@@ -40,17 +42,58 @@ pub struct Client {
     api_key: String,
 }
 
+/// Proxy schemes `reqwest` can actually dial with the features we enable.
+/// A userspace `tailscaled` exposes both a SOCKS5 server and an HTTP
+/// CONNECT proxy, so either spelling works.
+const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
+
+/// Check the proxy URL before handing it to `reqwest`, so a typo in the
+/// Settings field produces a message naming what would have worked
+/// instead of a generic transport error at first request.
+fn validate_proxy(raw: &str) -> Result<()> {
+    let parsed = Url::parse(raw).map_err(|e| Error::InvalidProxy(format!("{raw}: {e}")))?;
+    if !SUPPORTED_PROXY_SCHEMES.contains(&parsed.scheme()) {
+        return Err(Error::InvalidProxy(format!(
+            "{raw}: scheme `{}` is not supported (use http, https, socks5, or socks5h)",
+            parsed.scheme()
+        )));
+    }
+    Ok(())
+}
+
 impl Client {
+    /// Build a client that talks to Stash directly.
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        Self::with_proxy(base_url, api_key, None)
+    }
+
+    /// Build a client that reaches Stash through `proxy_url`, which may be
+    /// `http://`, `https://`, `socks5://`, or `socks5h://`. `None` or an
+    /// empty string means direct.
+    ///
+    /// `reqwest` would otherwise auto-detect proxies from the environment
+    /// and race with whatever the caller passed here. `.no_proxy()` turns
+    /// that off so the caller's resolution is the only thing in effect.
+    pub fn with_proxy(base_url: &str, api_key: &str, proxy_url: Option<&str>) -> Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         if !api_key.is_empty() {
             headers.insert("ApiKey", api_key.parse()?);
         }
-        let http = reqwest::Client::builder()
+
+        let mut builder = reqwest::Client::builder()
             .user_agent(concat!("stash-player/", env!("CARGO_PKG_VERSION")))
             .default_headers(headers)
-            .build()?;
+            .no_proxy();
 
+        if let Some(proxy) = proxy_url.map(str::trim).filter(|p| !p.is_empty()) {
+            validate_proxy(proxy)?;
+            let configured = reqwest::Proxy::all(proxy)
+                .map_err(|e| Error::InvalidProxy(format!("{proxy}: {e}")))?;
+            builder = builder.proxy(configured);
+            tracing::debug!("stash client will use proxy {proxy}");
+        }
+
+        let http = builder.build()?;
         let base = Url::parse(base_url)?;
         // Tolerate a trailing slash on the base URL by joining instead of
         // string-concat. Stash exposes GraphQL at /graphql.
@@ -77,16 +120,25 @@ impl Client {
         &self.http
     }
 
+    /// Resolve a relative or absolute URL from the Stash API against the
+    /// base URL, attaching no credentials. The media proxy uses this: it
+    /// authenticates upstream with the `ApiKey` header instead, which
+    /// keeps the key out of GStreamer logs and AVPlayer error strings.
+    pub fn absolute_url(&self, url: &str) -> Result<Url> {
+        match Url::parse(url) {
+            Ok(u) => Ok(u),
+            Err(url::ParseError::RelativeUrlWithoutBase) => Ok(self.base.join(url)?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Take an absolute or relative URL from the Stash API and produce one
-    /// that's authenticated via the `apikey=` query param. Use this when the
-    /// consumer (GStreamer's media backend, a `<video>` tag) won't carry
-    /// our `ApiKey` request header.
+    /// that's authenticated via the `apikey=` query param. Use this for
+    /// consumers that can't carry our `ApiKey` request header and don't go
+    /// through the media proxy, such as image widgets and "open in Stash"
+    /// links.
     pub fn authenticated_url(&self, url: &str) -> Result<String> {
-        let mut parsed = match Url::parse(url) {
-            Ok(u) => u,
-            Err(url::ParseError::RelativeUrlWithoutBase) => self.base.join(url)?,
-            Err(e) => return Err(e.into()),
-        };
+        let mut parsed = self.absolute_url(url)?;
         // Stash bakes `apikey=` into URLs it hands back (e.g. `paths.stream`),
         // so re-appending ours produces a doubled query param that some
         // server-side parsers reject.

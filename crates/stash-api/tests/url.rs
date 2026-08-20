@@ -79,3 +79,66 @@ fn base_url_with_trailing_slash_resolves_graphql_endpoint() {
     let out = c.authenticated_url("/x").unwrap();
     assert!(out.starts_with("https://stash.example.test/x"));
 }
+
+#[test]
+fn absolute_url_resolves_relative_paths_without_adding_credentials() {
+    let c = client_with_key("KEY");
+    let out = c.absolute_url("/scene/1/stream").unwrap();
+    assert_eq!(out.host_str(), Some("stash.example.test"));
+    assert_eq!(out.path(), "/scene/1/stream");
+    assert_eq!(out.query(), None, "absolute_url must not attach the api key");
+}
+
+#[test]
+fn absolute_url_passes_through_absolute_inputs() {
+    let c = client_with_key("KEY");
+    let out = c.absolute_url("https://other.example.test/x.jpg?a=1").unwrap();
+    assert_eq!(out.host_str(), Some("other.example.test"));
+    assert_eq!(out.query(), Some("a=1"));
+}
+
+#[test]
+fn with_proxy_accepts_the_documented_schemes() {
+    for proxy in [
+        "http://127.0.0.1:1055",
+        "https://127.0.0.1:1055",
+        "socks5://127.0.0.1:1055",
+        "socks5h://127.0.0.1:1055",
+    ] {
+        Client::with_proxy("https://stash.example.test", "KEY", Some(proxy))
+            .unwrap_or_else(|e| panic!("{proxy} should be accepted, got {e}"));
+    }
+}
+
+#[test]
+fn with_proxy_rejects_unsupported_schemes_with_a_useful_message() {
+    let err = Client::with_proxy("https://stash.example.test", "KEY", Some("ftp://x.test"))
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("ftp"), "message should name the bad scheme: {msg}");
+    assert!(msg.contains("socks5"), "message should name what works: {msg}");
+}
+
+#[test]
+fn with_proxy_rejects_unparseable_urls() {
+    let err = Client::with_proxy("https://stash.example.test", "KEY", Some("not a url"))
+        .unwrap_err();
+    assert!(matches!(err, stash_api::Error::InvalidProxy(_)));
+}
+
+#[test]
+fn with_proxy_none_matches_new() {
+    // An absent proxy must behave exactly like the original constructor,
+    // so the loopback server and both frontends can use one code path.
+    let a = Client::new("https://stash.example.test", "KEY").unwrap();
+    let b = Client::with_proxy("https://stash.example.test", "KEY", None).unwrap();
+    assert_eq!(
+        a.authenticated_url("/x").unwrap(),
+        b.authenticated_url("/x").unwrap()
+    );
+}
+
+#[test]
+fn empty_proxy_string_is_treated_as_no_proxy() {
+    Client::with_proxy("https://stash.example.test", "KEY", Some("")).unwrap();
+}
