@@ -37,7 +37,13 @@ pub(super) fn build_stream_url(proxy: &MediaProxy, scene: &Scene) -> Option<Stri
     let stream = scene.paths.stream.as_deref()?;
     match proxy.playback_url(stream) {
         Ok(url) => {
-            tracing::info!("scene stream url: {url}");
+            // The loopback URL's path carries a per-process token that is
+            // the only thing stopping another local process from
+            // discovering the port and streaming the user's library
+            // through it; never let it, or the upstream URL it wraps,
+            // reach the logs. The proxy's own address is enough to confirm
+            // playback is going through the loopback hop.
+            tracing::info!("scene stream routed through media proxy at {}", proxy.addr());
             Some(url)
         }
         Err(e) => {

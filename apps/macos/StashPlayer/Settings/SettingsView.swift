@@ -42,6 +42,7 @@ struct SettingsView: View {
                     text: $proxyUrl,
                     prompt: Text("socks5://127.0.0.1:1055")
                 )
+                .textFieldStyle(.roundedBorder)
                 .help("Used for both API calls and video playback. Accepts http://, https://, socks5:// and socks5h://.")
             }
 

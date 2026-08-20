@@ -247,7 +247,13 @@ struct SceneView: View {
                 loadError = "Bad stream URL"
                 return
             }
-            logger.info("Loading stream: \(url.absoluteString.replacing(/apikey=[^&]+/, with: "apikey=***"), privacy: .public)")
+            // The loopback URL's path carries a per-process token that is
+            // the only thing stopping another local process from
+            // discovering the port and streaming the user's library
+            // through it; never let it, or the upstream URL it wraps,
+            // reach the logs. Host + port are enough to confirm playback
+            // is going through the media proxy.
+            logger.info("Loading stream via media proxy at \(url.host ?? "?", privacy: .public):\(url.port ?? 0, privacy: .public)")
             let player = AVPlayer(url: url)
             // Restore the previously chosen volume/mute before the OSD
             // attaches and reads `player.volume`/`player.isMuted`. AVPlayer
