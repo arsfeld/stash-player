@@ -356,6 +356,9 @@ pub struct StashPlayer {
     /// Bound lazily: unlike the GTK app there is no single startup point
     /// here to bind from.
     proxy: Mutex<Option<Arc<MediaProxy>>>,
+    /// Serialises `connect` so a slow connection cannot interleave with a
+    /// later one and leave the media proxy pointed at a superseded server.
+    connect_lock: Mutex<()>,
 }
 
 #[uniffi::export]
@@ -365,6 +368,7 @@ impl StashPlayer {
         Arc::new(Self {
             inner: Mutex::new(None),
             proxy: Mutex::new(None),
+            connect_lock: Mutex::new(()),
         })
     }
 
@@ -381,6 +385,7 @@ impl StashPlayer {
         api_key: String,
         proxy_url: String,
     ) -> Result<String, FfiError> {
+        let _serialise = self.connect_lock.lock();
         let proxy = stash_player_core::resolve_proxy(Some(&proxy_url));
         let client = Client::with_proxy(&base_url, &api_key, proxy.as_deref())?;
         let version = rt().block_on(client.version())?;
@@ -451,9 +456,10 @@ impl StashPlayer {
     /// keeps the API key out of AVFoundation's error strings.
     pub fn playback_url(&self, url: String) -> Result<String, FfiError> {
         let proxy = self.proxy()?;
-        proxy
-            .playback_url(&url)
-            .map_err(|e| FfiError::Network(e.to_string()))
+        proxy.playback_url(&url).map_err(|e| match e {
+            stash_player_proxy::Error::NotConfigured => FfiError::NotConnected,
+            other => FfiError::Network(other.to_string()),
+        })
     }
 
     pub fn load_saved_credentials(&self) -> Result<Option<FfiCredentials>, FfiError> {
@@ -537,6 +543,10 @@ impl StashPlayer {
     fn proxy(&self) -> Result<Arc<MediaProxy>, FfiError> {
         let current = self.inner.lock().clone();
 
+        // Held across the `block_on` below on purpose: this is what makes
+        // the bind-and-store sequence atomic. Two threads racing to bind
+        // would otherwise each start a listener and only one `Arc` would
+        // survive into `guard`, leaking the other's bound port.
         let mut guard = self.proxy.lock();
         if let Some(existing) = guard.as_ref() {
             return Ok(Arc::clone(existing));
