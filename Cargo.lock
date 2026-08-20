@@ -2661,6 +2661,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "stash-player-core",
  "thiserror",
  "tokio",
  "tracing",

@@ -62,7 +62,11 @@ fn validate_proxy(raw: &str) -> Result<()> {
 }
 
 impl Client {
-    /// Build a client that talks to Stash directly.
+    /// Build a client that talks to Stash directly, with no proxy at all —
+    /// not even one picked up from the environment. Callers that want a
+    /// user-configured proxy, or an environment-derived fallback such as
+    /// `HTTPS_PROXY`, should resolve that themselves and pass it to
+    /// `with_proxy` instead.
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
         Self::with_proxy(base_url, api_key, None)
     }

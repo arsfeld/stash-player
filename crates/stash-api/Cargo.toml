@@ -14,6 +14,7 @@ url = "2.5.8"
 
 [dev-dependencies]
 dotenvy = "0.15.7"
+stash-player-core = { path = "../stash-player-core" }
 tokio = { version = "1.52.3", features = ["rt", "macros"] }
 wiremock = "0.6.5"
 
