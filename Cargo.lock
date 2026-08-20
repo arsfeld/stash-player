@@ -2729,6 +2729,7 @@ dependencies = [
  "relm4",
  "stash-api",
  "stash-player-core",
+ "stash-player-proxy",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -1,6 +1,8 @@
 //! Root component. Owns the shared API client (once configured) and the
 //! `AdwNavigationView` that pushes/pops Library / Scene / Settings pages.
 
+use std::sync::Arc;
+
 use relm4::prelude::*;
 use relm4::adw;
 
@@ -8,6 +10,7 @@ use adw::prelude::*;
 
 use stash_player_core::resolve_proxy;
 use stash_player_core::Config;
+use stash_player_proxy::MediaProxy;
 
 use crate::pages::library::{LibraryInit, LibraryMsg, LibraryOutput, LibraryPage};
 use crate::pages::scene::{SceneInit, SceneNavContext, SceneOutput, ScenePage};
@@ -27,6 +30,9 @@ pub(crate) struct AppModel {
     settings: Controller<SettingsPage>,
     scene: Option<Controller<ScenePage>>,
     client: Option<stash_api::Client>,
+    /// Loopback server every video URL goes through, so GStreamer never
+    /// has to know about the upstream proxy or carry the API key.
+    proxy: Option<Arc<MediaProxy>>,
 }
 
 #[derive(Debug)]
@@ -62,6 +68,7 @@ pub(crate) enum AppMsg {
 #[derive(Debug)]
 pub(crate) enum AppCmd {
     Secrets(Result<Option<String>, String>),
+    ProxyBound(Option<Arc<MediaProxy>>),
 }
 
 #[relm4::component(pub)]
@@ -128,6 +135,7 @@ impl Component for AppModel {
             settings,
             scene: None,
             client: None,
+            proxy: None,
         };
 
         let widgets = view_output!();
@@ -145,6 +153,16 @@ impl Component for AppModel {
         } else {
             sender.input(AppMsg::SecretsLoaded(Some(model.api_key.clone())));
         }
+
+        sender.oneshot_command(async {
+            AppCmd::ProxyBound(match MediaProxy::bind().await {
+                Ok(proxy) => Some(Arc::new(proxy)),
+                Err(e) => {
+                    tracing::error!("could not start media proxy: {e}; playback will not work");
+                    None
+                }
+            })
+        });
 
         ComponentParts { model, widgets }
     }
@@ -210,6 +228,9 @@ impl Component for AppModel {
                 self.config = config;
                 self.api_key = api_key;
                 self.client = Some(client.clone());
+                if let Some(proxy) = &self.proxy {
+                    proxy.set_client(Some(client.clone()));
+                }
                 self.library.emit(LibraryMsg::SetClient(client));
                 widgets.nav.pop_to_tag("library");
             }
@@ -219,6 +240,9 @@ impl Component for AppModel {
                 match stash_api::Client::with_proxy(&self.config.stash_url, &key, proxy.as_deref()) {
                     Ok(client) => {
                         self.client = Some(client.clone());
+                        if let Some(proxy) = &self.proxy {
+                            proxy.set_client(Some(client.clone()));
+                        }
                         self.library.emit(LibraryMsg::SetClient(client));
                     }
                     Err(e) => tracing::warn!("could not build client: {e}"),
@@ -231,6 +255,9 @@ impl Component for AppModel {
                     {
                         Ok(client) => {
                             self.client = Some(client.clone());
+                            if let Some(proxy) = &self.proxy {
+                                proxy.set_client(Some(client.clone()));
+                            }
                             self.library.emit(LibraryMsg::SetClient(client));
                         }
                         Err(e) => {
@@ -258,6 +285,12 @@ impl Component for AppModel {
                 tracing::warn!("could not read keyring: {e}");
                 sender.input(AppMsg::SecretsLoaded(None));
             }
+            AppCmd::ProxyBound(proxy) => {
+                if let Some(proxy) = proxy {
+                    proxy.set_client(self.client.clone());
+                    self.proxy = Some(proxy);
+                }
+            }
         }
     }
 }
@@ -275,9 +308,16 @@ impl AppModel {
         let Some(client) = self.client.clone() else {
             return;
         };
+        // Defensive only: the proxy binds in microseconds at startup, long
+        // before a user can click a scene.
+        let Some(proxy) = self.proxy.clone() else {
+            tracing::warn!("media proxy not ready; ignoring scene open");
+            return;
+        };
         let scene = ScenePage::builder()
             .launch(SceneInit {
                 client,
+                proxy,
                 scene_id: id,
                 context,
                 autoplay: self.config.autoplay,
