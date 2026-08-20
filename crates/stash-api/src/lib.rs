@@ -34,12 +34,22 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     endpoint: Url,
     base: Url,
     api_key: String,
+}
+
+impl std::fmt::Debug for Client {
+    /// Hand-written so the API key never ends up in a log line via `{:?}`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .field("api_key_set", &!self.api_key.is_empty())
+            .finish()
+    }
 }
 
 /// Proxy schemes `reqwest` can actually dial with the features we enable.
@@ -59,6 +69,20 @@ fn validate_proxy(raw: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Render a proxy URL for logging with any credentials removed. Proxy URLs
+/// may carry `user:pass@`, and a proxy password is not something to write
+/// into a log file.
+pub fn redact_proxy(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.into()
+        }
+        Err(_) => "<unparseable proxy url>".to_owned(),
+    }
 }
 
 /// If a connection failed while a name-resolving-locally SOCKS proxy is
@@ -119,7 +143,7 @@ impl Client {
             let configured = reqwest::Proxy::all(proxy)
                 .map_err(|e| Error::InvalidProxy(format!("{proxy}: {e}")))?;
             builder = builder.proxy(configured);
-            tracing::debug!("stash client will use proxy {proxy}");
+            tracing::debug!("stash client will use proxy {}", redact_proxy(proxy));
         }
 
         let http = builder.build()?;

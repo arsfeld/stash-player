@@ -157,3 +157,25 @@ fn with_proxy_none_matches_new() {
 fn empty_proxy_string_is_treated_as_no_proxy() {
     Client::with_proxy("https://stash.example.test", "KEY", Some("")).unwrap();
 }
+
+#[test]
+fn redact_proxy_removes_embedded_credentials() {
+    let out = stash_api::redact_proxy("http://user:pass@127.0.0.1:1055");
+    assert!(!out.contains("user"), "username should be removed: {out}");
+    assert!(!out.contains("pass"), "password should be removed: {out}");
+    assert!(out.contains("127.0.0.1:1055"), "host:port should survive: {out}");
+}
+
+#[test]
+fn redact_proxy_leaves_credential_free_url_unchanged_apart_from_normalisation() {
+    let out = stash_api::redact_proxy("http://127.0.0.1:1055");
+    assert_eq!(out, "http://127.0.0.1:1055/");
+}
+
+#[test]
+fn redact_proxy_does_not_echo_unparseable_input() {
+    let raw = "not a url with a secret in it";
+    let out = stash_api::redact_proxy(raw);
+    assert_ne!(out, raw);
+    assert!(!out.contains("secret"), "unparseable input must not be echoed back: {out}");
+}

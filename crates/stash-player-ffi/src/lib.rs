@@ -81,13 +81,25 @@ impl From<std::io::Error> for FfiError {
     }
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct FfiCredentials {
     pub base_url: String,
     pub api_key: String,
     /// Empty means "no proxy configured"; the resolver then consults the
     /// standard environment variables.
     pub proxy_url: String,
+}
+
+impl std::fmt::Debug for FfiCredentials {
+    /// Hand-written: `api_key` is a secret, and `proxy_url` may itself
+    /// carry `user:pass@` credentials, so neither belongs in `{:?}`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfiCredentials")
+            .field("base_url", &self.base_url)
+            .field("api_key_set", &!self.api_key.is_empty())
+            .field("proxy_url_set", &!self.proxy_url.is_empty())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -410,6 +422,7 @@ impl StashPlayer {
     }
 
     pub fn disconnect(&self) {
+        let _serialise = self.connect_lock.lock();
         *self.inner.lock() = None;
         let proxy = self.proxy.lock().clone();
         if let Some(proxy) = proxy {

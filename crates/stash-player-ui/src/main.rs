@@ -45,7 +45,10 @@ fn main() {
     if config.proxy_url.as_deref().is_some_and(|p| !p.trim().is_empty()) {
         tracing::info!("using proxy from config");
     } else if let Some(proxy) = stash_player_core::resolve_proxy(None) {
-        tracing::info!("using proxy {proxy} from environment");
+        tracing::info!(
+            "using proxy {} from environment",
+            stash_api::redact_proxy(&proxy)
+        );
     }
 
     gst::init().expect("failed to initialize GStreamer");

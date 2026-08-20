@@ -36,7 +36,6 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Everything the request handler needs, shared with the accept loop.
-#[derive(Debug)]
 pub(crate) struct State {
     pub(crate) token: String,
     pub(crate) client: Mutex<Option<Client>>,
@@ -45,6 +44,18 @@ pub(crate) struct State {
 impl State {
     pub(crate) fn client(&self) -> Option<Client> {
         self.client.lock().clone()
+    }
+}
+
+impl std::fmt::Debug for State {
+    /// Hand-written so the capability token — the sole thing standing
+    /// between any local process and the user's library — never ends up
+    /// in a log line via `{:?}`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("token", &"<redacted>")
+            .field("client_set", &self.client.lock().is_some())
+            .finish()
     }
 }
 
