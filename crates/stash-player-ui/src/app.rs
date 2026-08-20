@@ -227,24 +227,14 @@ impl Component for AppModel {
                 let Configured { client, config, api_key } = *boxed;
                 self.config = config;
                 self.api_key = api_key;
-                self.client = Some(client.clone());
-                if let Some(proxy) = &self.proxy {
-                    proxy.set_client(Some(client.clone()));
-                }
-                self.library.emit(LibraryMsg::SetClient(client));
+                self.install_client(client);
                 widgets.nav.pop_to_tag("library");
             }
             AppMsg::SecretsLoaded(Some(key)) => {
                 self.api_key = key.clone();
                 let proxy = resolve_proxy(self.config.proxy_url.as_deref());
                 match stash_api::Client::with_proxy(&self.config.stash_url, &key, proxy.as_deref()) {
-                    Ok(client) => {
-                        self.client = Some(client.clone());
-                        if let Some(proxy) = &self.proxy {
-                            proxy.set_client(Some(client.clone()));
-                        }
-                        self.library.emit(LibraryMsg::SetClient(client));
-                    }
+                    Ok(client) => self.install_client(client),
                     Err(e) => tracing::warn!("could not build client: {e}"),
                 }
             }
@@ -253,13 +243,7 @@ impl Component for AppModel {
                     let proxy = resolve_proxy(self.config.proxy_url.as_deref());
                     match stash_api::Client::with_proxy(&self.config.stash_url, "", proxy.as_deref())
                     {
-                        Ok(client) => {
-                            self.client = Some(client.clone());
-                            if let Some(proxy) = &self.proxy {
-                                proxy.set_client(Some(client.clone()));
-                            }
-                            self.library.emit(LibraryMsg::SetClient(client));
-                        }
+                        Ok(client) => self.install_client(client),
                         Err(e) => {
                             tracing::warn!("could not build client: {e}");
                             widgets.nav.push(self.settings.widget());
@@ -296,6 +280,16 @@ impl Component for AppModel {
 }
 
 impl AppModel {
+    /// Adopt a freshly built client: cache it, point the media proxy at the
+    /// same server, and hand it to the library page.
+    fn install_client(&mut self, client: stash_api::Client) {
+        self.client = Some(client.clone());
+        if let Some(proxy) = &self.proxy {
+            proxy.set_client(Some(client.clone()));
+        }
+        self.library.emit(LibraryMsg::SetClient(client));
+    }
+
     /// Push a scene page onto the navigation stack. Kept out of the message
     /// match so that match stays readable as it grows.
     fn open_scene(
