@@ -36,6 +36,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Everything the request handler needs, shared with the accept loop.
+#[derive(Debug)]
 pub(crate) struct State {
     pub(crate) token: String,
     pub(crate) client: Mutex<Option<Client>>,
@@ -49,6 +50,7 @@ impl State {
 
 /// A running loopback media proxy. Dropping it does not stop the server;
 /// it is expected to live for the process lifetime.
+#[derive(Debug)]
 pub struct MediaProxy {
     addr: SocketAddr,
     state: Arc<State>,

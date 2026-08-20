@@ -98,3 +98,173 @@ async fn binds_only_to_loopback() {
         proxy.addr()
     );
 }
+
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+async fn proxy_for(server: &MockServer, key: &str) -> MediaProxy {
+    let proxy = MediaProxy::bind().await.unwrap();
+    proxy.set_client(Some(client(&server.uri(), key)));
+    proxy
+}
+
+#[tokio::test]
+async fn plain_get_returns_the_upstream_body_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "video/mp4")
+                .set_body_bytes(vec![9u8; 4096]),
+        )
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.headers()["content-type"], "video/mp4");
+    assert_eq!(resp.bytes().await.unwrap().len(), 4096);
+}
+
+#[tokio::test]
+async fn range_request_passes_through_as_206() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .and(header("Range", "bytes=100-199"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("Content-Range", "bytes 100-199/5000")
+                .insert_header("Accept-Ranges", "bytes")
+                .set_body_bytes(vec![7u8; 100]),
+        )
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header("Range", "bytes=100-199")
+        .send()
+        .await
+        .unwrap();
+
+    // This is the seeking guarantee. If the status or Content-Range is
+    // lost here, scrubbing breaks in both frontends.
+    assert_eq!(resp.status().as_u16(), 206);
+    assert_eq!(resp.headers()["content-range"], "bytes 100-199/5000");
+    assert_eq!(resp.headers()["accept-ranges"], "bytes");
+    assert_eq!(resp.bytes().await.unwrap().len(), 100);
+}
+
+#[tokio::test]
+async fn upstream_receives_the_api_key_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .and(header("ApiKey", "KEY"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"video".to_vec()))
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream?apikey=KEY").unwrap();
+
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "the mock only matches when the ApiKey header arrives"
+    );
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), b"video");
+}
+
+#[tokio::test]
+async fn wrong_token_is_not_found() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let bad = format!(
+        "http://{}/00000000000000000000000000000000/media?u=http%3A%2F%2Fx.test%2Fy",
+        proxy.addr()
+    );
+
+    let resp = reqwest::get(&bad).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn foreign_upstream_host_is_rejected() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+
+    // Keep the valid token, swap the upstream for a host the client was
+    // never configured with. Without this guard a leaked token would make
+    // the loopback server an open relay through the user's proxy.
+    let base = good.split("?u=").next().unwrap().to_owned();
+    let evil = format!("{base}?u=http%3A%2F%2Fevil.example.test%2Fx");
+
+    let resp = reqwest::get(&evil).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 403);
+}
+
+#[tokio::test]
+async fn upstream_error_status_passes_through_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    // A 500 is a successful request that returned an error status. The
+    // media stack should see what Stash actually said, not our guess.
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 500);
+}
+
+#[tokio::test]
+async fn unreachable_upstream_is_a_bad_gateway() {
+    // Bind then immediately drop, to get a port nothing answers on.
+    let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = dead.local_addr().unwrap();
+    drop(dead);
+
+    let proxy = MediaProxy::bind().await.unwrap();
+    proxy.set_client(Some(client(&format!("http://{addr}"), "KEY")));
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 502);
+}
+
+#[tokio::test]
+async fn post_is_not_allowed() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    let resp = reqwest::Client::new().post(&url).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 405);
+}
+
+#[tokio::test]
+async fn requests_after_disconnect_are_unavailable() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    proxy.set_client(None);
+
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 503);
+}
