@@ -52,6 +52,7 @@ impl From<stash_api::Error> for FfiError {
             stash_api::Error::InvalidUrl(e) => FfiError::InvalidUrl(e.to_string()),
             stash_api::Error::Http(e) => FfiError::Network(e.to_string()),
             stash_api::Error::InvalidHeader(e) => FfiError::InvalidUrl(e.to_string()),
+            stash_api::Error::InvalidProxy(e) => FfiError::InvalidUrl(e.to_string()),
             stash_api::Error::Status { status, body } => {
                 FfiError::Network(format!("HTTP {status}: {body}"))
             }
