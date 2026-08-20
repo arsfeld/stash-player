@@ -160,28 +160,7 @@ impl Component for AppModel {
             AppMsg::OpenSettings => {
                 widgets.nav.push(self.settings.widget());
             }
-            AppMsg::OpenScene { id, context } => {
-                let Some(client) = self.client.clone() else {
-                    return;
-                };
-                let scene = ScenePage::builder()
-                    .launch(SceneInit {
-                        client,
-                        scene_id: id,
-                        context,
-                        autoplay: self.config.autoplay,
-                        volume: self.config.volume,
-                        muted: self.config.muted,
-                    })
-                    .forward(sender.input_sender(), |out| match out {
-                        SceneOutput::SetAutoplay(on) => AppMsg::SetAutoplay(on),
-                        SceneOutput::SetVolume { volume, muted } => {
-                            AppMsg::SetVolume { volume, muted }
-                        }
-                    });
-                widgets.nav.push(scene.widget());
-                self.scene = Some(scene);
-            }
+            AppMsg::OpenScene { id, context } => self.open_scene(widgets, &sender, id, context),
             AppMsg::NavPopped(page) => {
                 // Drop the scene controller when its page is popped so the
                 // video player's `MediaFile` is torn down (which pauses
@@ -280,5 +259,38 @@ impl Component for AppModel {
                 sender.input(AppMsg::SecretsLoaded(None));
             }
         }
+    }
+}
+
+impl AppModel {
+    /// Push a scene page onto the navigation stack. Kept out of the message
+    /// match so that match stays readable as it grows.
+    fn open_scene(
+        &mut self,
+        widgets: &mut <Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+        id: String,
+        context: Option<SceneNavContext>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let scene = ScenePage::builder()
+            .launch(SceneInit {
+                client,
+                scene_id: id,
+                context,
+                autoplay: self.config.autoplay,
+                volume: self.config.volume,
+                muted: self.config.muted,
+            })
+            .forward(sender.input_sender(), |out| match out {
+                SceneOutput::SetAutoplay(on) => AppMsg::SetAutoplay(on),
+                SceneOutput::SetVolume { volume, muted } => {
+                    AppMsg::SetVolume { volume, muted }
+                }
+            });
+        widgets.nav.push(scene.widget());
+        self.scene = Some(scene);
     }
 }
