@@ -550,18 +550,15 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol StashPlayerProtocol: AnyObject, Sendable {
     
     /**
-     * Bake `?apikey=` into a stream URL so AVPlayer (which can't carry an
-     * `ApiKey` request header) can hit it.
-     */
-    func authenticatedUrl(url: String) throws  -> String
-    
-    /**
      * Build the GraphQL client and round-trip a `version` query so we know
      * the URL/key actually work. On success the client is cached for
      * subsequent calls and the server's reported version string is
      * returned to the foreign caller.
+     *
+     * `proxy_url` may be empty, in which case the standard proxy
+     * environment variables are consulted.
      */
-    func connect(baseUrl: String, apiKey: String) throws  -> String
+    func connect(baseUrl: String, apiKey: String, proxyUrl: String) throws  -> String
     
     func disconnect() 
     
@@ -597,6 +594,14 @@ public protocol StashPlayerProtocol: AnyObject, Sendable {
     func metadataScan() throws  -> String
     
     /**
+     * Rewrite a stream URL to point at the loopback media proxy. AVPlayer
+     * fetches the URL itself, so it can carry neither our `ApiKey` header
+     * nor the upstream proxy setting; the loopback hop gives it both and
+     * keeps the API key out of AVFoundation's error strings.
+     */
+    func playbackUrl(url: String) throws  -> String
+    
+    /**
      * Zero the scene's O-counter. Returns the new value (always 0 on
      * success, but we mirror the Rust API).
      */
@@ -604,7 +609,7 @@ public protocol StashPlayerProtocol: AnyObject, Sendable {
     
     func saveActivity(id: String, resumeTime: Double?, playDuration: Double?) throws  -> Bool
     
-    func saveCredentials(baseUrl: String, apiKey: String) throws 
+    func saveCredentials(baseUrl: String, apiKey: String, proxyUrl: String) throws 
     
 }
 open class StashPlayer: StashPlayerProtocol, @unchecked Sendable {
@@ -667,28 +672,20 @@ public convenience init() {
 
     
     /**
-     * Bake `?apikey=` into a stream URL so AVPlayer (which can't carry an
-     * `ApiKey` request header) can hit it.
-     */
-open func authenticatedUrl(url: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_stash_player_ffi_fn_method_stashplayer_authenticated_url(self.uniffiClonePointer(),
-        FfiConverterString.lower(url),$0
-    )
-})
-}
-    
-    /**
      * Build the GraphQL client and round-trip a `version` query so we know
      * the URL/key actually work. On success the client is cached for
      * subsequent calls and the server's reported version string is
      * returned to the foreign caller.
+     *
+     * `proxy_url` may be empty, in which case the standard proxy
+     * environment variables are consulted.
      */
-open func connect(baseUrl: String, apiKey: String)throws  -> String  {
+open func connect(baseUrl: String, apiKey: String, proxyUrl: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_connect(self.uniffiClonePointer(),
         FfiConverterString.lower(baseUrl),
-        FfiConverterString.lower(apiKey),$0
+        FfiConverterString.lower(apiKey),
+        FfiConverterString.lower(proxyUrl),$0
     )
 })
 }
@@ -777,6 +774,20 @@ open func metadataScan()throws  -> String  {
 }
     
     /**
+     * Rewrite a stream URL to point at the loopback media proxy. AVPlayer
+     * fetches the URL itself, so it can carry neither our `ApiKey` header
+     * nor the upstream proxy setting; the loopback hop gives it both and
+     * keeps the API key out of AVFoundation's error strings.
+     */
+open func playbackUrl(url: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_stash_player_ffi_fn_method_stashplayer_playback_url(self.uniffiClonePointer(),
+        FfiConverterString.lower(url),$0
+    )
+})
+}
+    
+    /**
      * Zero the scene's O-counter. Returns the new value (always 0 on
      * success, but we mirror the Rust API).
      */
@@ -798,10 +809,11 @@ open func saveActivity(id: String, resumeTime: Double?, playDuration: Double?)th
 })
 }
     
-open func saveCredentials(baseUrl: String, apiKey: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+open func saveCredentials(baseUrl: String, apiKey: String, proxyUrl: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_stash_player_ffi_fn_method_stashplayer_save_credentials(self.uniffiClonePointer(),
         FfiConverterString.lower(baseUrl),
-        FfiConverterString.lower(apiKey),$0
+        FfiConverterString.lower(apiKey),
+        FfiConverterString.lower(proxyUrl),$0
     )
 }
 }
@@ -865,12 +877,22 @@ public func FfiConverterTypeStashPlayer_lower(_ value: StashPlayer) -> UnsafeMut
 public struct FfiCredentials {
     public var baseUrl: String
     public var apiKey: String
+    /**
+     * Empty means "no proxy configured"; the resolver then consults the
+     * standard environment variables.
+     */
+    public var proxyUrl: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(baseUrl: String, apiKey: String) {
+    public init(baseUrl: String, apiKey: String, 
+        /**
+         * Empty means "no proxy configured"; the resolver then consults the
+         * standard environment variables.
+         */proxyUrl: String) {
         self.baseUrl = baseUrl
         self.apiKey = apiKey
+        self.proxyUrl = proxyUrl
     }
 }
 
@@ -887,12 +909,16 @@ extension FfiCredentials: Equatable, Hashable {
         if lhs.apiKey != rhs.apiKey {
             return false
         }
+        if lhs.proxyUrl != rhs.proxyUrl {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(baseUrl)
         hasher.combine(apiKey)
+        hasher.combine(proxyUrl)
     }
 }
 
@@ -906,13 +932,15 @@ public struct FfiConverterTypeFfiCredentials: FfiConverterRustBuffer {
         return
             try FfiCredentials(
                 baseUrl: FfiConverterString.read(from: &buf), 
-                apiKey: FfiConverterString.read(from: &buf)
+                apiKey: FfiConverterString.read(from: &buf), 
+                proxyUrl: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiCredentials, into buf: inout [UInt8]) {
         FfiConverterString.write(value.baseUrl, into: &buf)
         FfiConverterString.write(value.apiKey, into: &buf)
+        FfiConverterString.write(value.proxyUrl, into: &buf)
     }
 }
 
@@ -2435,10 +2463,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_stash_player_ffi_checksum_func_init_logging() != 61605) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_stash_player_ffi_checksum_method_stashplayer_authenticated_url() != 21051) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_stash_player_ffi_checksum_method_stashplayer_connect() != 6445) {
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_connect() != 35591) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_disconnect() != 10261) {
@@ -2468,13 +2493,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_metadata_scan() != 34791) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_playback_url() != 46001) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_reset_o() != 63229) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_save_activity() != 19286) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_stash_player_ffi_checksum_method_stashplayer_save_credentials() != 52248) {
+    if (uniffi_stash_player_ffi_checksum_method_stashplayer_save_credentials() != 53522) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_constructor_stashplayer_new() != 27497) {

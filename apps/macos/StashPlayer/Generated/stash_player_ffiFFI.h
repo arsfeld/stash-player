@@ -267,14 +267,9 @@ void*_Nonnull uniffi_stash_player_ffi_fn_constructor_stashplayer_new(RustCallSta
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_AUTHENTICATED_URL
-#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_AUTHENTICATED_URL
-RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_authenticated_url(void*_Nonnull ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_CONNECT
-RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_connect(void*_Nonnull ptr, RustBuffer base_url, RustBuffer api_key, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_connect(void*_Nonnull ptr, RustBuffer base_url, RustBuffer api_key, RustBuffer proxy_url, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_DISCONNECT
@@ -322,6 +317,11 @@ RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_load_saved_credentials(
 RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_metadata_scan(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_PLAYBACK_URL
+#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_PLAYBACK_URL
+RustBuffer uniffi_stash_player_ffi_fn_method_stashplayer_playback_url(void*_Nonnull ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_RESET_O
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_RESET_O
 int32_t uniffi_stash_player_ffi_fn_method_stashplayer_reset_o(void*_Nonnull ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
@@ -334,7 +334,7 @@ int8_t uniffi_stash_player_ffi_fn_method_stashplayer_save_activity(void*_Nonnull
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_SAVE_CREDENTIALS
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_METHOD_STASHPLAYER_SAVE_CREDENTIALS
-void uniffi_stash_player_ffi_fn_method_stashplayer_save_credentials(void*_Nonnull ptr, RustBuffer base_url, RustBuffer api_key, RustCallStatus *_Nonnull out_status
+void uniffi_stash_player_ffi_fn_method_stashplayer_save_credentials(void*_Nonnull ptr, RustBuffer base_url, RustBuffer api_key, RustBuffer proxy_url, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_FUNC_INIT_LOGGING
@@ -629,12 +629,6 @@ uint16_t uniffi_stash_player_ffi_checksum_func_init_logging(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_AUTHENTICATED_URL
-#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_AUTHENTICATED_URL
-uint16_t uniffi_stash_player_ffi_checksum_method_stashplayer_authenticated_url(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_CONNECT
 uint16_t uniffi_stash_player_ffi_checksum_method_stashplayer_connect(void
@@ -692,6 +686,12 @@ uint16_t uniffi_stash_player_ffi_checksum_method_stashplayer_load_saved_credenti
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_METADATA_SCAN
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_METADATA_SCAN
 uint16_t uniffi_stash_player_ffi_checksum_method_stashplayer_metadata_scan(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_PLAYBACK_URL
+#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_METHOD_STASHPLAYER_PLAYBACK_URL
+uint16_t uniffi_stash_player_ffi_checksum_method_stashplayer_playback_url(void
     
 );
 #endif

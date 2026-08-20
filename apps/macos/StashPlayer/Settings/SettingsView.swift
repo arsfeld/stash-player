@@ -6,6 +6,7 @@ struct SettingsView: View {
     @StateObject private var updaterViewModel: CheckForUpdatesViewModel
     @State private var url: String = ""
     @State private var apiKey: String = ""
+    @State private var proxyUrl: String = ""
     @State private var status: TestStatus = .idle
     @State private var autoCheck: Bool
 
@@ -36,6 +37,12 @@ struct SettingsView: View {
                     .autocorrectionDisabled()
                 SecureField("API key (optional)", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
+                TextField(
+                    "Proxy (optional)",
+                    text: $proxyUrl,
+                    prompt: Text("socks5://127.0.0.1:1055")
+                )
+                .help("Used for both API calls and video playback. Accepts http://, https://, socks5:// and socks5h://.")
             }
 
             Section {
@@ -112,6 +119,7 @@ struct SettingsView: View {
             if let creds = try await app.loadSavedCredentials() {
                 url = creds.baseUrl
                 apiKey = creds.apiKey
+                proxyUrl = creds.proxyUrl
             }
         } catch {
             // Best-effort prefill; ignore.
@@ -121,7 +129,7 @@ struct SettingsView: View {
     private func test() async {
         status = .testing
         do {
-            let version = try await app.connect(baseUrl: url, apiKey: apiKey)
+            let version = try await app.connect(baseUrl: url, apiKey: apiKey, proxyUrl: proxyUrl)
             status = .success(version: version)
             // The main window picks up the new connection state via
             // `AppState.status` and swaps the placeholder for the library.

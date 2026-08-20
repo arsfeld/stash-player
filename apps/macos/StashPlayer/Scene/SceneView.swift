@@ -242,7 +242,7 @@ struct SceneView: View {
             return
         }
         do {
-            let signed = try app.authenticatedUrl(stream)
+            let signed = try app.playbackUrl(stream)
             guard let url = URL(string: signed) else {
                 loadError = "Bad stream URL"
                 return
