@@ -87,7 +87,16 @@ impl Client {
         let mut builder = reqwest::Client::builder()
             .user_agent(concat!("stash-player/", env!("CARGO_PKG_VERSION")))
             .default_headers(headers)
-            .no_proxy();
+            .no_proxy()
+            // Bounds only TCP connect + TLS handshake (including the proxy
+            // handshake for a SOCKS/HTTP proxy), so a proxy that accepts
+            // connections but can't route to Stash fails in 10s instead of
+            // hanging on the OS TCP timeout. Deliberately not `.timeout(...)`:
+            // that bounds the whole request including the response body, and
+            // this client's `http()` is reused to stream media bytes through
+            // the loopback proxy, so a total timeout would cut off any
+            // playback longer than the limit.
+            .connect_timeout(std::time::Duration::from_secs(10));
 
         if let Some(proxy) = proxy_url.map(str::trim).filter(|p| !p.is_empty()) {
             validate_proxy(proxy)?;
