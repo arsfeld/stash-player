@@ -268,3 +268,132 @@ async fn requests_after_disconnect_are_unavailable() {
     let resp = reqwest::get(&url).await.unwrap();
     assert_eq!(resp.status().as_u16(), 503);
 }
+
+#[tokio::test]
+async fn host_case_difference_is_still_same_origin() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+        .mount(&server)
+        .await;
+
+    // Base the client off "localhost" rather than the mock server's bare
+    // IP, so an upstream that differs only by host case can still resolve
+    // to the same loopback address the mock is listening on.
+    let port = server.address().port();
+    let proxy = MediaProxy::bind().await.unwrap();
+    proxy.set_client(Some(client(&format!("http://localhost:{port}"), "KEY")));
+
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+    let base = good.split("?u=").next().unwrap().to_owned();
+
+    // The url crate lowercases domain hosts for http/https at parse time,
+    // so this must compare equal to the client's base, not be rejected.
+    let upper = format!("{base}?u=http%3A%2F%2FLOCALHOST%3A{port}%2Fscene%2F1%2Fstream");
+
+    let resp = reqwest::get(&upper).await.unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "host case must not affect the origin check"
+    );
+}
+
+#[tokio::test]
+async fn default_and_explicit_port_are_same_origin() {
+    let proxy = MediaProxy::bind().await.unwrap();
+    // No explicit port on the base, so it takes the scheme's default (443
+    // for https).
+    proxy.set_client(Some(client("https://localhost", "KEY")));
+
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+    let base = good.split("?u=").next().unwrap().to_owned();
+
+    // Same host, port spelled out explicitly instead of implied.
+    let explicit = format!("{base}?u=https%3A%2F%2Flocalhost%3A443%2Fscene%2F1%2Fstream");
+
+    // Nothing is expected to be listening on localhost:443 here, so the
+    // exact non-403 outcome depends on the environment (most likely 502,
+    // a transport failure). What this test locks in is that the guard's
+    // same-origin verdict does not depend on which side spelled the port
+    // out: a 403 would mean the guard incorrectly treated 443 and the
+    // implied default as different origins.
+    let resp = reqwest::get(&explicit).await.unwrap();
+    assert_ne!(
+        resp.status().as_u16(),
+        403,
+        "default port 443 (implied by https) must compare equal to an explicit :443"
+    );
+}
+
+#[tokio::test]
+async fn userinfo_in_upstream_is_still_same_origin() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/scene/1/stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+    let base = good.split("?u=").next().unwrap().to_owned();
+
+    // host_str()/port() never include userinfo, so a `u` carrying
+    // credentials against the same host must still be treated as
+    // same-origin. reqwest may go on to send that userinfo upstream as a
+    // spurious Basic-auth header, but the mock above doesn't check for one.
+    let addr = server.address();
+    let with_userinfo = format!(
+        "{base}?u=http%3A%2F%2Fuser%3Apass%40{}%3A{}%2Fscene%2F1%2Fstream",
+        addr.ip(),
+        addr.port()
+    );
+
+    let resp = reqwest::get(&with_userinfo).await.unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "userinfo must not affect the origin check"
+    );
+}
+
+#[tokio::test]
+async fn head_request_is_allowed() {
+    let server = MockServer::start().await;
+    Mock::given(method("HEAD"))
+        .and(path("/scene/1/stream"))
+        .respond_with(ResponseTemplate::new(200).insert_header("Content-Length", "4096"))
+        .mount(&server)
+        .await;
+
+    let proxy = proxy_for(&server, "KEY").await;
+    let url = proxy.playback_url("/scene/1/stream").unwrap();
+
+    let resp = reqwest::Client::new().head(&url).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn missing_upstream_url_is_bad_request() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+    let base = good.split("?u=").next().unwrap().to_owned();
+
+    let resp = reqwest::get(&base).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+}
+
+#[tokio::test]
+async fn unparseable_upstream_url_is_bad_request() {
+    let server = MockServer::start().await;
+    let proxy = proxy_for(&server, "KEY").await;
+    let good = proxy.playback_url("/scene/1/stream").unwrap();
+    let base = good.split("?u=").next().unwrap().to_owned();
+    let bad = format!("{base}?u=not-a-url");
+
+    let resp = reqwest::get(&bad).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+}

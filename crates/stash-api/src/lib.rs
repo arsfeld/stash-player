@@ -120,6 +120,14 @@ impl Client {
 
     /// Underlying HTTP client. Reusing it for thumbnail fetches inherits the
     /// `ApiKey` header so authenticated screenshot URLs work.
+    ///
+    /// This client is built with no response-decompression feature enabled,
+    /// and callers that forward response bodies byte-for-byte (with a
+    /// `Content-Length` copied from the upstream response) depend on that:
+    /// enabling `gzip`/`brotli`/`deflate`/`zstd` would make reqwest
+    /// transparently decode compressed responses, so the decoded body length
+    /// would no longer match the `Content-Length` header copied alongside
+    /// it.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
