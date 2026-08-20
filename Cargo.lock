@@ -2689,6 +2689,7 @@ dependencies = [
  "parking_lot",
  "stash-api",
  "stash-player-core",
+ "stash-player-proxy",
  "thiserror",
  "tokio",
  "tracing",
