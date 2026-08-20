@@ -343,6 +343,11 @@ void uniffi_stash_player_ffi_fn_func_init_logging(RustCallStatus *_Nonnull out_s
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_FUNC_PROXY_FAILURE_HINT
+#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_FN_FUNC_PROXY_FAILURE_HINT
+RustBuffer uniffi_stash_player_ffi_fn_func_proxy_failure_hint(RustBuffer proxy_url, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_FFI_STASH_PLAYER_FFI_RUSTBUFFER_ALLOC
 #define UNIFFI_FFIDEF_FFI_STASH_PLAYER_FFI_RUSTBUFFER_ALLOC
 RustBuffer ffi_stash_player_ffi_rustbuffer_alloc(uint64_t size, RustCallStatus *_Nonnull out_status
@@ -626,6 +631,12 @@ void ffi_stash_player_ffi_rust_future_complete_void(uint64_t handle, RustCallSta
 #ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_FUNC_INIT_LOGGING
 #define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_FUNC_INIT_LOGGING
 uint16_t uniffi_stash_player_ffi_checksum_func_init_logging(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_FUNC_PROXY_FAILURE_HINT
+#define UNIFFI_FFIDEF_UNIFFI_STASH_PLAYER_FFI_CHECKSUM_FUNC_PROXY_FAILURE_HINT
+uint16_t uniffi_stash_player_ffi_checksum_func_proxy_failure_hint(void
     
 );
 #endif

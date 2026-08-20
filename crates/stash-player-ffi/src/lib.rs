@@ -335,6 +335,20 @@ impl From<Job> for FfiJob {
     }
 }
 
+/// Explain a connection failure caused by a `socks5://` proxy unable to
+/// resolve the server's hostname, if `proxy_url` looks like one. Empty
+/// string means "no proxy configured", matching the convention used
+/// elsewhere on this bridge (`connect`, `save_credentials`). `None` from
+/// the underlying `stash_api` helper (no hint applies) becomes `None` here.
+#[uniffi::export]
+pub fn proxy_failure_hint(proxy_url: String) -> Option<String> {
+    let trimmed = proxy_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    stash_api::proxy_failure_hint(Some(trimmed)).map(str::to_owned)
+}
+
 /// Idempotent tracing-subscriber setup. Safe to call from `App.init()` on
 /// the Swift side at every launch.
 #[uniffi::export]

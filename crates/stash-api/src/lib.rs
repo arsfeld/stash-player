@@ -61,6 +61,22 @@ fn validate_proxy(raw: &str) -> Result<()> {
     Ok(())
 }
 
+/// If a connection failed while a name-resolving-locally SOCKS proxy is
+/// configured, explain the most likely cause. `socks5://` resolves the
+/// hostname on this machine; when the server's name only resolves
+/// through the proxy the lookup fails before any traffic is sent, and
+/// the underlying transport error says nothing about why.
+pub fn proxy_failure_hint(proxy_url: Option<&str>) -> Option<&'static str> {
+    let is_socks5 = proxy_url
+        .map(str::trim)
+        .is_some_and(|p| p.to_ascii_lowercase().starts_with("socks5://"));
+    is_socks5.then_some(
+        "socks5:// resolves the server's hostname on this machine, which fails if \
+         the name only resolves through the proxy (for example, a Tailscale \
+         MagicDNS name). Try socks5h:// instead so the proxy resolves it.",
+    )
+}
+
 impl Client {
     /// Build a client that talks to Stash directly, with no proxy at all —
     /// not even one picked up from the environment. Callers that want a

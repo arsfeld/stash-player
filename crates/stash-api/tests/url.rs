@@ -127,6 +127,21 @@ fn with_proxy_rejects_unparseable_urls() {
 }
 
 #[test]
+fn proxy_failure_hint_fires_only_for_socks5() {
+    assert!(stash_api::proxy_failure_hint(Some("socks5://127.0.0.1:1055")).is_some());
+    // Case-insensitive.
+    assert!(stash_api::proxy_failure_hint(Some("SOCKS5://127.0.0.1:1055")).is_some());
+    assert!(stash_api::proxy_failure_hint(Some("  socks5://127.0.0.1:1055  ")).is_some());
+
+    assert!(stash_api::proxy_failure_hint(Some("socks5h://127.0.0.1:1055")).is_none());
+    assert!(stash_api::proxy_failure_hint(Some("SOCKS5H://127.0.0.1:1055")).is_none());
+    assert!(stash_api::proxy_failure_hint(Some("http://127.0.0.1:1055")).is_none());
+    assert!(stash_api::proxy_failure_hint(Some("https://127.0.0.1:1055")).is_none());
+    assert!(stash_api::proxy_failure_hint(Some("")).is_none());
+    assert!(stash_api::proxy_failure_hint(None).is_none());
+}
+
+#[test]
 fn with_proxy_none_matches_new() {
     // An absent proxy must behave exactly like the original constructor,
     // so the loopback server and both frontends can use one code path.

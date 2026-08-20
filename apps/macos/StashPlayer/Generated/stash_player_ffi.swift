@@ -2444,6 +2444,20 @@ public func initLogging()  {try! rustCall() {
     )
 }
 }
+/**
+ * Explain a connection failure caused by a `socks5://` proxy unable to
+ * resolve the server's hostname, if `proxy_url` looks like one. Empty
+ * string means "no proxy configured", matching the convention used
+ * elsewhere on this bridge (`connect`, `save_credentials`). `None` from
+ * the underlying `stash_api` helper (no hint applies) becomes `None` here.
+ */
+public func proxyFailureHint(proxyUrl: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_stash_player_ffi_fn_func_proxy_failure_hint(
+        FfiConverterString.lower(proxyUrl),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -2461,6 +2475,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_stash_player_ffi_checksum_func_init_logging() != 61605) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_stash_player_ffi_checksum_func_proxy_failure_hint() != 51765) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_stash_player_ffi_checksum_method_stashplayer_connect() != 35591) {

@@ -98,7 +98,11 @@ impl Component for SettingsPage {
                                     "Where to find your Stash server. The optional API key is \
                                      stored in your Linux Secret Service keyring. The optional \
                                      proxy accepts http://, https://, socks5:// and socks5h:// \
-                                     and is used for both API calls and video playback."
+                                     and is used for both API calls and video playback. Prefer \
+                                     socks5h:// over socks5:// when the server's name only \
+                                     resolves through the proxy, such as a Tailscale MagicDNS \
+                                     name, since socks5h:// has the proxy resolve it instead of \
+                                     this machine."
                                 ),
 
                                 #[name = "url_row"]
@@ -243,7 +247,14 @@ impl Component for SettingsPage {
                 });
             }
             SettingsCmd::Connection(Err(e)) => {
-                self.status = Status::Failed(e);
+                // Mirrors the resolution `TestConnection` used to build the
+                // request, so the hint reflects what was actually dialed.
+                let proxy = stash_player_core::resolve_proxy(self.config.proxy_url.as_deref());
+                self.status =
+                    Status::Failed(match stash_api::proxy_failure_hint(proxy.as_deref()) {
+                        Some(hint) => format!("{e}. {hint}"),
+                        None => e,
+                    });
             }
             SettingsCmd::Saved(Ok(())) => {
                 tracing::debug!("api key saved to keyring");

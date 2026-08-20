@@ -40,10 +40,10 @@ struct SettingsView: View {
                 TextField(
                     "Proxy (optional)",
                     text: $proxyUrl,
-                    prompt: Text("socks5://127.0.0.1:1055")
+                    prompt: Text("socks5h://127.0.0.1:1055")
                 )
                 .textFieldStyle(.roundedBorder)
-                .help("Used for both API calls and video playback. Accepts http://, https://, socks5:// and socks5h://.")
+                .help("Used for both API calls and video playback. Accepts http://, https://, socks5:// and socks5h://. Prefer socks5h:// over socks5:// when the server's name only resolves through the proxy, such as a Tailscale MagicDNS name, since socks5h:// has the proxy resolve it instead of this machine.")
             }
 
             Section {
@@ -142,13 +142,22 @@ struct SettingsView: View {
     }
 
     private func errorMessage(_ e: FfiError) -> String {
+        let base: String
         switch e {
         case .Network(let m), .GraphQl(let m), .InvalidUrl(let m),
              .Config(let m), .Keychain(let m), .Io(let m):
-            return m
+            base = m
         case .NotConnected:
-            return "Not connected"
+            base = "Not connected"
         }
+        // A socks5:// proxy resolves the server's hostname on this machine,
+        // which is a common, opaque cause of failure for a Tailscale
+        // MagicDNS name; name it explicitly rather than leaving the user
+        // with just a transport error.
+        if let hint = proxyFailureHint(proxyUrl: proxyUrl) {
+            return "\(base). \(hint)"
+        }
+        return base
     }
 }
 
