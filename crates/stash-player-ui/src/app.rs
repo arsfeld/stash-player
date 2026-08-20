@@ -6,6 +6,7 @@ use relm4::adw;
 
 use adw::prelude::*;
 
+use stash_player_core::resolve_proxy;
 use stash_player_core::Config;
 
 use crate::pages::library::{LibraryInit, LibraryMsg, LibraryOutput, LibraryPage};
@@ -235,7 +236,8 @@ impl Component for AppModel {
             }
             AppMsg::SecretsLoaded(Some(key)) => {
                 self.api_key = key.clone();
-                match stash_api::Client::new(&self.config.stash_url, &key) {
+                let proxy = resolve_proxy(self.config.proxy_url.as_deref());
+                match stash_api::Client::with_proxy(&self.config.stash_url, &key, proxy.as_deref()) {
                     Ok(client) => {
                         self.client = Some(client.clone());
                         self.library.emit(LibraryMsg::SetClient(client));
@@ -245,7 +247,9 @@ impl Component for AppModel {
             }
             AppMsg::SecretsLoaded(None) => {
                 if self.config.has_custom_stash_url() {
-                    match stash_api::Client::new(&self.config.stash_url, "") {
+                    let proxy = resolve_proxy(self.config.proxy_url.as_deref());
+                    match stash_api::Client::with_proxy(&self.config.stash_url, "", proxy.as_deref())
+                    {
                         Ok(client) => {
                             self.client = Some(client.clone());
                             self.library.emit(LibraryMsg::SetClient(client));

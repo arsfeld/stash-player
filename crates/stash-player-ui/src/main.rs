@@ -40,6 +40,14 @@ fn main() {
         tracing::info!("using STASH_API_KEY from environment");
     }
 
+    // Surface where the proxy came from. "Why is my traffic being
+    // proxied" should be answerable from the log alone.
+    if config.proxy_url.as_deref().is_some_and(|p| !p.trim().is_empty()) {
+        tracing::info!("using proxy from config");
+    } else if let Some(proxy) = stash_player_core::resolve_proxy(None) {
+        tracing::info!("using proxy {proxy} from environment");
+    }
+
     gst::init().expect("failed to initialize GStreamer");
 
     let app = RelmApp::new("dev.arsfeld.stash-player");
