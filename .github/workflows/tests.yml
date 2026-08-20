@@ -71,7 +71,7 @@ jobs:
       # installs and a much longer CI run for zero coverage gain (it has
       # no tests by design — relm4/GStreamer needs end-to-end runs).
       - name: Run tests with coverage
-        run: cargo llvm-cov --no-report -p stash-api -p stash-player-core
+        run: cargo llvm-cov --no-report -p stash-api -p stash-player-core -p stash-player-proxy
 
       - name: Generate lcov report
         run: cargo llvm-cov report --lcov --output-path lcov.info

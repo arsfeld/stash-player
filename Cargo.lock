@@ -2697,6 +2697,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "stash-player-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "rand",
+ "reqwest",
+ "stash-api",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "stash-player-ui"
 version = "0.1.0"
 dependencies = [
