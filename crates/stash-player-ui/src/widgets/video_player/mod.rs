@@ -93,6 +93,31 @@ pub(crate) enum VideoPlayerOutput {
     /// shortcut. The scene page forwards this to the app so the config
     /// gets persisted — the slider's pipeline state is already up to date.
     VolumeChanged { volume: f64, muted: bool },
+    /// A scene-level OSD control was activated. The player has no idea
+    /// what these mean — the scene page does.
+    SceneAction(SceneAction),
+}
+
+/// Everything the OSD needs to render the scene-level controls. Grouped
+/// into one record so `VideoPlayerMsg` doesn't grow a cluster of
+/// near-identical variants — the player treats these as opaque display
+/// values and never interprets them.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SceneActionState {
+    pub(crate) can_prev: bool,
+    pub(crate) can_next: bool,
+    pub(crate) o_count: i32,
+    pub(crate) rating100: Option<i32>,
+}
+
+/// A scene-level control the user activated. The player forwards these
+/// verbatim; the scene page decides what they do.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SceneAction {
+    Prev,
+    Next,
+    IncrementO,
+    ResetO,
 }
 
 #[derive(Debug)]
@@ -129,6 +154,10 @@ pub(crate) enum VideoPlayerMsg {
     /// The pipeline reported a seek completed, at this position in
     /// microseconds. Negative means the position query failed.
     SeekLanded(i64),
+    /// Refresh the OSD's scene-level controls.
+    SetSceneActions(SceneActionState),
+    /// An OSD scene-level control was clicked; forwarded to the parent.
+    SceneActionClicked(SceneAction),
 }
 
 /// Independent playback flags grouped to keep `VideoPlayer`'s top-level
@@ -192,6 +221,9 @@ pub(crate) struct VideoPlayer {
     /// Resume position (seconds) waiting to be applied once the freshly
     /// loaded stream reports a non-zero duration. `take()`-d on apply.
     resume_pending: Option<f64>,
+    /// Display state for the OSD's scene-level controls, pushed in by
+    /// the scene page.
+    scene_actions: SceneActionState,
 }
 
 #[relm4::component(pub(crate))]
@@ -370,6 +402,19 @@ impl Component for VideoPlayer {
                                 set_margin_top: 4,
                                 set_margin_bottom: 12,
 
+                                #[name = "prev_scene_button"]
+                                gtk::Button {
+                                    set_icon_name: "media-skip-backward-symbolic",
+                                    add_css_class: "flat",
+                                    add_css_class: "circular",
+                                    set_tooltip_text: Some("Previous scene"),
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(VideoPlayerMsg::SceneActionClicked(
+                                            SceneAction::Prev,
+                                        ));
+                                    },
+                                },
+
                                 #[name = "play_button"]
                                 gtk::Button {
                                     set_icon_name: "media-playback-start-symbolic",
@@ -378,6 +423,19 @@ impl Component for VideoPlayer {
                                     set_tooltip_text: Some("Play / pause (Space)"),
                                     connect_clicked[sender] => move |_| {
                                         sender.input(VideoPlayerMsg::TogglePlay);
+                                    },
+                                },
+
+                                #[name = "next_scene_button"]
+                                gtk::Button {
+                                    set_icon_name: "media-skip-forward-symbolic",
+                                    add_css_class: "flat",
+                                    add_css_class: "circular",
+                                    set_tooltip_text: Some("Next scene"),
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(VideoPlayerMsg::SceneActionClicked(
+                                            SceneAction::Next,
+                                        ));
                                     },
                                 },
 
@@ -399,6 +457,60 @@ impl Component for VideoPlayer {
                                     connect_clicked[sender] => move |_| {
                                         sender.input(VideoPlayerMsg::SeekRelative(10));
                                     },
+                                },
+
+                                gtk::Box { set_hexpand: true },
+
+                                gtk::Box {
+                                    add_css_class: "linked",
+                                    set_valign: gtk::Align::Center,
+
+                                    gtk::Button {
+                                        add_css_class: "flat",
+                                        set_tooltip_text: Some("Bump O-counter"),
+                                        connect_clicked[sender] => move |_| {
+                                            sender.input(VideoPlayerMsg::SceneActionClicked(
+                                                SceneAction::IncrementO,
+                                            ));
+                                        },
+
+                                        #[wrap(Some)]
+                                        set_child = &gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 6,
+                                            set_valign: gtk::Align::Center,
+
+                                            gtk::Image {
+                                                set_icon_name: Some("o-counter-symbolic"),
+                                                set_pixel_size: 14,
+                                            },
+
+                                            #[name = "osd_o_count_label"]
+                                            gtk::Label {
+                                                add_css_class: "o-counter-pill",
+                                            },
+                                        },
+                                    },
+
+                                    #[name = "osd_o_reset_button"]
+                                    gtk::Button {
+                                        set_icon_name: "edit-clear-symbolic",
+                                        add_css_class: "flat",
+                                        set_tooltip_text: Some("Reset O-counter to 0"),
+                                        connect_clicked[sender] => move |_| {
+                                            sender.input(VideoPlayerMsg::SceneActionClicked(
+                                                SceneAction::ResetO,
+                                            ));
+                                        },
+                                    },
+                                },
+
+                                #[name = "osd_rating_label"]
+                                gtk::Label {
+                                    add_css_class: "rating-badge",
+                                    set_valign: gtk::Align::Center,
+                                    set_margin_start: 8,
+                                    set_visible: false,
                                 },
 
                                 gtk::Box { set_hexpand: true },
@@ -535,6 +647,11 @@ impl Component for VideoPlayer {
                 }
             }
             VideoPlayerMsg::SeekLanded(landed_us) => self.seek.on_async_done(landed_us),
+            VideoPlayerMsg::SetSceneActions(state) => self.scene_actions = state,
+            VideoPlayerMsg::SceneActionClicked(action) => {
+                let _ = sender.output(VideoPlayerOutput::SceneAction(action));
+                sender.input(VideoPlayerMsg::PointerActive);
+            }
         }
 
         // Notify the parent on reveal-state edges so it can fade the
@@ -728,6 +845,7 @@ impl VideoPlayer {
             play_duration_us: 0,
             last_save_at: None,
             resume_pending: None,
+            scene_actions: SceneActionState::default(),
         }
     }
 
@@ -812,6 +930,10 @@ impl VideoPlayer {
             } else {
                 "view-fullscreen-symbolic"
             });
+
+        // Scene-level OSD controls. Purely a projection of whatever the
+        // scene page last pushed in.
+        refresh_scene_actions(widgets, self.scene_actions);
 
         // OSD visibility: stay up only when no media is loaded yet so the
         // user has something to look at; otherwise let the inactivity timer
@@ -1224,6 +1346,28 @@ struct TickSnapshot {
     volume: f64,
     muted: bool,
     error_msg: Option<String>,
+}
+
+/// Render the OSD's scene-level controls (prev/next, O-counter, rating).
+/// Pulled out of `refresh_widgets` to keep that function under the line
+/// ceiling — purely a projection of `SceneActionState`, no interpretation.
+fn refresh_scene_actions(widgets: &VideoPlayerWidgets, actions: SceneActionState) {
+    widgets.prev_scene_button.set_sensitive(actions.can_prev);
+    widgets.next_scene_button.set_sensitive(actions.can_next);
+    widgets
+        .osd_o_count_label
+        .set_label(&actions.o_count.to_string());
+    widgets
+        .osd_o_reset_button
+        .set_visible(actions.o_count > 0);
+    match actions.rating100.filter(|r| *r > 0) {
+        Some(rating) => {
+            let stars = rating as f32 / 10.0;
+            widgets.osd_rating_label.set_label(&format!("★ {stars:.1}"));
+            widgets.osd_rating_label.set_visible(true);
+        }
+        None => widgets.osd_rating_label.set_visible(false),
+    }
 }
 
 /// Drive the central status plate. We only show it for initial loading
