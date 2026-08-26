@@ -18,15 +18,16 @@ use super::{VideoPlayer, VideoPlayerMsg};
 ///
 /// Behaves like `gtk::MediaFile` did: build with a URL, set state
 /// transitions via `play`/`pause`, query timing in microseconds, etc.
-/// Bus messages drive event-flag transitions (`prepared`, `seeking`)
-/// and post a `Tick` to the relm4 sender so the widget refreshes.
+/// Bus messages drive event-flag transitions (`prepared`) and post a
+/// `Tick` to the relm4 sender so the widget refreshes; a landed seek is
+/// forwarded as `VideoPlayerMsg::SeekLanded` for the `SeekTracker` to
+/// consume.
 pub(super) struct PlaybackPipeline {
     pipeline: gst::Pipeline,
     playbin: gst::Element,
     paintable: gtk::gdk::Paintable,
     bus_watch: Option<gst::bus::BusWatchGuard>,
     prepared: Rc<Cell<bool>>,
-    seeking: Rc<Cell<bool>>,
     playing: Rc<Cell<bool>>,
     error: Rc<RefCell<Option<String>>>,
 }
@@ -51,7 +52,6 @@ impl PlaybackPipeline {
         }
 
         let prepared = Rc::new(Cell::new(false));
-        let seeking = Rc::new(Cell::new(false));
         let playing = Rc::new(Cell::new(false));
         let error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
@@ -60,7 +60,6 @@ impl PlaybackPipeline {
             sender.clone(),
             BusFlags {
                 prepared: prepared.clone(),
-                seeking: seeking.clone(),
                 playing: playing.clone(),
                 error: error.clone(),
             },
@@ -84,7 +83,6 @@ impl PlaybackPipeline {
             paintable,
             bus_watch,
             prepared,
-            seeking,
             playing,
             error,
         })
@@ -108,10 +106,6 @@ impl PlaybackPipeline {
 
     pub(super) fn is_prepared(&self) -> bool {
         self.prepared.get()
-    }
-
-    pub(super) fn is_seeking(&self) -> bool {
-        self.seeking.get()
     }
 
     pub(super) fn error_message(&self) -> Option<String> {
@@ -154,7 +148,6 @@ impl PlaybackPipeline {
             return;
         }
         let pos = gst::ClockTime::from_useconds(target_us.max(0) as u64);
-        let was_seeking = self.seeking.get();
         let pre_position_us = self
             .pipeline
             .query_position::<gst::ClockTime>()
@@ -176,12 +169,7 @@ impl PlaybackPipeline {
         );
         match result {
             Ok(()) => {
-                tracing::debug!(
-                    target_us,
-                    pre_position_us,
-                    was_seeking,
-                    "seek submitted"
-                );
+                tracing::debug!(target_us, pre_position_us, "seek submitted");
             }
             Err(e) => {
                 tracing::warn!(target_us, "seek failed: {e}");
@@ -214,7 +202,6 @@ fn make_element(name: &str) -> Option<gst::Element> {
 /// State flags shared between the bus watch and the owning `PlaybackPipeline`.
 struct BusFlags {
     prepared: Rc<Cell<bool>>,
-    seeking: Rc<Cell<bool>>,
     playing: Rc<Cell<bool>>,
     error: Rc<RefCell<Option<String>>>,
 }
@@ -229,18 +216,22 @@ fn install_bus_watch(
     let bus = pipeline.bus().expect("pipeline has a bus");
     let pipeline_weak = pipeline.downgrade();
     bus.add_watch_local(move |_, msg| {
-        handle_bus_message(msg, &flags, &pipeline_weak);
+        if let Some(landed_us) = handle_bus_message(msg, &flags, &pipeline_weak) {
+            sender.input(VideoPlayerMsg::SeekLanded(landed_us));
+        }
         sender.input(VideoPlayerMsg::Tick);
         glib::ControlFlow::Continue
     })
     .ok()
 }
 
+/// Returns the position observed at a seek landing, if this message was
+/// one. A negative value means the position query failed.
 fn handle_bus_message(
     msg: &gst::Message,
     flags: &BusFlags,
     pipeline_weak: &glib::WeakRef<gst::Pipeline>,
-) {
+) -> Option<i64> {
     use gst::MessageView;
     match msg.view() {
         MessageView::Error(err) => {
@@ -252,10 +243,7 @@ fn handle_bus_message(
                 err.debug()
             );
             *flags.error.borrow_mut() = Some(glib_err.to_string());
-            // An error means we'll never finish preparing; clear the
-            // seeking flag so the loading overlay logic in the widget
-            // can switch to the error state.
-            flags.seeking.set(false);
+            None
         }
         MessageView::AsyncDone(_) => {
             let landed_us = pipeline_weak
@@ -265,15 +253,14 @@ fn handle_bus_message(
                 .unwrap_or(-1);
             tracing::debug!(landed_us, "bus: AsyncDone — seek complete, prepared");
             flags.prepared.set(true);
-            flags.seeking.set(false);
+            Some(landed_us)
         }
-        MessageView::AsyncStart(_) => {
-            tracing::debug!("bus: AsyncStart — seek/preroll begin");
-            flags.seeking.set(true);
+        MessageView::StateChanged(sc) => {
+            apply_state_change(sc, flags, pipeline_weak);
+            None
         }
-        MessageView::StateChanged(sc) => apply_state_change(sc, flags, pipeline_weak),
-        MessageView::DurationChanged(_) | MessageView::Eos(_) => {}
-        _ => {}
+        MessageView::DurationChanged(_) | MessageView::Eos(_) => None,
+        _ => None,
     }
 }
 
