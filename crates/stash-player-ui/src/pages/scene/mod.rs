@@ -643,20 +643,36 @@ impl ScenePage {
                 .unwrap_or(false)
     }
 
+    /// The currently displayed scene, but only while it's actually
+    /// stable — `None` both when nothing is loaded and while
+    /// `navigating` is true. `push_scene_actions` and `spawn_o_mutation`
+    /// both go through this so the OSD's O-counter sensitivity and the
+    /// mutation guard can never disagree: `state` alone stays
+    /// `Loaded(old_scene)` for the whole navigation window (that's what
+    /// keeps the player mapped), but `self.scene_id` isn't updated to
+    /// the incoming scene until the fetch lands, so anything keyed off
+    /// `state` without also checking `navigating` would act on the
+    /// outgoing scene's id without the user knowing.
+    fn loaded_scene(&self) -> Option<&Scene> {
+        if self.navigating {
+            return None;
+        }
+        match &self.state {
+            State::Loaded(scene) => Some(scene.as_ref()),
+            _ => None,
+        }
+    }
+
     /// Push the OSD's scene-level control state to the player. Called
     /// after anything that changes what those controls should show.
     fn push_scene_actions(&self) {
-        // `None` here means "no scene is loaded right now" (e.g.
-        // mid-navigation) — a different absence than `rating100`'s
-        // `None`, which means "loaded, but unrated".
-        let o_count = match &self.state {
-            State::Loaded(scene) => Some(scene.o_counter.unwrap_or(0)),
-            _ => None,
-        };
-        let rating100 = match &self.state {
-            State::Loaded(scene) => scene.rating100,
-            _ => None,
-        };
+        // `None` here means "no scene is loaded right now, or it's not
+        // safe to act on the one we've got" (not loaded, or mid-navigation)
+        // — a different absence than `rating100`'s `None`, which means
+        // "loaded, but unrated".
+        let scene = self.loaded_scene();
+        let o_count = scene.map(|s| s.o_counter.unwrap_or(0));
+        let rating100 = scene.and_then(|s| s.rating100);
         self.player
             .emit(VideoPlayerMsg::SetSceneActions(SceneActionState {
                 can_prev: self.can_go_prev(),
@@ -667,7 +683,7 @@ impl ScenePage {
     }
 
     fn spawn_o_mutation(&self, sender: &ComponentSender<Self>, mutation: OMutation) {
-        if !matches!(self.state, State::Loaded(_)) {
+        if self.loaded_scene().is_none() {
             return;
         }
         let client = self.client.clone();
