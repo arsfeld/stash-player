@@ -96,6 +96,8 @@ pub(crate) enum VideoPlayerOutput {
     /// A scene-level OSD control was activated. The player has no idea
     /// what these mean — the scene page does.
     SceneAction(SceneAction),
+    /// Fullscreen was entered (true) or left (false).
+    FullscreenChanged(bool),
 }
 
 /// Everything the OSD needs to render the scene-level controls. Grouped
@@ -266,7 +268,10 @@ impl Component for VideoPlayer {
                     set_child = &gtk::Picture {
                         set_hexpand: true,
                         set_vexpand: true,
-                        set_height_request: 540,
+                        // Just a floor against degenerate allocations —
+                        // the real height comes from the window now that
+                        // nothing above us is a ScrolledWindow.
+                        set_height_request: 200,
                         set_content_fit: gtk::ContentFit::Contain,
                         add_css_class: "video-surface",
                     },
@@ -640,7 +645,7 @@ impl Component for VideoPlayer {
             }
             VideoPlayerMsg::ToggleMute => self.handle_toggle_mute(&sender),
             VideoPlayerMsg::ToggleFullscreen => self.handle_toggle_fullscreen(widgets, &sender),
-            VideoPlayerMsg::ExitFullscreen => self.handle_exit_fullscreen(widgets),
+            VideoPlayerMsg::ExitFullscreen => self.handle_exit_fullscreen(widgets, &sender),
             VideoPlayerMsg::PointerActive => self.handle_pointer_active(&sender),
             VideoPlayerMsg::HideControls => {
                 self.hide_source = None;
@@ -1265,15 +1270,15 @@ impl VideoPlayer {
         }
         // Reparent the player into a transient borderless window so
         // fullscreen covers only the video, not the rest of the app
-        // chrome. The root_box is removed from its current parent (an
-        // Overlay in the scene page) and reattached on exit.
+        // chrome. The root_box is removed from its current parent (the
+        // scene page's player_slot Box) and reattached on exit.
         let Some(parent) = widgets.root_box.parent() else {
             return;
         };
-        let Some(overlay) = parent.downcast_ref::<gtk::Overlay>() else {
+        let Some(parent_box) = parent.downcast_ref::<gtk::Box>() else {
             return;
         };
-        overlay.set_child(gtk::Widget::NONE);
+        parent_box.remove(&widgets.root_box);
 
         let app_window = widgets.root_box.root().and_downcast::<gtk::Window>();
         let fs_window = gtk::Window::builder()
@@ -1298,9 +1303,14 @@ impl VideoPlayer {
         self.fs_original_parent = Some(parent);
         self.is_fullscreen = true;
         sender.input(VideoPlayerMsg::PointerActive);
+        let _ = sender.output(VideoPlayerOutput::FullscreenChanged(self.is_fullscreen));
     }
 
-    fn handle_exit_fullscreen(&mut self, widgets: &mut <Self as Component>::Widgets) {
+    fn handle_exit_fullscreen(
+        &mut self,
+        widgets: &mut <Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+    ) {
         if !self.is_fullscreen {
             return;
         }
@@ -1308,17 +1318,18 @@ impl VideoPlayer {
             return;
         };
         // Detach from the fullscreen window before destroying so the
-        // widget survives, then reparent into the original overlay slot.
+        // widget survives, then reparent into the original player_slot.
         fs_window.set_child(gtk::Widget::NONE);
-        if let Some(overlay) = self
+        if let Some(parent_box) = self
             .fs_original_parent
             .take()
-            .and_then(|p| p.downcast::<gtk::Overlay>().ok())
+            .and_then(|p| p.downcast::<gtk::Box>().ok())
         {
-            overlay.set_child(Some(&widgets.root_box));
+            parent_box.append(&widgets.root_box);
         }
         fs_window.destroy();
         self.is_fullscreen = false;
+        let _ = sender.output(VideoPlayerOutput::FullscreenChanged(self.is_fullscreen));
     }
 
     fn handle_pointer_active(&mut self, sender: &ComponentSender<Self>) {

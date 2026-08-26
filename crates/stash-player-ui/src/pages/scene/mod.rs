@@ -3,7 +3,7 @@
 
 mod metadata;
 
-use metadata::{build_stream_url, page_title, populate_scene, stash_scene_url, update_o_widgets};
+use metadata::{build_stream_url, page_title, populate_scene, stash_scene_url};
 
 use relm4::prelude::*;
 use relm4::{adw, gtk};
@@ -47,6 +47,9 @@ pub(crate) struct ScenePage {
     context: Option<SceneNavContext>,
     autoplay: bool,
     player: Controller<VideoPlayer>,
+    /// Whether the metadata drawer is open. Mirrored onto the split view
+    /// and the header toggle.
+    drawer_shown: bool,
 }
 
 pub(super) enum State {
@@ -79,6 +82,11 @@ pub(crate) enum SceneMsg {
     /// Player reported a new volume/mute state — bubble up to the app so
     /// it can persist to config.
     VolumeChanged { volume: f64, muted: bool },
+    /// Show or hide the metadata drawer. Kept in sync in both
+    /// directions — the split view can close itself on an outside click.
+    SetDrawerShown(bool),
+    /// The player entered (true) or left (false) fullscreen.
+    FullscreenChanged(bool),
 }
 
 #[derive(Debug)]
@@ -149,272 +157,196 @@ impl Component for ScenePage {
 
                 add_top_bar = &adw::HeaderBar {
                     add_css_class: "scene-headerbar",
-                },
 
-                #[wrap(Some)]
-                set_content = &gtk::Stack {
-                    set_transition_type: gtk::StackTransitionType::Crossfade,
+                    #[wrap(Some)]
+                    #[name = "window_title"]
+                    set_title_widget = &adw::WindowTitle {
+                        set_title: "",
+                        set_subtitle: "",
+                    },
 
-                    add_named[Some("loading")] = &adw::StatusPage {
-                        set_title: "Loading…",
-                        #[wrap(Some)]
-                        set_child = &gtk::Spinner {
-                            set_spinning: true,
-                            set_width_request: 32,
-                            set_height_request: 32,
+                    #[name = "drawer_button"]
+                    pack_end = &gtk::ToggleButton {
+                        // dialog-information-symbolic ships in every
+                        // Adwaita version we support. If the GNOME 47+
+                        // "info-outline-symbolic" is present it reads
+                        // better in a header bar — check with
+                        // `gtk4-icon-browser` before swapping.
+                        set_icon_name: "dialog-information-symbolic",
+                        set_tooltip_text: Some("Scene details"),
+                        connect_toggled[sender] => move |b| {
+                            sender.input(SceneMsg::SetDrawerShown(b.is_active()));
                         },
                     },
 
-                    add_named[Some("missing")] = &adw::StatusPage {
-                        set_icon_name: Some("action-unavailable-symbolic"),
-                        set_title: "Scene not found",
-                        set_description: Some("The server returned no scene with that id."),
+                    pack_end = &gtk::MenuButton {
+                        set_icon_name: "view-more-symbolic",
+                        set_tooltip_text: Some("More"),
+
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 6,
+                                set_margin_start: 6,
+                                set_margin_end: 6,
+                                set_margin_top: 6,
+                                set_margin_bottom: 6,
+
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Horizontal,
+                                    set_spacing: 12,
+
+                                    gtk::Label {
+                                        set_label: "Autoplay",
+                                        set_hexpand: true,
+                                        set_xalign: 0.0,
+                                    },
+
+                                    gtk::Switch {
+                                        set_valign: gtk::Align::Center,
+                                        #[watch]
+                                        set_active: model.autoplay,
+                                        connect_active_notify[sender] => move |s| {
+                                            sender.input(SceneMsg::AutoplayToggled(s.is_active()));
+                                        },
+                                    },
+                                },
+
+                                gtk::Button {
+                                    add_css_class: "flat",
+                                    set_label: "Open in Stash",
+                                    #[watch]
+                                    set_sensitive: matches!(model.state, State::Loaded(_)),
+                                    connect_clicked => SceneMsg::OpenInBrowser,
+                                },
+                            },
+                        },
+                    },
+                },
+
+                #[wrap(Some)]
+                #[name = "split_view"]
+                set_content = &adw::OverlaySplitView {
+                    // Pinned collapsed on purpose, never bound to a
+                    // breakpoint: an overlaying sidebar can't reallocate
+                    // the player, which is what kept the video area
+                    // shrinking on every scene change.
+                    set_collapsed: true,
+                    set_sidebar_position: gtk::PackType::End,
+                    set_max_sidebar_width: 360.0,
+                    set_show_sidebar: false,
+                    // gir renames boolean getters, so the accessor for
+                    // the `show-sidebar` property is `shows_sidebar()` —
+                    // if the compiler disagrees it will be
+                    // `is_show_sidebar()`. Take whichever it accepts;
+                    // both read the same property.
+                    connect_show_sidebar_notify[sender] => move |v| {
+                        sender.input(SceneMsg::SetDrawerShown(v.shows_sidebar()));
                     },
 
-                    add_named[Some("error")] = &adw::StatusPage {
-                        set_icon_name: Some("dialog-error-symbolic"),
-                        set_title: "Couldn't load scene",
-                        #[watch]
-                        set_description: model.failure_message(),
-                    },
-
-                    add_named[Some("loaded")] = &gtk::ScrolledWindow {
+                    #[wrap(Some)]
+                    set_sidebar = &gtk::ScrolledWindow {
                         set_hscrollbar_policy: gtk::PolicyType::Never,
 
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 0,
+                            set_spacing: 24,
+                            set_margin_top: 24,
+                            set_margin_bottom: 24,
+                            set_margin_start: 18,
+                            set_margin_end: 18,
 
-                            // Full-width player. Sits outside the metadata
-                            // clamp on purpose so it spans the window like
-                            // Stash's web UI. The actual player widget is a
-                            // `VideoPlayer` controller installed as the
-                            // overlay's main child after `view_output!()`,
-                            // because the relm4 view macro can't easily
-                            // splice in a controller's root widget where
-                            // `gtk::Overlay::set_child` expects an `Option`.
-                            #[name = "video_overlay"]
-                            gtk::Overlay {
-                                set_hexpand: true,
+                            #[name = "performers_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 10,
+                                set_visible: false,
 
-                                add_overlay = &gtk::Box {
-                                    set_halign: gtk::Align::End,
-                                    set_valign: gtk::Align::Start,
-                                    set_margin_top: 12,
-                                    set_margin_end: 12,
+                                gtk::Label {
+                                    set_label: "Performers",
+                                    set_xalign: 0.0,
+                                    add_css_class: "heading",
+                                },
 
-                                    #[name = "rating_badge"]
-                                    gtk::Label {
-                                        add_css_class: "rating-badge",
-                                        set_visible: false,
-                                    },
+                                #[name = "performers_box"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 8,
                                 },
                             },
 
-                            adw::Clamp {
-                                set_maximum_size: 960,
-                                set_tightening_threshold: 720,
-                                set_margin_top: 24,
-                                set_margin_bottom: 32,
-                                set_margin_start: 18,
-                                set_margin_end: 18,
+                            #[name = "details_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                set_visible: false,
 
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 24,
-
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 12,
-
-                                        gtk::Box {
-                                            set_orientation: gtk::Orientation::Vertical,
-                                            set_spacing: 4,
-                                            set_hexpand: true,
-
-                                            #[name = "title_label"]
-                                            gtk::Label {
-                                                add_css_class: "title-1",
-                                                set_xalign: 0.0,
-                                                set_wrap: true,
-                                                set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                            },
-
-                                            #[name = "subtitle_label"]
-                                            gtk::Label {
-                                                add_css_class: "dim-label",
-                                                set_xalign: 0.0,
-                                                set_wrap: true,
-                                                set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                            },
-                                        },
-
-                                        // Right-side action cluster. Wrapped
-                                        // in a single horizontal box with
-                                        // `valign: Center` so the autoplay
-                                        // switch + skip buttons share a
-                                        // common centerline regardless of
-                                        // how many lines the title wraps to.
-                                        gtk::Box {
-                                            set_spacing: 12,
-                                            set_valign: gtk::Align::Center,
-
-                                            gtk::Label {
-                                                set_label: "Autoplay",
-                                                add_css_class: "dim-label",
-                                            },
-
-                                            gtk::Switch {
-                                                set_valign: gtk::Align::Center,
-                                                set_tooltip_text: Some(
-                                                    "Start playing scenes automatically",
-                                                ),
-                                                #[watch]
-                                                set_active: model.autoplay,
-                                                connect_active_notify[sender] => move |s| {
-                                                    sender.input(SceneMsg::AutoplayToggled(s.is_active()));
-                                                },
-                                            },
-
-                                            gtk::Box {
-                                                add_css_class: "linked",
-                                                set_valign: gtk::Align::Center,
-                                                set_margin_start: 4,
-                                                #[watch]
-                                                set_sensitive: matches!(model.state, State::Loaded(_)),
-
-                                                gtk::Button {
-                                                    set_tooltip_text: Some("Bump O-counter"),
-                                                    connect_clicked => SceneMsg::IncrementO,
-
-                                                    #[wrap(Some)]
-                                                    set_child = &gtk::Box {
-                                                        set_orientation: gtk::Orientation::Horizontal,
-                                                        set_spacing: 6,
-                                                        set_valign: gtk::Align::Center,
-
-                                                        gtk::Image {
-                                                            set_icon_name: Some("o-counter-symbolic"),
-                                                            set_pixel_size: 14,
-                                                        },
-
-                                                        #[name = "o_count_label"]
-                                                        gtk::Label {
-                                                            add_css_class: "o-counter-pill",
-                                                        },
-                                                    },
-                                                },
-
-                                                #[name = "o_reset_btn"]
-                                                gtk::Button {
-                                                    set_icon_name: "edit-clear-symbolic",
-                                                    set_tooltip_text: Some("Reset O-counter to 0"),
-                                                    connect_clicked => SceneMsg::ResetO,
-                                                },
-                                            },
-
-                                            gtk::Box {
-                                                add_css_class: "linked",
-                                                set_valign: gtk::Align::Center,
-                                                set_margin_start: 4,
-                                                #[watch]
-                                                set_visible: model.context.is_some(),
-
-                                                gtk::Button {
-                                                    set_icon_name: "media-skip-backward-symbolic",
-                                                    set_tooltip_text: Some("Previous scene"),
-                                                    #[watch]
-                                                    set_sensitive: model.can_go_prev(),
-                                                    connect_clicked => SceneMsg::Prev,
-                                                },
-
-                                                gtk::Button {
-                                                    set_icon_name: "media-skip-forward-symbolic",
-                                                    set_tooltip_text: Some("Next scene"),
-                                                    #[watch]
-                                                    set_sensitive: model.can_go_next(),
-                                                    connect_clicked => SceneMsg::Next,
-                                                },
-                                            },
-                                        },
-                                    },
-
-                                    gtk::Box {
-                                        set_halign: gtk::Align::End,
-
-                                        gtk::Button {
-                                            set_icon_name: "external-link-symbolic",
-                                            add_css_class: "flat",
-                                            add_css_class: "circular",
-                                            set_tooltip_text: Some("Open in Stash"),
-                                            set_valign: gtk::Align::Center,
-                                            #[watch]
-                                            set_sensitive: matches!(model.state, State::Loaded(_)),
-                                            connect_clicked => SceneMsg::OpenInBrowser,
-                                        },
-                                    },
-
-                                    #[name = "performers_section"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_spacing: 10,
-                                        set_visible: false,
-
-                                        gtk::Label {
-                                            set_label: "Performers",
-                                            set_xalign: 0.0,
-                                            add_css_class: "heading",
-                                        },
-
-                                        gtk::ScrolledWindow {
-                                            set_vscrollbar_policy: gtk::PolicyType::Never,
-                                            set_propagate_natural_height: true,
-
-                                            #[name = "performers_box"]
-                                            gtk::Box {
-                                                set_orientation: gtk::Orientation::Horizontal,
-                                                set_spacing: 8,
-                                            },
-                                        },
-                                    },
-
-                                    #[name = "details_section"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_spacing: 8,
-                                        set_visible: false,
-
-                                        gtk::Label {
-                                            set_label: "About",
-                                            set_xalign: 0.0,
-                                            add_css_class: "heading",
-                                        },
-
-                                        #[name = "details_label"]
-                                        gtk::Label {
-                                            set_xalign: 0.0,
-                                            set_wrap: true,
-                                            set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                            set_selectable: true,
-                                        },
-                                    },
-
-                                    // Rebuilt wholesale by
-                                    // `populate_file_group` so navigating
-                                    // between scenes replaces the rows
-                                    // instead of appending to them.
-                                    #[name = "file_section"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_visible: false,
-                                    },
+                                gtk::Label {
+                                    set_label: "About",
+                                    set_xalign: 0.0,
+                                    add_css_class: "heading",
                                 },
+
+                                #[name = "details_label"]
+                                gtk::Label {
+                                    set_xalign: 0.0,
+                                    set_wrap: true,
+                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                    set_selectable: true,
+                                },
+                            },
+
+                            // Rebuilt wholesale by `populate_file_group` so
+                            // navigating between scenes replaces the rows
+                            // instead of appending to them.
+                            #[name = "file_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_visible: false,
                             },
                         },
                     },
 
-                    #[watch]
-                    set_visible_child_name: model.stack_name(),
+                    #[wrap(Some)]
+                    set_content = &gtk::Stack {
+                        set_transition_type: gtk::StackTransitionType::Crossfade,
+
+                        add_named[Some("loading")] = &adw::StatusPage {
+                            set_title: "Loading…",
+                            #[wrap(Some)]
+                            set_child = &gtk::Spinner {
+                                set_spinning: true,
+                                set_width_request: 32,
+                                set_height_request: 32,
+                            },
+                        },
+
+                        add_named[Some("missing")] = &adw::StatusPage {
+                            set_icon_name: Some("action-unavailable-symbolic"),
+                            set_title: "Scene not found",
+                            set_description: Some("The server returned no scene with that id."),
+                        },
+
+                        add_named[Some("error")] = &adw::StatusPage {
+                            set_icon_name: Some("dialog-error-symbolic"),
+                            set_title: "Couldn't load scene",
+                            #[watch]
+                            set_description: model.failure_message(),
+                        },
+
+                        // The player goes straight in — no ScrolledWindow,
+                        // no Overlay, nothing that would size it from its
+                        // content instead of from the window.
+                        #[name = "player_slot"]
+                        add_named[Some("loaded")] = &gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                        },
+
+                        #[watch]
+                        set_visible_child_name: model.stack_name(),
+                    },
                 },
             },
         }
@@ -453,6 +385,7 @@ impl Component for ScenePage {
                     SceneAction::IncrementO => SceneMsg::IncrementO,
                     SceneAction::ResetO => SceneMsg::ResetO,
                 },
+                VideoPlayerOutput::FullscreenChanged(on) => SceneMsg::FullscreenChanged(on),
             });
 
         let model = ScenePage {
@@ -462,13 +395,12 @@ impl Component for ScenePage {
             context: init.context,
             autoplay: init.autoplay,
             player,
+            drawer_shown: false,
         };
 
         let widgets = view_output!();
 
-        widgets
-            .video_overlay
-            .set_child(Some(model.player.widget()));
+        widgets.player_slot.append(model.player.widget());
 
         let client = model.client.clone();
         let id = model.scene_id.clone();
@@ -511,12 +443,37 @@ impl Component for ScenePage {
                 }
             }
             SceneMsg::SetHeaderRevealed(on) => {
-                widgets.toolbar_view.set_reveal_top_bars(on);
+                widgets
+                    .toolbar_view
+                    .set_reveal_top_bars(on || self.drawer_shown);
             }
             SceneMsg::IncrementO => self.spawn_o_mutation(&sender, OMutation::Increment),
             SceneMsg::ResetO => self.spawn_o_mutation(&sender, OMutation::Reset),
             SceneMsg::VolumeChanged { volume, muted } => {
                 let _ = sender.output(SceneOutput::SetVolume { volume, muted });
+            }
+            SceneMsg::SetDrawerShown(shown) => {
+                // Guard the round trip: the split view and the toggle
+                // each notify us when we set the other.
+                if self.drawer_shown != shown {
+                    self.drawer_shown = shown;
+                }
+                if widgets.split_view.shows_sidebar() != shown {
+                    widgets.split_view.set_show_sidebar(shown);
+                }
+                if widgets.drawer_button.is_active() != shown {
+                    widgets.drawer_button.set_active(shown);
+                }
+                if shown {
+                    // Keep the header up while the drawer is open, or the
+                    // toggle that closes it fades away.
+                    widgets.toolbar_view.set_reveal_top_bars(true);
+                }
+            }
+            SceneMsg::FullscreenChanged(on) => {
+                if on {
+                    sender.input(SceneMsg::SetDrawerShown(false));
+                }
             }
             SceneMsg::SaveActivity {
                 resume_secs,
@@ -624,7 +581,6 @@ impl Component for ScenePage {
                         && let State::Loaded(scene) = &mut self.state
                     {
                         scene.o_counter = Some(new_count);
-                        update_o_widgets(widgets, new_count);
                     }
                 }
                 Err(e) => tracing::warn!("o-counter update failed for scene {scene_id}: {e}"),

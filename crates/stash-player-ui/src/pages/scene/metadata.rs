@@ -13,21 +13,8 @@ use stash_api::{PerformerRef, Scene, SceneFile};
 use super::{ScenePageWidgets, State};
 
 pub(super) fn populate_scene(widgets: &ScenePageWidgets, scene: &Scene) {
-    widgets.title_label.set_label(&scene.display_title());
-
-    let subtitle = subtitle_text(scene);
-    widgets.subtitle_label.set_visible(!subtitle.is_empty());
-    widgets.subtitle_label.set_label(&subtitle);
-
-    if let Some(rating) = scene.rating100.filter(|r| *r > 0) {
-        let stars = rating as f32 / 10.0;
-        widgets.rating_badge.set_label(&format!("★ {stars:.1}"));
-        widgets.rating_badge.set_visible(true);
-    } else {
-        widgets.rating_badge.set_visible(false);
-    }
-
-    update_o_widgets(widgets, scene.o_counter.unwrap_or(0));
+    widgets.window_title.set_title(&scene.display_title());
+    widgets.window_title.set_subtitle(&subtitle_text(scene));
 
     populate_performers(&widgets.performers_box, &scene.performers);
     widgets
@@ -56,13 +43,6 @@ pub(super) fn build_stream_url(client: &stash_api::Client, scene: &Scene) -> Opt
             None
         }
     }
-}
-
-pub(super) fn update_o_widgets(widgets: &ScenePageWidgets, count: i32) {
-    widgets.o_count_label.set_label(&count.to_string());
-    // Reset is a no-op when the count is already 0; hide the button so
-    // the action group doesn't carry a dead control.
-    widgets.o_reset_btn.set_visible(count > 0);
 }
 
 fn populate_performers(container: &gtk::Box, performers: &[PerformerRef]) {
