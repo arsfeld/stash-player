@@ -50,6 +50,9 @@ pub(crate) struct ScenePage {
     /// Whether the metadata drawer is open. Mirrored onto the split view
     /// and the header toggle.
     drawer_shown: bool,
+    /// True between starting a prev/next fetch and its result landing.
+    /// Keeps the stack on the player instead of crossfading it out.
+    navigating: bool,
 }
 
 pub(super) enum State {
@@ -396,6 +399,7 @@ impl Component for ScenePage {
             autoplay: init.autoplay,
             player,
             drawer_shown: false,
+            navigating: false,
         };
 
         let widgets = view_output!();
@@ -534,6 +538,7 @@ impl Component for ScenePage {
                     self.player.emit(VideoPlayerMsg::SetUrl {
                         url: build_stream_url(&self.client, &scene),
                         resume_secs: scene.effective_resume_secs(),
+                        show_loading: false,
                     });
                     self.state = State::Loaded(Box::new(scene));
                 }
@@ -544,30 +549,40 @@ impl Component for ScenePage {
                     self.state = State::Failed(e);
                 }
             },
-            SceneCmd::Neighbor { direction, target_index, result } => match *result {
-                Ok(Some(scene)) => {
-                    self.scene_id = scene.id.clone();
-                    if let Some(ctx) = self.context.as_mut() {
-                        ctx.index = target_index;
+            SceneCmd::Neighbor {
+                direction,
+                target_index,
+                result,
+            } => {
+                // Cleared before applying, so a failed navigation still
+                // reaches the error or missing page.
+                self.navigating = false;
+                match *result {
+                    Ok(Some(scene)) => {
+                        self.scene_id = scene.id.clone();
+                        if let Some(ctx) = self.context.as_mut() {
+                            ctx.index = target_index;
+                        }
+                        populate_scene(widgets, &scene);
+                        self.player.emit(VideoPlayerMsg::SetUrl {
+                            url: build_stream_url(&self.client, &scene),
+                            resume_secs: scene.effective_resume_secs(),
+                            show_loading: false,
+                        });
+                        self.state = State::Loaded(Box::new(scene));
                     }
-                    populate_scene(widgets, &scene);
-                    self.player.emit(VideoPlayerMsg::SetUrl {
-                        url: build_stream_url(&self.client, &scene),
-                        resume_secs: scene.effective_resume_secs(),
-                    });
-                    self.state = State::Loaded(Box::new(scene));
+                    Ok(None) => {
+                        tracing::debug!(
+                            "no scene at index {target_index} for {direction:?} navigation"
+                        );
+                        self.state = State::NotFound;
+                    }
+                    Err(e) => {
+                        tracing::warn!("scene navigation failed: {e}");
+                        self.state = State::Failed(e);
+                    }
                 }
-                Ok(None) => {
-                    tracing::debug!(
-                        "no scene at index {target_index} for {direction:?} navigation"
-                    );
-                    self.state = State::NotFound;
-                }
-                Err(e) => {
-                    tracing::warn!("scene navigation failed: {e}");
-                    self.state = State::Failed(e);
-                }
-            },
+            }
             SceneCmd::ActivitySaved { scene_id, result } => match result {
                 Ok(_) => tracing::debug!("activity saved for scene {scene_id}"),
                 Err(e) => tracing::warn!("activity save failed for scene {scene_id}: {e}"),
@@ -593,6 +608,10 @@ impl Component for ScenePage {
 
 impl ScenePage {
     fn stack_name(&self) -> &'static str {
+        if self.navigating {
+            // Keep the player on screen and let it show its own spinner.
+            return "loaded";
+        }
         match &self.state {
             State::Loading => "loading",
             State::Loaded(_) => "loaded",
@@ -609,16 +628,14 @@ impl ScenePage {
     }
 
     fn can_go_prev(&self) -> bool {
-        matches!(&self.state, State::Loaded(_) | State::NotFound | State::Failed(_))
-            && self
-                .context
-                .as_ref()
-                .map(|c| c.index > 0)
-                .unwrap_or(false)
+        !self.navigating
+            && matches!(&self.state, State::Loaded(_) | State::NotFound | State::Failed(_))
+            && self.context.as_ref().map(|c| c.index > 0).unwrap_or(false)
     }
 
     fn can_go_next(&self) -> bool {
-        matches!(&self.state, State::Loaded(_) | State::NotFound | State::Failed(_))
+        !self.navigating
+            && matches!(&self.state, State::Loaded(_) | State::NotFound | State::Failed(_))
             && self
                 .context
                 .as_ref()
@@ -676,6 +693,9 @@ impl ScenePage {
         let Some(ctx) = self.context.as_ref() else {
             return;
         };
+        if self.navigating {
+            return;
+        }
         let target_index = match direction {
             NavDirection::Prev => {
                 if ctx.index == 0 {
@@ -691,14 +711,24 @@ impl ScenePage {
             }
         };
 
-        // Stop the currently playing media before swapping in the new scene
-        // so audio doesn't keep playing while the loading spinner is up.
+        // Stop the outgoing stream (this also flushes its activity) but
+        // keep the player mapped and show its own spinner. Swapping the
+        // whole stack out would remap the paintable widget on every
+        // navigation.
         self.player.emit(VideoPlayerMsg::SetUrl {
             url: None,
             resume_secs: None,
+            show_loading: true,
         });
 
-        self.state = State::Loading;
+        // Only hold the player on screen if there's one to hold. From
+        // any other state there's nothing loaded, so fall back to the
+        // full-page spinner.
+        if matches!(self.state, State::Loaded(_)) {
+            self.navigating = true;
+        } else {
+            self.state = State::Loading;
+        }
 
         let client = self.client.clone();
         let filter = ctx.filter.clone();
