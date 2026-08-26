@@ -58,18 +58,43 @@ Active rules:
 Three crates kept narrow so the GUI doesn't tangle with networking:
 
 - **`stash-api`** — thin `reqwest`-based GraphQL client. Hand-rolled queries, no codegen yet. `Client::new(base_url, api_key)` injects an `ApiKey` header on every request and exposes `version`, `find_scenes(filter, page, per_page)`, `find_scene(id)`, `save_scene_activity(id, resume_time, play_duration)`, `increment_o(id)` / `reset_o(id)` (Stash's per-scene "O counter" mutations — both return the new count), `fetch_bytes(url)`, and `authenticated_url(url)`. The last one bakes `apikey=` into a query string — needed when the consumer (GStreamer media stack, `<video>` tag) can't carry the request header. It's careful not to double-append if Stash already returned an authenticated URL.
-- **`stash-player-core`** — config (via `directories` + `serde`), `secrets` module for the API key (Linux Secret Service or macOS Keychain depending on `target_os`, both behind the same async facade), and `cache` paths for thumbnails. The secrets module is async on both platforms — Linux because `secret-service` is, macOS because we wrap `security-framework` in `tokio::task::spawn_blocking`.
+- **`stash-player-core`** — config (via `directories` + `serde`), `secrets` module for the API key (Linux Secret Service or macOS Keychain depending on `target_os`, both behind the same async facade), and `cache` paths for thumbnails. The secrets module is async on both platforms — Linux because `secret-service` is, macOS because we wrap `security-framework` in `tokio::task::spawn_blocking`. `playback` holds `SeekTracker`, the pure position model shared by the UI's player (and available to the macOS app if its seek handling ever needs the same treatment).
 - **`stash-player-ui`** — relm4 binary. The Linux app. `main.rs` initializes GStreamer + CSS + a `RelmApp`, then hands control to `AppModel`.
 - **`stash-player-ffi`** — UniFFI bridge consumed by the macOS SwiftUI app. Sync FFI methods (`connect`, `list_scenes`, `get_scene`, `save_activity`, `increment_o`, `reset_o`, `authenticated_url`, `fetch_thumbnail`, `load_saved_credentials`, `save_credentials`) wrap the same `stash-api` Client; calls run on a global multi-thread tokio runtime via `block_on`. Swift dispatches off the main thread with `Task.detached`. `list_scenes` takes an `FfiSceneFilter` record mirroring `stash_api::SceneFilter` field-for-field (sort, direction, min rating, organized, hide-tracked, random seed) — the macOS library owns its filter state in Swift and rebuilds the FFI record per request.
 
 ### UI component layout (`stash-player-ui/src/`)
 
-- `app.rs` — `AppModel` owns the `AdwApplicationWindow`, the shared `stash_api::Client` (built once configured), and an `AdwNavigationView` that pushes/pops Library / Scene / Settings. Subtlety: it listens for `connect_popped` to drop the `ScenePage` controller when its page leaves the stack — otherwise the `MediaFile`/playbin keeps audio playing in the background.
-- `pages/library.rs` — `gtk::FlowBox` of scene cards with a top toolbar (search, sort, asc/desc, organized switch, min-rating, hide-tracked switch, "play random"). The hide-tracked switch defaults ON so the library opens to "untracked only" (`o_counter = 0`). Infinite scroll via `edge-reached`, 24 scenes per fetch. Thumbnails are decoded + resized to 240×135 RGBA8 via the `image` crate, cached on disk by URL hash + dimensions, gated by a 12-permit semaphore.
-- `pages/scene.rs` — inline `VideoPlayer`, metadata, performer chips (`AdwAvatar`), prev/next neighbour navigation honouring the library's current filter. Right-side action cluster carries autoplay, an O-counter group (count pill + `+` increment + reset button hidden when count == 0), and prev/next.
+- `app.rs` — `AppModel` owns the `AdwApplicationWindow`, the shared `stash_api::Client` (built once configured), and an `AdwNavigationView` that pushes/pops Library / Scene / Settings. Subtlety: it listens for `connect_popped` to drop the `ScenePage` controller when its page leaves the stack — otherwise the player's `playbin3` pipeline keeps audio playing in the background.
+- `pages/library.rs` — `gtk::FlowBox` of scene cards with a top toolbar (search, sort, asc/desc, organized switch, min-rating, hide-tracked switch, "play random"). The hide-tracked switch defaults ON so the library opens to "untracked only" (`o_counter = 0`). Pagination re-checks the scroll adjustment after every page lands and on every scroll, 48 scenes per fetch — an `edge-reached` trigger alone stalls on a large monitor, where the first page never overflows the viewport and so nothing ever scrolls. Thumbnails are decoded + resized to 240×135 RGBA8 via the `image` crate, cached on disk by URL hash + dimensions, gated by a 12-permit semaphore.
+- `pages/scene/` — video-first scene page. `mod.rs` owns the component:
+  the player fills the content area of an `adw::OverlaySplitView` pinned
+  to `collapsed: true`, so the metadata drawer (performers, about, file
+  info) overlays the video rather than reallocating it. Title and
+  subtitle live in the header's `adw::WindowTitle`; autoplay and "Open in
+  Stash" in its `⋯` menu; prev/next, the O-counter, and the rating are
+  rendered by the player OSD and round-trip through a single
+  `SetSceneActions` / `SceneAction` message pair so the player stays
+  ignorant of what they mean. `SceneActionState.o_count` is
+  `Option<i32>` — `None` means no scene is loaded (mid-navigation) and
+  gates the OSD O-counter group insensitive, a different absence than
+  `rating100`'s `None` ("loaded, but unrated"). `metadata.rs` holds the
+  `populate_*` helpers — all of which **clear before building**, since
+  appending to a persistent container is what made the File rows
+  accumulate across navigations. Prev/next set a `navigating` flag
+  rather than swapping the stack, so the paintable widget is never
+  remapped mid-browse.
 - `pages/settings.rs` — Stash URL + API key + test-connection button + theme.
-- `widgets/video_player.rs` — hand-built GStreamer `playbin3` pipeline driving a `gtk4paintablesink`, painted into a `gtk::Picture` wrapped in `gtk::GraphicsOffload` (4.14+) for compositor-direct video. Custom OSD overlay, mpv-style keyboard shortcuts (see README). Polls position at 4 Hz; suppresses the seek-slider feedback loop with an `Rc<Cell<bool>>` flag. Activity writeback (`sceneSaveActivity`) is throttled to ~10s and flushed on pause / seek / close.
-  - The PLAN/README still describes `gtk::MediaFile`; the code has since moved to a hand-built `playbin3` pipeline so we can do things `MediaFile` couldn't (manual sink, more pipeline control). Update docs in lockstep if you reverse this.
+- `widgets/video_player/` — hand-built GStreamer `playbin3` pipeline
+  driving a `gtk4paintablesink`, painted into a `gtk::Picture` wrapped in
+  `gtk::GraphicsOffload` (4.14+) for compositor-direct video. `pipeline.rs`
+  owns the GStreamer half; `mod.rs` the relm4 component. Custom OSD
+  overlay, mpv-style keyboard shortcuts (see README). Polls position at
+  4 Hz into a `stash_player_core::playback::SeekTracker`, which ignores
+  readings inconsistent with an outstanding seek — without it, `ACCURATE`
+  seeks that outlast a poll interval let a stale position clobber the
+  model and every subsequent relative seek lands in the same place.
+  Activity writeback (`sceneSaveActivity`) is throttled to ~10s and
+  flushed on pause / seek / close.
 
 ### macOS app (`apps/macos/`)
 
