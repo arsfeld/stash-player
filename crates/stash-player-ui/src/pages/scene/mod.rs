@@ -1,5 +1,6 @@
-//! Scene detail page. Inline player at the top (matches Stash's web UI),
-//! followed by metadata, performers, and a file-info group.
+//! Scene detail page. Video-first: the player fills an `adw::OverlaySplitView`'s
+//! content area, with metadata, performers, and a file-info group in a
+//! collapsible sidebar drawer toggled from the header bar.
 
 mod metadata;
 
@@ -182,6 +183,7 @@ impl Component for ScenePage {
                         },
                     },
 
+                    #[name = "menu_button"]
                     pack_end = &gtk::MenuButton {
                         set_icon_name: "view-more-symbolic",
                         set_tooltip_text: Some("More"),
@@ -447,9 +449,13 @@ impl Component for ScenePage {
                 }
             }
             SceneMsg::SetHeaderRevealed(on) => {
-                widgets
-                    .toolbar_view
-                    .set_reveal_top_bars(on || self.drawer_shown);
+                // Keep the header up while its "more" menu is open — the
+                // popover is a child of the (potentially hidden) header bar,
+                // so an auto-hide here would unmap the popover out from
+                // under the user while they're still reading it.
+                widgets.toolbar_view.set_reveal_top_bars(
+                    on || self.drawer_shown || widgets.menu_button.is_active(),
+                );
             }
             SceneMsg::IncrementO => self.spawn_o_mutation(&sender, OMutation::Increment),
             SceneMsg::ResetO => self.spawn_o_mutation(&sender, OMutation::Reset),
