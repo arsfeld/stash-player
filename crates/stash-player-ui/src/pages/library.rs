@@ -566,6 +566,16 @@ impl Component for LibraryPage {
 
         // Scroll-driven prefetch. This replaces `edge-reached`, which
         // never fires when the content already fits the viewport.
+        //
+        // Both signals are needed, not just one: `value-changed` fires when
+        // the user scrolls, but not when the *layout* settles after a page
+        // lands — if the deferred idle check in `update_cmd_with_view` runs
+        // before the scroller has been through its first size-allocate
+        // (adjustment still all zeros), nothing else ever re-checks, and the
+        // grid can stall at page 1 forever — the original bug via a
+        // different path. `changed` fires exactly when `upper`/`page-size`
+        // change (layout settling or content growing), so it catches that
+        // case; `value-changed` still covers actual scrolling.
         {
             let sender = sender.clone();
             widgets
@@ -574,6 +584,12 @@ impl Component for LibraryPage {
                 .connect_value_changed(move |_| {
                     sender.input(LibraryMsg::MaybeLoadMore);
                 });
+        }
+        {
+            let sender = sender.clone();
+            widgets.scroller.vadjustment().connect_changed(move |_| {
+                sender.input(LibraryMsg::MaybeLoadMore);
+            });
         }
 
         if model.client.is_some() {
