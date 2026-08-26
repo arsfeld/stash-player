@@ -205,7 +205,7 @@ pub(crate) struct VideoPlayer {
     /// `None` outside fullscreen.
     fs_window: Option<gtk::Window>,
     /// Original parent of `root_box` to reparent back to on exit. This is
-    /// the scene page's `player_slot` `gtk::Box` — `handle_toggle_fullscreen`
+    /// the scene page's `player_slot` `gtk::Box` — `handle_exit_fullscreen`
     /// downcasts it back to `gtk::Box` to reattach, so it must stay one.
     fs_original_parent: Option<gtk::Widget>,
     /// OSD reveal-state flags (current request + most recently emitted edge).
