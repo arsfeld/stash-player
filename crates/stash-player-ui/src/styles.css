@@ -117,11 +117,17 @@
     background-color: alpha(white, 0.16);
 }
 
+/* The header now floats over a full-bleed video (no metadata page
+   beneath it to fall back on), so give the title text its own shadow
+   rather than relying solely on the gradient behind the bar. */
+.scene-headerbar windowtitle label {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
 /* Inline video player + OSD */
 
 .video-player {
     background-color: black;
-    min-height: 540px;
 }
 
 .video-surface {
@@ -169,6 +175,20 @@
 
 .video-osd button.video-osd-primary:hover {
     background-color: alpha(white, 0.28);
+}
+
+/* Scene-level controls in the OSD reuse the pill styling from the
+   metadata pane, toned down to sit on the dark scrim. */
+.video-osd .o-counter-pill {
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-osd .rating-badge {
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-weight: bold;
 }
 
 .video-osd-time {

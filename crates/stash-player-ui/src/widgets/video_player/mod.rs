@@ -19,316 +19,29 @@
 //!   f               toggle fullscreen
 //!   Esc             exit fullscreen
 //!
-//! Position polling runs at 4 Hz via `glib::timeout_add_local`. We avoid a
-//! feedback loop on the seek slider by suppressing our own programmatic
-//! updates with an `Rc<Cell<bool>>` flag — the user-driven `value-changed`
-//! emits while the flag is clear go through `UserSeek`, which seeks the
-//! underlying stream immediately.
+//! Position polling runs at 4 Hz via `glib::timeout_add_local`, feeding a
+//! `SeekTracker` that ignores readings inconsistent with an outstanding
+//! seek — see `stash_player_core::playback`.
 
-use std::cell::{Cell, RefCell};
+mod pipeline;
+
+use pipeline::PlaybackPipeline;
+
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gst::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::gtk;
 use relm4::prelude::*;
+use stash_player_core::playback::SeekTracker;
 
 const TICK_INTERVAL_MS: u32 = 250;
 const HIDE_DELAY_MS: u32 = 2500;
 /// Wall-clock minimum between activity checkpoints while playing. Matches
 /// the cadence Stash's web UI uses.
 const ACTIVITY_THROTTLE: Duration = Duration::from_secs(10);
-
-/// Owned GStreamer pipeline driving a single stream.
-///
-/// Behaves like `gtk::MediaFile` did: build with a URL, set state
-/// transitions via `play`/`pause`, query timing in microseconds, etc.
-/// Bus messages drive event-flag transitions (`prepared`, `seeking`)
-/// and post a `Tick` to the relm4 sender so the widget refreshes.
-struct PlaybackPipeline {
-    pipeline: gst::Pipeline,
-    playbin: gst::Element,
-    paintable: gtk::gdk::Paintable,
-    bus_watch: Option<gst::bus::BusWatchGuard>,
-    prepared: Rc<Cell<bool>>,
-    seeking: Rc<Cell<bool>>,
-    playing: Rc<Cell<bool>>,
-    error: Rc<RefCell<Option<String>>>,
-}
-
-impl PlaybackPipeline {
-    fn new(
-        url: &str,
-        autoplay: bool,
-        sender: &ComponentSender<VideoPlayer>,
-    ) -> Option<Self> {
-        let playbin = make_element("playbin3")?;
-        let sink = make_element("gtk4paintablesink")?;
-
-        let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
-        playbin.set_property("video-sink", &sink);
-        playbin.set_property("uri", url);
-
-        let pipeline = gst::Pipeline::new();
-        if let Err(e) = pipeline.add(&playbin) {
-            tracing::warn!("failed to add playbin to pipeline: {e}");
-            return None;
-        }
-
-        let prepared = Rc::new(Cell::new(false));
-        let seeking = Rc::new(Cell::new(false));
-        let playing = Rc::new(Cell::new(false));
-        let error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-
-        let bus_watch = install_bus_watch(
-            &pipeline,
-            sender.clone(),
-            BusFlags {
-                prepared: prepared.clone(),
-                seeking: seeking.clone(),
-                playing: playing.clone(),
-                error: error.clone(),
-            },
-        );
-
-        // Drive directly to the user-visible target state. Going Null →
-        // Paused → Playing as two separate set_state calls races the bus
-        // watch and leaves `self.playing` stuck at false on autoplay.
-        let target = if autoplay {
-            gst::State::Playing
-        } else {
-            gst::State::Paused
-        };
-        if let Err(e) = pipeline.set_state(target) {
-            tracing::warn!("failed to set pipeline to {target:?}: {e}");
-        }
-
-        Some(Self {
-            pipeline,
-            playbin,
-            paintable,
-            bus_watch,
-            prepared,
-            seeking,
-            playing,
-            error,
-        })
-    }
-
-    fn paintable(&self) -> &gtk::gdk::Paintable {
-        &self.paintable
-    }
-
-    fn play(&self) {
-        let _ = self.pipeline.set_state(gst::State::Playing);
-    }
-
-    fn pause(&self) {
-        let _ = self.pipeline.set_state(gst::State::Paused);
-    }
-
-    fn is_playing(&self) -> bool {
-        self.playing.get()
-    }
-
-    fn is_prepared(&self) -> bool {
-        self.prepared.get()
-    }
-
-    fn is_seeking(&self) -> bool {
-        self.seeking.get()
-    }
-
-    fn error_message(&self) -> Option<String> {
-        self.error.borrow().clone()
-    }
-
-    fn duration_us(&self) -> i64 {
-        self.pipeline
-            .query_duration::<gst::ClockTime>()
-            .map(|t| t.useconds() as i64)
-            .unwrap_or(0)
-    }
-
-    fn position_us(&self) -> i64 {
-        self.pipeline
-            .query_position::<gst::ClockTime>()
-            .map(|t| t.useconds() as i64)
-            .unwrap_or(0)
-    }
-
-    fn set_volume(&self, v: f64) {
-        self.playbin.set_property("volume", v);
-    }
-
-    fn volume(&self) -> f64 {
-        self.playbin.property::<f64>("volume")
-    }
-
-    fn set_muted(&self, m: bool) {
-        self.playbin.set_property("mute", m);
-    }
-
-    fn is_muted(&self) -> bool {
-        self.playbin.property::<bool>("mute")
-    }
-
-    fn seek(&self, target_us: i64) {
-        if !self.prepared.get() {
-            tracing::debug!(target_us, "seek skipped: pipeline not prepared");
-            return;
-        }
-        let pos = gst::ClockTime::from_useconds(target_us.max(0) as u64);
-        let was_seeking = self.seeking.get();
-        let pre_position_us = self
-            .pipeline
-            .query_position::<gst::ClockTime>()
-            .map(|t| t.useconds() as i64)
-            .unwrap_or(-1);
-        // KEY_UNIT | SNAP_BEFORE keeps the HTTP range request cheap by
-        // landing on the keyframe at-or-before the target (one fetch,
-        // smooth playback resumption). ACCURATE then asks the decoder to
-        // chase forward from that keyframe to the exact requested frame
-        // — without it, several rapid "+5s" nudges between two sparse
-        // keyframes all land on the same earlier keyframe and the
-        // playhead visibly stalls while the slider keeps jumping.
-        let result = self.pipeline.seek_simple(
-            gst::SeekFlags::FLUSH
-                | gst::SeekFlags::KEY_UNIT
-                | gst::SeekFlags::SNAP_BEFORE
-                | gst::SeekFlags::ACCURATE,
-            pos,
-        );
-        match result {
-            Ok(()) => {
-                tracing::debug!(
-                    target_us,
-                    pre_position_us,
-                    was_seeking,
-                    "seek submitted"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(target_us, "seek failed: {e}");
-            }
-        }
-    }
-}
-
-impl Drop for PlaybackPipeline {
-    fn drop(&mut self) {
-        if let Some(watch) = self.bus_watch.take() {
-            // Dropping the guard removes the watch.
-            drop(watch);
-        }
-        let _ = self.pipeline.set_state(gst::State::Null);
-    }
-}
-
-/// Build a GStreamer element by factory name, logging on failure.
-fn make_element(name: &str) -> Option<gst::Element> {
-    match gst::ElementFactory::make(name).build() {
-        Ok(el) => Some(el),
-        Err(e) => {
-            tracing::warn!("{name} unavailable: {e}");
-            None
-        }
-    }
-}
-
-/// State flags shared between the bus watch and the owning `PlaybackPipeline`.
-struct BusFlags {
-    prepared: Rc<Cell<bool>>,
-    seeking: Rc<Cell<bool>>,
-    playing: Rc<Cell<bool>>,
-    error: Rc<RefCell<Option<String>>>,
-}
-
-/// Wire up `pipeline`'s bus watch to drive the supplied flags and post a
-/// `Tick` to the widget after every message.
-fn install_bus_watch(
-    pipeline: &gst::Pipeline,
-    sender: ComponentSender<VideoPlayer>,
-    flags: BusFlags,
-) -> Option<gst::bus::BusWatchGuard> {
-    let bus = pipeline.bus().expect("pipeline has a bus");
-    let pipeline_weak = pipeline.downgrade();
-    bus.add_watch_local(move |_, msg| {
-        handle_bus_message(msg, &flags, &pipeline_weak);
-        sender.input(VideoPlayerMsg::Tick);
-        glib::ControlFlow::Continue
-    })
-    .ok()
-}
-
-fn handle_bus_message(
-    msg: &gst::Message,
-    flags: &BusFlags,
-    pipeline_weak: &glib::WeakRef<gst::Pipeline>,
-) {
-    use gst::MessageView;
-    match msg.view() {
-        MessageView::Error(err) => {
-            let glib_err = err.error();
-            tracing::warn!(
-                "gstreamer error from {:?}: {} ({:?})",
-                err.src().map(|s| s.path_string()),
-                glib_err,
-                err.debug()
-            );
-            *flags.error.borrow_mut() = Some(glib_err.to_string());
-            // An error means we'll never finish preparing; clear the
-            // seeking flag so the loading overlay logic in the widget
-            // can switch to the error state.
-            flags.seeking.set(false);
-        }
-        MessageView::AsyncDone(_) => {
-            let landed_us = pipeline_weak
-                .upgrade()
-                .and_then(|p| p.query_position::<gst::ClockTime>())
-                .map(|t| t.useconds() as i64)
-                .unwrap_or(-1);
-            tracing::debug!(landed_us, "bus: AsyncDone — seek complete, prepared");
-            flags.prepared.set(true);
-            flags.seeking.set(false);
-        }
-        MessageView::AsyncStart(_) => {
-            tracing::debug!("bus: AsyncStart — seek/preroll begin");
-            flags.seeking.set(true);
-        }
-        MessageView::StateChanged(sc) => apply_state_change(sc, flags, pipeline_weak),
-        MessageView::DurationChanged(_) | MessageView::Eos(_) => {}
-        _ => {}
-    }
-}
-
-fn apply_state_change(
-    sc: &gst::message::StateChanged,
-    flags: &BusFlags,
-    pipeline_weak: &glib::WeakRef<gst::Pipeline>,
-) {
-    // Only the pipeline's own state changes are load-bearing; child
-    // elements emit their own.
-    let Some(pipe) = pipeline_weak.upgrade() else {
-        return;
-    };
-    if !sc
-        .src()
-        .map(|s| s == pipe.upcast_ref::<gst::Object>())
-        .unwrap_or(false)
-    {
-        return;
-    }
-    let current = sc.current();
-    flags.playing.set(current == gst::State::Playing);
-    if current == gst::State::Paused || current == gst::State::Playing {
-        flags.prepared.set(true);
-    } else if current == gst::State::Null || current == gst::State::Ready {
-        flags.prepared.set(false);
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct VideoPlayerInit {
@@ -380,15 +93,49 @@ pub(crate) enum VideoPlayerOutput {
     /// shortcut. The scene page forwards this to the app so the config
     /// gets persisted — the slider's pipeline state is already up to date.
     VolumeChanged { volume: f64, muted: bool },
+    /// A scene-level OSD control was activated. The player has no idea
+    /// what these mean — the scene page does.
+    SceneAction(SceneAction),
+    /// Fullscreen was entered (true) or left (false).
+    FullscreenChanged(bool),
+}
+
+/// Everything the OSD needs to render the scene-level controls. Grouped
+/// into one record so `VideoPlayerMsg` doesn't grow a cluster of
+/// near-identical variants — the player treats these as opaque display
+/// values and never interprets them.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SceneActionState {
+    pub(crate) can_prev: bool,
+    pub(crate) can_next: bool,
+    /// `None` when no scene is currently loaded (e.g. mid-navigation) —
+    /// the O-counter group renders insensitive in that case. This is a
+    /// different kind of absence than `rating100`'s `None`, which means
+    /// "loaded, but unrated": don't conflate the two.
+    pub(crate) o_count: Option<i32>,
+    pub(crate) rating100: Option<i32>,
+}
+
+/// A scene-level control the user activated. The player forwards these
+/// verbatim; the scene page decides what they do.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SceneAction {
+    Prev,
+    Next,
+    IncrementO,
+    ResetO,
 }
 
 #[derive(Debug)]
 pub(crate) enum VideoPlayerMsg {
     /// Load a new stream URI. Pass `url: None` to clear. `resume_secs`
     /// is applied once the new stream reports a duration, then dropped.
+    /// `show_loading` keeps the status plate up while cleared, so a
+    /// scene swap shows a spinner rather than an empty surface.
     SetUrl {
         url: Option<String>,
         resume_secs: Option<f64>,
+        show_loading: bool,
     },
     /// Update the autoplay policy for future `SetUrl` calls.
     SetAutoplay(bool),
@@ -413,6 +160,13 @@ pub(crate) enum VideoPlayerMsg {
     HideControls,
     /// Forwarded from the EventControllerKey on the player surface.
     KeyPressed(gtk::gdk::Key, gtk::gdk::ModifierType),
+    /// The pipeline reported a seek completed, at this position in
+    /// microseconds. Negative means the position query failed.
+    SeekLanded(i64),
+    /// Refresh the OSD's scene-level controls.
+    SetSceneActions(SceneActionState),
+    /// An OSD scene-level control was clicked; forwarded to the parent.
+    SceneActionClicked(SceneAction),
 }
 
 /// Independent playback flags grouped to keep `VideoPlayer`'s top-level
@@ -439,8 +193,10 @@ struct OsdState {
 pub(crate) struct VideoPlayer {
     media: Option<PlaybackPipeline>,
     url: Option<String>,
-    duration_us: i64,
-    position_us: i64,
+    /// Playhead position and duration, including seeks that haven't
+    /// landed yet. See `stash_player_core::playback` for why this can't
+    /// just be the polled position.
+    seek: SeekTracker,
     volume: f64,
     muted: bool,
     playback: PlaybackFlags,
@@ -448,8 +204,9 @@ pub(crate) struct VideoPlayer {
     /// Transient borderless window holding the player while in fullscreen.
     /// `None` outside fullscreen.
     fs_window: Option<gtk::Window>,
-    /// Original parent of `root_box` to reparent back to on exit. Stored as
-    /// the inline overlay we were embedded in.
+    /// Original parent of `root_box` to reparent back to on exit. This is
+    /// the scene page's `player_slot` `gtk::Box` — `handle_exit_fullscreen`
+    /// downcasts it back to `gtk::Box` to reattach, so it must stay one.
     fs_original_parent: Option<gtk::Widget>,
     /// OSD reveal-state flags (current request + most recently emitted edge).
     osd: OsdState,
@@ -459,12 +216,9 @@ pub(crate) struct VideoPlayer {
     /// `value-changed` handler can ignore our own writes.
     suppress_scale: Rc<Cell<bool>>,
     suppress_volume: Rc<Cell<bool>>,
-    /// Timestamp of the most recent user-driven seek slider change. Used
-    /// by `refresh_widgets` to suppress pushing polled positions onto the
-    /// thumb for a brief window after the user touches it — without this
-    /// the thumb visibly skips backward to GStreamer's SNAP_BEFORE
-    /// keyframe in between drag updates.
-    last_user_seek: Rc<Cell<Option<Instant>>>,
+    /// True while a pointer button is held on the seek slider, so
+    /// `refresh_widgets` doesn't fight the user's drag.
+    dragging: Rc<Cell<bool>>,
     // ─── activity tracking ───────────────────────────────────────────────
     /// Set while the underlying stream reports `is_playing()`; cleared on
     /// every transition out of playing so we can sum up watched time.
@@ -477,6 +231,12 @@ pub(crate) struct VideoPlayer {
     /// Resume position (seconds) waiting to be applied once the freshly
     /// loaded stream reports a non-zero duration. `take()`-d on apply.
     resume_pending: Option<f64>,
+    /// Display state for the OSD's scene-level controls, pushed in by
+    /// the scene page.
+    scene_actions: SceneActionState,
+    /// Force the status plate on while no stream is loaded — set during
+    /// a scene swap so the player doesn't flash an empty rectangle.
+    show_loading: bool,
 }
 
 #[relm4::component(pub(crate))]
@@ -515,7 +275,10 @@ impl Component for VideoPlayer {
                     set_child = &gtk::Picture {
                         set_hexpand: true,
                         set_vexpand: true,
-                        set_height_request: 540,
+                        // Just a floor against degenerate allocations —
+                        // the real height comes from the window now that
+                        // nothing above us is a ScrolledWindow.
+                        set_height_request: 200,
                         set_content_fit: gtk::ContentFit::Contain,
                         add_css_class: "video-surface",
                     },
@@ -655,6 +418,19 @@ impl Component for VideoPlayer {
                                 set_margin_top: 4,
                                 set_margin_bottom: 12,
 
+                                #[name = "prev_scene_button"]
+                                gtk::Button {
+                                    set_icon_name: "media-skip-backward-symbolic",
+                                    add_css_class: "flat",
+                                    add_css_class: "circular",
+                                    set_tooltip_text: Some("Previous scene"),
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(VideoPlayerMsg::SceneActionClicked(
+                                            SceneAction::Prev,
+                                        ));
+                                    },
+                                },
+
                                 #[name = "play_button"]
                                 gtk::Button {
                                     set_icon_name: "media-playback-start-symbolic",
@@ -663,6 +439,19 @@ impl Component for VideoPlayer {
                                     set_tooltip_text: Some("Play / pause (Space)"),
                                     connect_clicked[sender] => move |_| {
                                         sender.input(VideoPlayerMsg::TogglePlay);
+                                    },
+                                },
+
+                                #[name = "next_scene_button"]
+                                gtk::Button {
+                                    set_icon_name: "media-skip-forward-symbolic",
+                                    add_css_class: "flat",
+                                    add_css_class: "circular",
+                                    set_tooltip_text: Some("Next scene"),
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(VideoPlayerMsg::SceneActionClicked(
+                                            SceneAction::Next,
+                                        ));
                                     },
                                 },
 
@@ -684,6 +473,61 @@ impl Component for VideoPlayer {
                                     connect_clicked[sender] => move |_| {
                                         sender.input(VideoPlayerMsg::SeekRelative(10));
                                     },
+                                },
+
+                                gtk::Box { set_hexpand: true },
+
+                                #[name = "osd_o_counter_group"]
+                                gtk::Box {
+                                    add_css_class: "linked",
+                                    set_valign: gtk::Align::Center,
+
+                                    gtk::Button {
+                                        add_css_class: "flat",
+                                        set_tooltip_text: Some("Bump O-counter"),
+                                        connect_clicked[sender] => move |_| {
+                                            sender.input(VideoPlayerMsg::SceneActionClicked(
+                                                SceneAction::IncrementO,
+                                            ));
+                                        },
+
+                                        #[wrap(Some)]
+                                        set_child = &gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 6,
+                                            set_valign: gtk::Align::Center,
+
+                                            gtk::Image {
+                                                set_icon_name: Some("o-counter-symbolic"),
+                                                set_pixel_size: 14,
+                                            },
+
+                                            #[name = "osd_o_count_label"]
+                                            gtk::Label {
+                                                add_css_class: "o-counter-pill",
+                                            },
+                                        },
+                                    },
+
+                                    #[name = "osd_o_reset_button"]
+                                    gtk::Button {
+                                        set_icon_name: "edit-clear-symbolic",
+                                        add_css_class: "flat",
+                                        set_tooltip_text: Some("Reset O-counter to 0"),
+                                        connect_clicked[sender] => move |_| {
+                                            sender.input(VideoPlayerMsg::SceneActionClicked(
+                                                SceneAction::ResetO,
+                                            ));
+                                        },
+                                    },
+                                },
+
+                                #[name = "osd_rating_label"]
+                                gtk::Label {
+                                    add_css_class: "rating-badge",
+                                    set_valign: gtk::Align::Center,
+                                    set_margin_start: 8,
+                                    set_visible: false,
                                 },
 
                                 gtk::Box { set_hexpand: true },
@@ -734,13 +578,13 @@ impl Component for VideoPlayer {
     ) -> ComponentParts<Self> {
         let suppress_scale = Rc::new(Cell::new(false));
         let suppress_volume = Rc::new(Cell::new(false));
-        let last_user_seek: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let dragging = Rc::new(Cell::new(false));
 
         let mut model = VideoPlayer::new_model(
             &init,
             suppress_scale.clone(),
             suppress_volume.clone(),
-            last_user_seek.clone(),
+            dragging.clone(),
         );
 
         let widgets = view_output!();
@@ -750,7 +594,7 @@ impl Component for VideoPlayer {
             &sender,
             &suppress_scale,
             &suppress_volume,
-            &last_user_seek,
+            &dragging,
         );
         wire_pointer_handlers(&widgets, &sender);
         wire_keyboard_handlers(&widgets, &sender);
@@ -777,6 +621,7 @@ impl Component for VideoPlayer {
             sender.input(VideoPlayerMsg::SetUrl {
                 url: Some(url),
                 resume_secs: init.resume_secs,
+                show_loading: false,
             });
         }
 
@@ -791,8 +636,12 @@ impl Component for VideoPlayer {
         root: &Self::Root,
     ) {
         match msg {
-            VideoPlayerMsg::SetUrl { url, resume_secs } => {
-                self.handle_set_url(widgets, &sender, url, resume_secs);
+            VideoPlayerMsg::SetUrl {
+                url,
+                resume_secs,
+                show_loading,
+            } => {
+                self.handle_set_url(widgets, &sender, url, resume_secs, show_loading);
             }
             VideoPlayerMsg::SetAutoplay(on) => self.playback.autoplay = on,
             VideoPlayerMsg::Tick => self.handle_tick(widgets, &sender),
@@ -808,7 +657,7 @@ impl Component for VideoPlayer {
             }
             VideoPlayerMsg::ToggleMute => self.handle_toggle_mute(&sender),
             VideoPlayerMsg::ToggleFullscreen => self.handle_toggle_fullscreen(widgets, &sender),
-            VideoPlayerMsg::ExitFullscreen => self.handle_exit_fullscreen(widgets),
+            VideoPlayerMsg::ExitFullscreen => self.handle_exit_fullscreen(widgets, &sender),
             VideoPlayerMsg::PointerActive => self.handle_pointer_active(&sender),
             VideoPlayerMsg::HideControls => {
                 self.hide_source = None;
@@ -819,6 +668,12 @@ impl Component for VideoPlayer {
                     sender.input(VideoPlayerMsg::PointerActive);
                 }
             }
+            VideoPlayerMsg::SeekLanded(landed_us) => self.seek.on_async_done(landed_us),
+            VideoPlayerMsg::SetSceneActions(state) => self.scene_actions = state,
+            VideoPlayerMsg::SceneActionClicked(action) => {
+                let _ = sender.output(VideoPlayerOutput::SceneAction(action));
+                sender.input(VideoPlayerMsg::PointerActive);
+            }
         }
 
         // Notify the parent on reveal-state edges so it can fade the
@@ -826,7 +681,7 @@ impl Component for VideoPlayer {
         // in `refresh_widgets`) because we need `&mut self` to latch the
         // last value, and emitting only on changes avoids spamming the
         // parent on every tick.
-        let force_visible = self.media.is_none() || self.duration_us == 0;
+        let force_visible = self.media.is_none() || self.seek.duration_us() == 0;
         let revealed = self.osd.show_controls || force_visible;
         if revealed != self.osd.controls_revealed {
             self.osd.controls_revealed = revealed;
@@ -864,7 +719,7 @@ impl Component for VideoPlayer {
         // weight, this is just a safety net for the close-while-playing
         // case.
         self.capture_play_time();
-        let resume_secs = self.position_us.max(0) as f64 / 1_000_000.0;
+        let resume_secs = self.seek.position_us().max(0) as f64 / 1_000_000.0;
         let play_duration_secs = self.play_duration_us as f64 / 1_000_000.0;
         if self.media.is_some() && (play_duration_secs > 0.0 || resume_secs > 0.0) {
             let _ = output.send(VideoPlayerOutput::ActivityCheckpoint {
@@ -876,26 +731,41 @@ impl Component for VideoPlayer {
 }
 
 /// Hook the seek + volume scales: anything that isn't our own programmatic
-/// write becomes a UserSeek/SetVolume; the seek slider also stamps an
-/// `Instant` so `refresh_widgets` doesn't yank the thumb back during a drag.
+/// write becomes a UserSeek/SetVolume. A capture-phase click gesture on the
+/// seek scale tracks whether a pointer button is currently held, so
+/// `refresh_widgets` can leave the thumb alone mid-drag.
 fn wire_slider_handlers(
     widgets: &VideoPlayerWidgets,
     sender: &ComponentSender<VideoPlayer>,
     suppress_scale: &Rc<Cell<bool>>,
     suppress_volume: &Rc<Cell<bool>>,
-    last_user_seek: &Rc<Cell<Option<Instant>>>,
+    dragging: &Rc<Cell<bool>>,
 ) {
     {
         let sender = sender.clone();
         let suppress = suppress_scale.clone();
-        let stamp = last_user_seek.clone();
         widgets.seek_scale.connect_value_changed(move |s| {
             if suppress.get() {
                 return;
             }
-            stamp.set(Some(Instant::now()));
             sender.input(VideoPlayerMsg::UserSeek(s.value() as i64));
         });
+    }
+    {
+        // Capture phase: GtkScale's own gestures would otherwise claim
+        // the sequence before we see the press.
+        let drag = gtk::GestureClick::new();
+        drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let on_press = dragging.clone();
+        drag.connect_pressed(move |_, _, _, _| on_press.set(true));
+        let on_release = dragging.clone();
+        drag.connect_released(move |_, _, _, _| on_release.set(false));
+        // A cancelled gesture (grab stolen, pointer left the surface)
+        // never delivers `released`; without this the thumb would stay
+        // frozen for the rest of the session.
+        let on_cancel = dragging.clone();
+        drag.connect_cancel(move |_, _| on_cancel.set(false));
+        widgets.seek_scale.add_controller(drag);
     }
     let sender = sender.clone();
     let suppress = suppress_volume.clone();
@@ -969,13 +839,12 @@ impl VideoPlayer {
         init: &VideoPlayerInit,
         suppress_scale: Rc<Cell<bool>>,
         suppress_volume: Rc<Cell<bool>>,
-        last_user_seek: Rc<Cell<Option<Instant>>>,
+        dragging: Rc<Cell<bool>>,
     ) -> Self {
         VideoPlayer {
             media: None,
             url: init.url.clone(),
-            duration_us: 0,
-            position_us: 0,
+            seek: SeekTracker::new(),
             volume: init.volume.clamp(0.0, 1.0),
             muted: init.muted,
             playback: PlaybackFlags {
@@ -993,11 +862,13 @@ impl VideoPlayer {
             tick_source: None,
             suppress_scale,
             suppress_volume,
-            last_user_seek,
+            dragging,
             playing_since: None,
             play_duration_us: 0,
             last_save_at: None,
             resume_pending: None,
+            scene_actions: SceneActionState::default(),
+            show_loading: false,
         }
     }
 
@@ -1016,7 +887,7 @@ impl VideoPlayer {
     /// `playing_since` watermark so subsequent ticks keep counting.
     fn emit_checkpoint(&mut self, sender: &ComponentSender<Self>) {
         self.capture_play_time();
-        let resume_secs = self.position_us.max(0) as f64 / 1_000_000.0;
+        let resume_secs = self.seek.position_us().max(0) as f64 / 1_000_000.0;
         let play_duration_secs = self.play_duration_us as f64 / 1_000_000.0;
         self.play_duration_us = 0;
         self.last_save_at = Some(Instant::now());
@@ -1034,38 +905,25 @@ impl VideoPlayer {
         widgets: &<Self as Component>::Widgets,
         _root: &<Self as Component>::Root,
     ) {
-        // Seek slider: max = duration, value = position. Clamp to a tiny
-        // positive max to avoid GtkRange complaining when duration is 0.
-        // Skip pushing polled values onto the thumb when (a) the stream
-        // is mid-seek or (b) the user touched the slider very recently —
-        // the polled timestamp lags GStreamer's SNAP_BEFORE keyframe and
-        // would visibly snap the thumb backward in between drag updates.
-        // 400 ms covers the gap between consecutive value-changed events
-        // during a continuous drag without leaving the thumb desynced for
-        // long after the user lets go.
-        let media_seeking = self
-            .media
-            .as_ref()
-            .is_some_and(|m| m.is_seeking());
-        let user_holding = self
-            .last_user_seek
-            .get()
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
-        let max = (self.duration_us.max(1)) as f64;
+        // The tracker's position never regresses spuriously, so we push
+        // it unconditionally — except while the user has the thumb held,
+        // where our writes would fight the drag.
+        let duration_us = self.seek.duration_us();
+        let max = duration_us.max(1) as f64;
         widgets.seek_scale.set_range(0.0, max);
-        if !media_seeking && !user_holding {
-            let pos = (self.position_us.clamp(0, self.duration_us.max(0))) as f64;
+        if !self.dragging.get() {
+            let pos = self.seek.position_us().clamp(0, duration_us.max(0)) as f64;
             self.suppress_scale.set(true);
             widgets.seek_scale.set_value(pos);
             self.suppress_scale.set(false);
         }
-        widgets.seek_scale.set_sensitive(self.duration_us > 0);
+        widgets.seek_scale.set_sensitive(duration_us > 0);
 
         widgets
             .position_label
-            .set_label(&format_us(self.position_us));
-        let duration_text = if self.duration_us > 0 {
-            format_us(self.duration_us)
+            .set_label(&format_us(self.seek.position_us()));
+        let duration_text = if duration_us > 0 {
+            format_us(duration_us)
         } else {
             "--:--".into()
         };
@@ -1095,6 +953,10 @@ impl VideoPlayer {
             } else {
                 "view-fullscreen-symbolic"
             });
+
+        // Scene-level OSD controls. Purely a projection of whatever the
+        // scene page last pushed in.
+        refresh_scene_actions(widgets, self.scene_actions);
 
         // OSD visibility: stay up only when no media is loaded yet so the
         // user has something to look at; otherwise let the inactivity timer
@@ -1191,6 +1053,7 @@ impl VideoPlayer {
         sender: &ComponentSender<Self>,
         url: Option<String>,
         resume_secs: Option<f64>,
+        show_loading: bool,
     ) {
         // Flush activity for the outgoing scene first so the parent
         // records its final resume + watched-time delta.
@@ -1199,12 +1062,12 @@ impl VideoPlayer {
         }
 
         self.url = url.clone();
-        self.duration_us = 0;
-        self.position_us = 0;
+        self.seek.on_stream_reset();
         self.playback.playing = false;
         self.playing_since = None;
         self.play_duration_us = 0;
         self.last_save_at = None;
+        self.show_loading = show_loading;
         // Treat 0 (or negative) as "no saved resume" — Stash returns 0
         // for unwatched scenes and we don't want to re-seek to 0 every
         // load.
@@ -1216,10 +1079,12 @@ impl VideoPlayer {
 
         let Some(url) = url else {
             widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         let Some(pipeline) = PlaybackPipeline::new(&url, self.playback.autoplay, sender) else {
             widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         pipeline.set_volume(self.volume);
@@ -1241,6 +1106,7 @@ impl VideoPlayer {
         sender: &ComponentSender<Self>,
     ) {
         let Some(media) = self.media.as_ref() else {
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         let was_playing = self.playback.playing;
@@ -1248,7 +1114,6 @@ impl VideoPlayer {
             status: PipelineStatus {
                 now_playing: media.is_playing(),
                 is_prepared: media.is_prepared(),
-                media_seeking: media.is_seeking(),
             },
             duration_us: media.duration_us().max(0),
             position_us: media.position_us().max(0),
@@ -1261,16 +1126,13 @@ impl VideoPlayer {
         self.update_playing_window(was_playing, status.now_playing);
 
         // Duration queries can transiently return 0 while a flushing
-        // seek is in flight. Don't let that wipe our cached duration —
-        // once we know the stream length we hold onto it.
-        if snapshot.duration_us > 0 {
-            self.duration_us = snapshot.duration_us;
-        }
+        // seek is in flight; SeekTracker::set_duration_us ignores those.
+        self.seek.set_duration_us(snapshot.duration_us);
         self.playback.playing = status.now_playing;
         self.volume = snapshot.volume;
         self.muted = snapshot.muted;
 
-        self.update_position_from_poll(snapshot.position_us, status.media_seeking);
+        self.seek.on_poll(snapshot.position_us, Instant::now());
         self.apply_pending_resume(status.is_prepared);
 
         // Throttled activity checkpoint while playing.
@@ -1292,50 +1154,19 @@ impl VideoPlayer {
         }
     }
 
-    /// Trust the polled position only when there isn't a user-initiated
-    /// seek in flight. The seek handlers stamp `last_user_seek` before
-    /// they call `media.seek()`; that timestamp, plus the bus-driven
-    /// `is_seeking` flag, defines the window we ignore polled values in.
-    fn update_position_from_poll(&mut self, position_us: i64, media_seeking: bool) {
-        let user_seek_recent = self
-            .last_user_seek
-            .get()
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
-        if media_seeking || user_seek_recent {
-            tracing::trace!(
-                polled_us = position_us,
-                held_us = self.position_us,
-                media_seeking,
-                user_seek_recent,
-                "Tick: holding position_us (seek window)"
-            );
-            return;
-        }
-        if position_us != self.position_us {
-            tracing::trace!(
-                old_us = self.position_us,
-                new_us = position_us,
-                "Tick: position_us updated from poll"
-            );
-        }
-        self.position_us = position_us;
-    }
-
     /// Apply the pending resume seek once the stream is ready enough
     /// that a clamp against duration is meaningful.
     fn apply_pending_resume(&mut self, is_prepared: bool) {
-        if !is_prepared || self.duration_us <= 0 {
+        if !is_prepared || self.seek.duration_us() <= 0 {
             return;
         }
         let Some(resume) = self.resume_pending.take() else {
             return;
         };
-        let target_us = (resume * 1_000_000.0) as i64;
-        let target = target_us.clamp(0, self.duration_us);
-        if let Some(media) = self.media.as_ref() {
-            media.seek(target);
-        }
-        self.position_us = target;
+        let target = self
+            .seek
+            .seek_absolute((resume * 1_000_000.0) as i64, Instant::now());
+        self.issue_seek(target);
     }
 
     fn checkpoint_due(&self) -> bool {
@@ -1371,78 +1202,49 @@ impl VideoPlayer {
     }
 
     fn handle_seek_relative(&mut self, sender: &ComponentSender<Self>, secs: i64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let delta = secs.saturating_mul(1_000_000);
-        // Anchor on our local position and our cached duration, not the
-        // live `media.*()` queries. While a seek is in flight playbin3
-        // reports the pre-seek (or 0) position and a 0 duration, so two
-        // quick presses of "+10s" would both compute their target from
-        // the same base and the clamp would collapse the target to 0.
-        let base_us = self.position_us;
-        let cached_dur_us = self.duration_us.max(0);
-        let target = base_us.saturating_add(delta).clamp(0, cached_dur_us);
-        tracing::debug!(
-            secs,
-            delta_us = delta,
-            base_us,
-            cached_dur_us,
-            target_us = target,
-            live_pos_us = media.position_us(),
-            live_dur_us = media.duration_us(),
-            "SeekRelative"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self
+            .seek
+            .seek_relative(secs.saturating_mul(1_000_000), Instant::now());
+        tracing::debug!(secs, target_us = target, "SeekRelative");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
         sender.input(VideoPlayerMsg::PointerActive);
     }
 
     fn handle_seek_fraction(&mut self, sender: &ComponentSender<Self>, fraction: f64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let dur = self.duration_us.max(0);
-        let target = ((dur as f64) * fraction.clamp(0.0, 1.0)) as i64;
-        tracing::debug!(
-            fraction,
-            cached_dur_us = dur,
-            target_us = target,
-            "SeekFraction"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self.seek.seek_fraction(fraction, Instant::now());
+        tracing::debug!(fraction, target_us = target, "SeekFraction");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
         sender.input(VideoPlayerMsg::PointerActive);
     }
 
     fn handle_user_seek(&mut self, sender: &ComponentSender<Self>, us: i64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let target = us.clamp(0, self.duration_us.max(0));
-        tracing::debug!(
-            slider_us = us,
-            cached_dur_us = self.duration_us,
-            target_us = target,
-            "UserSeek"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self.seek.seek_absolute(us, Instant::now());
+        tracing::debug!(slider_us = us, target_us = target, "UserSeek");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
+    }
+
+    /// True when there's a stream loaded and prepared enough to seek.
+    fn is_prepared(&self) -> bool {
+        self.media.as_ref().is_some_and(|m| m.is_prepared())
+    }
+
+    /// Hand a target the tracker has already clamped to the pipeline.
+    fn issue_seek(&self, target_us: i64) {
+        if let Some(media) = self.media.as_ref() {
+            media.seek(target_us);
+        }
     }
 
     fn handle_set_volume(&mut self, sender: &ComponentSender<Self>, v: f64) {
@@ -1486,15 +1288,15 @@ impl VideoPlayer {
         }
         // Reparent the player into a transient borderless window so
         // fullscreen covers only the video, not the rest of the app
-        // chrome. The root_box is removed from its current parent (an
-        // Overlay in the scene page) and reattached on exit.
+        // chrome. The root_box is removed from its current parent (the
+        // scene page's player_slot Box) and reattached on exit.
         let Some(parent) = widgets.root_box.parent() else {
             return;
         };
-        let Some(overlay) = parent.downcast_ref::<gtk::Overlay>() else {
+        let Some(parent_box) = parent.downcast_ref::<gtk::Box>() else {
             return;
         };
-        overlay.set_child(gtk::Widget::NONE);
+        parent_box.remove(&widgets.root_box);
 
         let app_window = widgets.root_box.root().and_downcast::<gtk::Window>();
         let fs_window = gtk::Window::builder()
@@ -1519,9 +1321,14 @@ impl VideoPlayer {
         self.fs_original_parent = Some(parent);
         self.is_fullscreen = true;
         sender.input(VideoPlayerMsg::PointerActive);
+        let _ = sender.output(VideoPlayerOutput::FullscreenChanged(self.is_fullscreen));
     }
 
-    fn handle_exit_fullscreen(&mut self, widgets: &mut <Self as Component>::Widgets) {
+    fn handle_exit_fullscreen(
+        &mut self,
+        widgets: &mut <Self as Component>::Widgets,
+        sender: &ComponentSender<Self>,
+    ) {
         if !self.is_fullscreen {
             return;
         }
@@ -1529,17 +1336,18 @@ impl VideoPlayer {
             return;
         };
         // Detach from the fullscreen window before destroying so the
-        // widget survives, then reparent into the original overlay slot.
+        // widget survives, then reparent into the original player_slot.
         fs_window.set_child(gtk::Widget::NONE);
-        if let Some(overlay) = self
+        if let Some(parent_box) = self
             .fs_original_parent
             .take()
-            .and_then(|p| p.downcast::<gtk::Overlay>().ok())
+            .and_then(|p| p.downcast::<gtk::Box>().ok())
         {
-            overlay.set_child(Some(&widgets.root_box));
+            parent_box.append(&widgets.root_box);
         }
         fs_window.destroy();
         self.is_fullscreen = false;
+        let _ = sender.output(VideoPlayerOutput::FullscreenChanged(self.is_fullscreen));
     }
 
     fn handle_pointer_active(&mut self, sender: &ComponentSender<Self>) {
@@ -1561,7 +1369,6 @@ impl VideoPlayer {
 struct PipelineStatus {
     now_playing: bool,
     is_prepared: bool,
-    media_seeking: bool,
 }
 
 /// Snapshot of pipeline state captured once per tick so the rest of the
@@ -1573,6 +1380,37 @@ struct TickSnapshot {
     volume: f64,
     muted: bool,
     error_msg: Option<String>,
+}
+
+/// Render the OSD's scene-level controls (prev/next, O-counter, rating).
+/// Pulled out of `refresh_widgets` to keep that function under the line
+/// ceiling — purely a projection of `SceneActionState`, no interpretation.
+fn refresh_scene_actions(widgets: &VideoPlayerWidgets, actions: SceneActionState) {
+    widgets.prev_scene_button.set_sensitive(actions.can_prev);
+    widgets.next_scene_button.set_sensitive(actions.can_next);
+    // No loaded scene (mid-navigation): grey the whole group out and
+    // blank the count rather than show a stale or misleadingly-zero
+    // number on a control that currently does nothing.
+    widgets
+        .osd_o_counter_group
+        .set_sensitive(actions.o_count.is_some());
+    widgets.osd_o_count_label.set_label(
+        &actions
+            .o_count
+            .map(|count| count.to_string())
+            .unwrap_or_default(),
+    );
+    widgets
+        .osd_o_reset_button
+        .set_visible(actions.o_count.is_some_and(|count| count > 0));
+    match actions.rating100.filter(|r| *r > 0) {
+        Some(rating) => {
+            let stars = rating as f32 / 10.0;
+            widgets.osd_rating_label.set_label(&format!("★ {stars:.1}"));
+            widgets.osd_rating_label.set_visible(true);
+        }
+        None => widgets.osd_rating_label.set_visible(false),
+    }
 }
 
 /// Drive the central status plate. We only show it for initial loading

@@ -26,7 +26,10 @@ const MIN_RATING_OPTIONS: &[(&str, Option<i32>)] = &[
     ("5 stars", Some(100)),
 ];
 
-const PAGE_SIZE: u32 = 24;
+const PAGE_SIZE: u32 = 48;
+/// How many viewport-heights of not-yet-scrolled content to keep loaded
+/// ahead of the user.
+const PREFETCH_VIEWPORTS: f64 = 1.5;
 /// Cap concurrent thumbnail fetches so we don't open a connection per scene
 /// the moment a page lands. 12 keeps the pipe full without thrashing reqwest's
 /// per-host pool (default 10) too hard.
@@ -51,6 +54,14 @@ pub(crate) struct LibraryPage {
     total: i64,
     loaded: u32,
     loading: bool,
+    /// Bumped every time `reset()` restarts the result set (filter/sort
+    /// change). Carried on in-flight `LibraryCmd::Page` fetches so a
+    /// response for a superseded filter can be told apart from one that
+    /// still matches — see `reset()` and `update_cmd_with_view`.
+    generation: u64,
+    /// Set once the server returns a short page — there is nothing left
+    /// to fetch for the current filter, whatever `total` claims.
+    exhausted: bool,
     error: Option<String>,
     /// Pictures keyed by scene id so the async thumbnail handler can
     /// patch the right cell when the bytes arrive.
@@ -73,6 +84,9 @@ pub(crate) enum LibraryMsg {
     SetClient(stash_api::Client),
     Refresh,
     LoadMore,
+    /// Re-evaluate whether another page is needed, based on how much
+    /// unscrolled content is left. Cheap and idempotent.
+    MaybeLoadMore,
     SearchChanged(String),
     SortKeyChanged(u32),
     SetDirection(SortDirection),
@@ -91,7 +105,9 @@ pub(crate) enum LibraryMsg {
 }
 
 pub(crate) enum LibraryCmd {
-    Page(Result<FindScenesPage, String>),
+    /// The generation the originating fetch was issued under — see
+    /// `LibraryPage::generation`.
+    Page(u64, Result<FindScenesPage, String>),
     Random(Result<Box<RandomPick>, String>),
     Thumbnail(Box<ThumbnailPayload>),
     ScanTriggered(Result<String, String>),
@@ -116,7 +132,11 @@ impl std::fmt::Debug for LibraryCmd {
     // debug level — just print the dimensions.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LibraryCmd::Page(res) => f.debug_tuple("Page").field(res).finish(),
+            LibraryCmd::Page(generation, res) => f
+                .debug_tuple("Page")
+                .field(generation)
+                .field(res)
+                .finish(),
             LibraryCmd::Random(res) => f
                 .debug_tuple("Random")
                 .field(&res.as_ref().map(|p| p.scene.as_ref().map(|s| &s.id)))
@@ -431,13 +451,9 @@ impl Component for LibraryPage {
                         },
                     },
 
+                    #[name = "scroller"]
                     add_named[Some("grid")] = &gtk::ScrolledWindow {
                         set_hscrollbar_policy: gtk::PolicyType::Never,
-                        connect_edge_reached[sender] => move |_, edge| {
-                            if edge == gtk::PositionType::Bottom {
-                                sender.input(LibraryMsg::LoadMore);
-                            }
-                        },
 
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
@@ -543,6 +559,8 @@ impl Component for LibraryPage {
             total: 0,
             loaded: 0,
             loading: false,
+            generation: 0,
+            exhausted: false,
             error: None,
             cells: Rc::new(RefCell::new(HashMap::new())),
             scene_ids: Rc::new(RefCell::new(Vec::new())),
@@ -557,6 +575,34 @@ impl Component for LibraryPage {
         widgets
             .tasks_popover
             .set_parent(&widgets.tasks_btn);
+
+        // Scroll-driven prefetch. This replaces `edge-reached`, which
+        // never fires when the content already fits the viewport.
+        //
+        // Both signals are needed, not just one: `value-changed` fires when
+        // the user scrolls, but not when the *layout* settles after a page
+        // lands — if the deferred idle check in `update_cmd_with_view` runs
+        // before the scroller has been through its first size-allocate
+        // (adjustment still all zeros), nothing else ever re-checks, and the
+        // grid can stall at page 1 forever — the original bug via a
+        // different path. `changed` fires exactly when `upper`/`page-size`
+        // change (layout settling or content growing), so it catches that
+        // case; `value-changed` still covers actual scrolling.
+        {
+            let sender = sender.clone();
+            widgets
+                .scroller
+                .vadjustment()
+                .connect_value_changed(move |_| {
+                    sender.input(LibraryMsg::MaybeLoadMore);
+                });
+        }
+        {
+            let sender = sender.clone();
+            widgets.scroller.vadjustment().connect_changed(move |_| {
+                sender.input(LibraryMsg::MaybeLoadMore);
+            });
+        }
 
         if model.client.is_some() {
             sender.input(LibraryMsg::Refresh);
@@ -584,10 +630,16 @@ impl Component for LibraryPage {
             }
             LibraryMsg::LoadMore => {
                 if !self.loading
+                    && !self.exhausted
                     && self.client.is_some()
                     && (self.total == 0 || self.loaded < self.total as u32)
                 {
                     self.fetch_next_page(&sender);
+                }
+            }
+            LibraryMsg::MaybeLoadMore => {
+                if should_load_more(&widgets.scroller.vadjustment()) {
+                    sender.input(LibraryMsg::LoadMore);
                 }
             }
             LibraryMsg::SearchChanged(q) => {
@@ -679,7 +731,19 @@ impl Component for LibraryPage {
         _root: &Self::Root,
     ) {
         match msg {
-            LibraryCmd::Page(Ok(page)) => {
+            LibraryCmd::Page(generation, _result) if generation != self.generation => {
+                // Superseded by a filter/sort change (`reset()` bumped the
+                // generation and already cleared `loading` for the fetch
+                // that replaced this one) — drop it untouched. Do not touch
+                // `loading`/`total`/`loaded`/`exhausted`/the grid: those
+                // belong to whichever fetch is current, and this response
+                // isn't it.
+                tracing::debug!(
+                    "dropping stale scene page response (gen {generation}, current {})",
+                    self.generation
+                );
+            }
+            LibraryCmd::Page(_generation, Ok(page)) => {
                 self.loading = false;
                 self.error = None;
                 self.total = page.count;
@@ -689,8 +753,21 @@ impl Component for LibraryPage {
                     self.append_cell(widgets, scene, start_index + i as u32, &sender);
                 }
                 self.loaded = start_index + count;
+                // A short page means the result set is done, whatever
+                // `count` claims — this is what stops the fill loop if
+                // the server over-reports its total.
+                if count < PAGE_SIZE {
+                    self.exhausted = true;
+                }
+                // The adjustment still holds pre-layout values right
+                // after appending children, so defer the check by one
+                // main-loop iteration.
+                let tx = sender.input_sender().clone();
+                glib::idle_add_local_once(move || {
+                    let _ = tx.send(LibraryMsg::MaybeLoadMore);
+                });
             }
-            LibraryCmd::Page(Err(e)) => {
+            LibraryCmd::Page(_generation, Err(e)) => {
                 self.loading = false;
                 self.error = Some(e);
             }
@@ -747,9 +824,16 @@ impl Component for LibraryPage {
 
 impl LibraryPage {
     fn reset(&mut self, widgets: &<Self as Component>::Widgets) {
+        // Supersede any in-flight fetch: bump the generation so its response
+        // gets dropped on arrival (see `update_cmd_with_view`), and clear
+        // `loading` so the caller's immediately-following `fetch_next_page`
+        // isn't blocked by that now-irrelevant in-flight request.
+        self.generation += 1;
+        self.loading = false;
         self.page = 0;
         self.total = 0;
         self.loaded = 0;
+        self.exhausted = false;
         self.error = None;
         self.cells.borrow_mut().clear();
         self.scene_ids.borrow_mut().clear();
@@ -797,14 +881,15 @@ impl LibraryPage {
         self.page += 1;
         let filter = self.filter.clone();
         let page = self.page;
-        tracing::debug!("fetching scenes page {page}");
+        let generation = self.generation;
+        tracing::debug!("fetching scenes page {page} (gen {generation})");
         sender.oneshot_command(async move {
             let result = client.find_scenes(&filter, page, PAGE_SIZE).await;
             match &result {
                 Ok(p) => tracing::debug!("got {} scenes (total {})", p.scenes.len(), p.count),
                 Err(e) => tracing::warn!("find_scenes failed: {e}"),
             }
-            LibraryCmd::Page(result.map_err(|e| e.to_string()))
+            LibraryCmd::Page(generation, result.map_err(|e| e.to_string()))
         });
     }
 
@@ -1344,6 +1429,22 @@ fn fresh_seed() -> u32 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0)
+}
+
+/// True when the grid should pull another page.
+///
+/// One condition covers both cases we care about. If the content doesn't
+/// fill the viewport at all, `upper == page_size` and `value == 0`, so
+/// `remaining` is 0 and we load more — this is the case `edge-reached`
+/// could never catch, because nothing is scrollable. Otherwise it's a
+/// plain prefetch check against how much unseen content is left below.
+fn should_load_more(adj: &gtk::Adjustment) -> bool {
+    let page = adj.page_size();
+    if page <= 0.0 {
+        return false;
+    }
+    let remaining = adj.upper() - adj.value() - page;
+    remaining < page * PREFETCH_VIEWPORTS
 }
 
 fn format_duration(secs: f64) -> String {

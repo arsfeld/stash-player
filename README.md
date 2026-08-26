@@ -24,12 +24,15 @@ platforms.
 - "Play random" shortcut from the toolbar.
 - Inline scene player with mpv-style keyboard shortcuts and hardware-accelerated
   playback (VA-API on Linux, VideoToolbox on macOS).
-- Scene detail pages with performers, metadata, prev/next navigation that
-  honours the library's current filter, and an "Open in Stash" shortcut.
+- Video-first scene detail pages: the player fills the page, with
+  performers, details, and file info tucked into a slide-over drawer so
+  they never resize the video. "Open in Stash" lives in the header menu.
 - Resume where you left off — watch progress and play counts sync back to Stash
   automatically (`sceneSaveActivity`), throttled and flushed on pause / seek /
   close.
-- Per-scene "O counter" with increment + reset.
+- Prev/next navigation (honouring the library's current filter), a
+  per-scene "O counter" with increment + reset, and the star rating all
+  render right on the player's on-screen controls.
 - API key stored in the system keyring (Secret Service on Linux, Keychain on
   macOS).
 - macOS extras: PiP, media keys / AirPods controls, and the system Now Playing

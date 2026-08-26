@@ -11,7 +11,7 @@ browse the library and play scenes locally.
 | Language | Rust (2024 edition) |
 | UI framework | [relm4](https://relm4.org) on GTK4 + libadwaita |
 | UI design goal | User-friendly, GNOME HIG-compliant, polished out of the box |
-| Video pipeline | GTK's built-in `gtk::MediaFile` (GStreamer under the hood) |
+| Video pipeline | Hand-built `playbin3` + `gtk4paintablesink` |
 | Stash API | GraphQL over HTTP (Stash exposes `/graphql`) |
 
 Rationale on the big ones:
@@ -24,14 +24,9 @@ Rationale on the big ones:
   `AdwPreferencesWindow`, `AdwToastOverlay`, `AdwAvatar`, etc.) so the app
   feels at home on GNOME and looks friendly to non-technical users — no raw
   GTK4 chrome, no hand-rolled settings dialogs.
-- **`gtk::MediaFile`** wraps GStreamer for us — it implements both
-  `GdkPaintable` and `GtkMediaStream`, so we drop it straight into a
-  `gtk::Picture` and get prepared / duration / playing / error signals
-  back. We give up `playbin3`-level pipeline control (manual sink
-  selection, HLS-vs-progressive fallback), but in exchange the player
-  surface is a few hundred lines instead of thousands. We can drop to
-  `gstreamer-rs` directly if a feature we need (subtitle tracks,
-  transcode-fallback on pipeline error) forces it.
+- **Hand-built `playbin3` + `gtk4paintablesink`** — a raw pipeline was
+  needed for manual sink selection and fine-grained seek control that
+  `gtk::MediaFile` doesn't expose.
 
 ## Crate plan
 
@@ -92,18 +87,24 @@ relm4 components, top-down:
 - `AppModel` — root component. Owns navigation stack and connection status.
 - `LibraryPage` — main grid plus a top toolbar (search, sort dropdown,
   asc/desc toggle, organized switch, min-rating filter, "play random"
-  button). Grid is currently a `gtk::FlowBox` paged in batches of 24 on
-  `edge-reached`. Virtualizing it (`gtk::GridView` + `ListStore`) and the
-  Performers / Studios / Tags / Markers sidebar are milestone-5 polish.
-- `ScenePage` — inline `VideoPlayer` at the top, then title +
-  studio/date/duration/resolution subtitle, autoplay toggle, prev/next
-  navigation honouring the library's current filter, performers chips
-  (Adw avatars), details, and a file-info group.
+  button). Grid is currently a `gtk::FlowBox` paged in batches of 48,
+  re-checking the scroll adjustment both on scroll and after every page
+  lands (`edge-reached` alone stalls when a page never overflows the
+  viewport, e.g. a large monitor). Virtualizing it (`gtk::GridView` +
+  `ListStore`) and the Performers / Studios / Tags / Markers sidebar are
+  milestone-5 polish.
+- `ScenePage` — video-first: the player fills the content area of an
+  `adw::OverlaySplitView` pinned to `collapsed: true`, with performers,
+  details, and a file-info group in its sidebar drawer instead of below
+  the video. Title/subtitle sit in the header's `adw::WindowTitle`;
+  autoplay and "Open in Stash" are in a header menu; prev/next, the
+  O-counter, and the rating render on the player's own OSD.
 - `VideoPlayer` widget (used inline on `ScenePage`, not a separate page):
-  `gtk::MediaFile` painted into a `gtk::Picture` wrapped in a
-  `gtk::GraphicsOffload` for compositor-direct video. Custom OSD with
-  seek/transport/volume/fullscreen and mpv-style keyboard shortcuts.
-  Marker scrubber + speed control are milestone-5 polish.
+  hand-built `playbin3` pipeline (see "Decisions" above) painted into a
+  `gtk::Picture` wrapped in a `gtk::GraphicsOffload` for compositor-direct
+  video. Custom OSD with seek/transport/volume/fullscreen and mpv-style
+  keyboard shortcuts. Marker scrubber + speed control are milestone-5
+  polish.
 - `SettingsPage` — Stash URL + API key entry, "test connection" button,
   theme.
 - Async work: the shared `stash_api::Client` is held by `AppModel` and
@@ -114,9 +115,15 @@ relm4 components, top-down:
 
 ## Playback details
 
-- `gtk::MediaFile` for the stream, painted into a `gtk::Picture` wrapped
-  in `gtk::GraphicsOffload` (4.14+) so frames go straight to the Wayland
-  compositor instead of through GSK. Same trick `GtkVideo` uses internally.
+- Hand-built `playbin3` pipeline for the stream, painted into a
+  `gtk::Picture` wrapped in `gtk::GraphicsOffload` (4.14+) so frames go
+  straight to the Wayland compositor instead of through GSK. Same trick
+  `GtkVideo` uses internally. Position tracking goes through
+  `stash_player_core::playback::SeekTracker`, which treats a reported
+  position as trusted only when it's consistent with an outstanding
+  seek's target — otherwise an `ACCURATE` flushing seek that outlasts a
+  poll interval lets a stale position clobber the model, and every
+  subsequent relative seek lands in the same place.
 - Stream URL comes from `scene.paths.stream`; we run it through
   `Client::authenticated_url` to bake the API key into the query string,
   since the media stack can't carry our `ApiKey` request header.
@@ -151,9 +158,11 @@ relm4 components, top-down:
    `stash-api::find_scenes`; UI navigates between Library / Scene /
    Settings via `AdwNavigationView`. The library is a `gtk::FlowBox` of
    card cells (thumbnail + title + studio · duration + an "O n" pill
-   when the counter is non-zero), with infinite scroll triggered on
-   `edge-reached` (24 scenes per fetch) and a top toolbar carrying the
-   search entry, sort dropdown, asc/desc toggle, organized switch,
+   when the counter is non-zero), with infinite scroll re-checked on
+   scroll and after layout settles (48 scenes per fetch — `edge-reached`
+   alone stalls when a page never overflows the viewport) and a top
+   toolbar carrying the search entry, sort dropdown, asc/desc toggle,
+   organized switch,
    min-rating filter, hide-tracked switch (default ON — opens to
    `o_counter = 0` only), and a "play random" shortcut
    (uses Stash's seeded `random_<seed>` sort so paging stays stable).
@@ -163,20 +172,27 @@ relm4 components, top-down:
    the same authenticated reqwest client used for GraphQL. Decoded
    bitmaps are cached on disk under `XDG_CACHE_HOME/stash-player/thumbs/`
    keyed by URL hash + dimensions, with a 12-permit semaphore capping
-   concurrent fetches. Scene detail page shows the inline player +
-   metadata + performers chips + prev/next neighbor navigation.
+   concurrent fetches. Scene detail page is video-first: the player fills
+   an `adw::OverlaySplitView`'s content area, with performers, details,
+   and file info in its sidebar drawer, plus prev/next neighbor
+   navigation on the player's OSD.
    Open polish for later: virtualize the grid (FlowBox holds the full
    list in memory; fine for hundreds, not great for tens of thousands),
    filter chips for performer / studio / tag, sidebar for the
    non-Scenes entity types (Performers / Studios / Tags / Markers).
-3. **Local playback — done bar activity tracking.** `gtk::MediaFile`
+3. **Local playback — done.** Hand-built `playbin3` + `gtk4paintablesink`
    painted into `gtk::Picture` inside `gtk::GraphicsOffload`, with a
    custom OSD (seek + transport + volume + fullscreen), mpv-style
    keyboard shortcuts, click-to-toggle / double-click-fullscreen, and
-   auto-hiding controls. Plan originally specified raw `playbin3` +
-   `gtk4paintablesink`; we ended up letting `gtk::MediaFile` wrap that
-   for us (see "Decisions" above). Resume + `sceneSaveActivity` writeback
-   is the remaining piece.
+   auto-hiding controls — as originally planned (see "Decisions" above).
+   The initial import shipped `gtk::MediaFile` wrapping the pipeline
+   instead; `4280ba1` replaced it with the direct `playbin3` pipeline
+   described here (GtkMediaFile routes URLs through GIO, which the
+   flatpak runtime can't resolve for remote streams). Resume +
+   `sceneSaveActivity` writeback is done too, throttled to ~10s and
+   flushed on pause / seek / close. `stash_player_core::playback::SeekTracker`
+   later fixed a bug where a flushing seek's stale position report made
+   repeated relative seeks re-land in the same place.
 4. **Full library polish (≈3 days).** Performers / Tags / Studios / Markers
    pages, search, keyboard shortcuts, theme.
 5. **Packaging (≈1 day).** Flatpak manifest, README, screenshots.
