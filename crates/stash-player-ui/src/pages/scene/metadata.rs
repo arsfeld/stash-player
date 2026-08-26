@@ -38,7 +38,7 @@ pub(super) fn populate_scene(widgets: &ScenePageWidgets, scene: &Scene) {
     widgets.details_label.set_label(details);
     widgets.details_section.set_visible(!details.is_empty());
 
-    populate_file_group(&widgets.file_group, scene.files.first());
+    populate_file_group(&widgets.file_section, scene.files.first());
 }
 
 /// Build the authenticated stream URL for the scene. GTK's media stack
@@ -95,12 +95,20 @@ fn populate_performers(container: &gtk::Box, performers: &[PerformerRef]) {
     }
 }
 
-fn populate_file_group(group: &adw::PreferencesGroup, file: Option<&SceneFile>) {
+/// Rebuild the File section from scratch. Clearing first is the whole
+/// point: this runs on every prev/next, and the previous implementation
+/// appended to a persistent group, so the rows accumulated.
+fn populate_file_group(container: &gtk::Box, file: Option<&SceneFile>) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
     let Some(file) = file else {
-        group.set_visible(false);
+        container.set_visible(false);
         return;
     };
 
+    let group = adw::PreferencesGroup::builder().title("File").build();
     let mut shown = false;
 
     if let (Some(w), Some(h)) = (file.width, file.height) {
@@ -118,7 +126,10 @@ fn populate_file_group(group: &adw::PreferencesGroup, file: Option<&SceneFile>) 
         shown = true;
     }
 
-    group.set_visible(shown);
+    if shown {
+        container.append(&group);
+    }
+    container.set_visible(shown);
 }
 
 fn info_row(title: &str, value: &str) -> adw::ActionRow {

@@ -398,9 +398,13 @@ impl Component for ScenePage {
                                         },
                                     },
 
-                                    #[name = "file_group"]
-                                    adw::PreferencesGroup {
-                                        set_title: "File",
+                                    // Rebuilt wholesale by
+                                    // `populate_file_group` so navigating
+                                    // between scenes replaces the rows
+                                    // instead of appending to them.
+                                    #[name = "file_section"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
                                         set_visible: false,
                                     },
                                 },
