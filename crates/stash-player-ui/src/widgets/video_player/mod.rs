@@ -106,7 +106,11 @@ pub(crate) enum VideoPlayerOutput {
 pub(crate) struct SceneActionState {
     pub(crate) can_prev: bool,
     pub(crate) can_next: bool,
-    pub(crate) o_count: i32,
+    /// `None` when no scene is currently loaded (e.g. mid-navigation) —
+    /// the O-counter group renders insensitive in that case. This is a
+    /// different kind of absence than `rating100`'s `None`, which means
+    /// "loaded, but unrated": don't conflate the two.
+    pub(crate) o_count: Option<i32>,
     pub(crate) rating100: Option<i32>,
 }
 
@@ -461,6 +465,7 @@ impl Component for VideoPlayer {
 
                                 gtk::Box { set_hexpand: true },
 
+                                #[name = "osd_o_counter_group"]
                                 gtk::Box {
                                     add_css_class: "linked",
                                     set_valign: gtk::Align::Center,
@@ -1354,12 +1359,21 @@ struct TickSnapshot {
 fn refresh_scene_actions(widgets: &VideoPlayerWidgets, actions: SceneActionState) {
     widgets.prev_scene_button.set_sensitive(actions.can_prev);
     widgets.next_scene_button.set_sensitive(actions.can_next);
+    // No loaded scene (mid-navigation): grey the whole group out and
+    // blank the count rather than show a stale or misleadingly-zero
+    // number on a control that currently does nothing.
     widgets
-        .osd_o_count_label
-        .set_label(&actions.o_count.to_string());
+        .osd_o_counter_group
+        .set_sensitive(actions.o_count.is_some());
+    widgets.osd_o_count_label.set_label(
+        &actions
+            .o_count
+            .map(|count| count.to_string())
+            .unwrap_or_default(),
+    );
     widgets
         .osd_o_reset_button
-        .set_visible(actions.o_count > 0);
+        .set_visible(actions.o_count.is_some_and(|count| count > 0));
     match actions.rating100.filter(|r| *r > 0) {
         Some(rating) => {
             let stars = rating as f32 / 10.0;

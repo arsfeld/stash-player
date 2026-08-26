@@ -673,9 +673,12 @@ impl ScenePage {
     /// Push the OSD's scene-level control state to the player. Called
     /// after anything that changes what those controls should show.
     fn push_scene_actions(&self) {
+        // `None` here means "no scene is loaded right now" (e.g.
+        // mid-navigation) — a different absence than `rating100`'s
+        // `None`, which means "loaded, but unrated".
         let o_count = match &self.state {
-            State::Loaded(scene) => scene.o_counter.unwrap_or(0),
-            _ => 0,
+            State::Loaded(scene) => Some(scene.o_counter.unwrap_or(0)),
+            _ => None,
         };
         let rating100 = match &self.state {
             State::Loaded(scene) => scene.rating100,
