@@ -130,9 +130,12 @@ pub(crate) enum SceneAction {
 pub(crate) enum VideoPlayerMsg {
     /// Load a new stream URI. Pass `url: None` to clear. `resume_secs`
     /// is applied once the new stream reports a duration, then dropped.
+    /// `show_loading` keeps the status plate up while cleared, so a
+    /// scene swap shows a spinner rather than an empty surface.
     SetUrl {
         url: Option<String>,
         resume_secs: Option<f64>,
+        show_loading: bool,
     },
     /// Update the autoplay policy for future `SetUrl` calls.
     SetAutoplay(bool),
@@ -230,6 +233,9 @@ pub(crate) struct VideoPlayer {
     /// Display state for the OSD's scene-level controls, pushed in by
     /// the scene page.
     scene_actions: SceneActionState,
+    /// Force the status plate on while no stream is loaded — set during
+    /// a scene swap so the player doesn't flash an empty rectangle.
+    show_loading: bool,
 }
 
 #[relm4::component(pub(crate))]
@@ -614,6 +620,7 @@ impl Component for VideoPlayer {
             sender.input(VideoPlayerMsg::SetUrl {
                 url: Some(url),
                 resume_secs: init.resume_secs,
+                show_loading: false,
             });
         }
 
@@ -628,8 +635,12 @@ impl Component for VideoPlayer {
         root: &Self::Root,
     ) {
         match msg {
-            VideoPlayerMsg::SetUrl { url, resume_secs } => {
-                self.handle_set_url(widgets, &sender, url, resume_secs);
+            VideoPlayerMsg::SetUrl {
+                url,
+                resume_secs,
+                show_loading,
+            } => {
+                self.handle_set_url(widgets, &sender, url, resume_secs, show_loading);
             }
             VideoPlayerMsg::SetAutoplay(on) => self.playback.autoplay = on,
             VideoPlayerMsg::Tick => self.handle_tick(widgets, &sender),
@@ -856,6 +867,7 @@ impl VideoPlayer {
             last_save_at: None,
             resume_pending: None,
             scene_actions: SceneActionState::default(),
+            show_loading: false,
         }
     }
 
@@ -1040,6 +1052,7 @@ impl VideoPlayer {
         sender: &ComponentSender<Self>,
         url: Option<String>,
         resume_secs: Option<f64>,
+        show_loading: bool,
     ) {
         // Flush activity for the outgoing scene first so the parent
         // records its final resume + watched-time delta.
@@ -1053,6 +1066,7 @@ impl VideoPlayer {
         self.playing_since = None;
         self.play_duration_us = 0;
         self.last_save_at = None;
+        self.show_loading = show_loading;
         // Treat 0 (or negative) as "no saved resume" — Stash returns 0
         // for unwatched scenes and we don't want to re-seek to 0 every
         // load.
@@ -1064,10 +1078,12 @@ impl VideoPlayer {
 
         let Some(url) = url else {
             widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         let Some(pipeline) = PlaybackPipeline::new(&url, self.playback.autoplay, sender) else {
             widgets.picture.set_paintable(gtk::gdk::Paintable::NONE);
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         pipeline.set_volume(self.volume);
@@ -1089,6 +1105,7 @@ impl VideoPlayer {
         sender: &ComponentSender<Self>,
     ) {
         let Some(media) = self.media.as_ref() else {
+            update_status_plate(widgets, None, !self.show_loading);
             return;
         };
         let was_playing = self.playback.playing;
