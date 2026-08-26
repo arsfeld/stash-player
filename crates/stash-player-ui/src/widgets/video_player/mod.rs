@@ -19,11 +19,9 @@
 //!   f               toggle fullscreen
 //!   Esc             exit fullscreen
 //!
-//! Position polling runs at 4 Hz via `glib::timeout_add_local`. We avoid a
-//! feedback loop on the seek slider by suppressing our own programmatic
-//! updates with an `Rc<Cell<bool>>` flag — the user-driven `value-changed`
-//! emits while the flag is clear go through `UserSeek`, which seeks the
-//! underlying stream immediately.
+//! Position polling runs at 4 Hz via `glib::timeout_add_local`, feeding a
+//! `SeekTracker` that ignores readings inconsistent with an outstanding
+//! seek — see `stash_player_core::playback`.
 
 mod pipeline;
 
@@ -37,6 +35,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use relm4::gtk;
 use relm4::prelude::*;
+use stash_player_core::playback::SeekTracker;
 
 const TICK_INTERVAL_MS: u32 = 250;
 const HIDE_DELAY_MS: u32 = 2500;
@@ -127,6 +126,9 @@ pub(crate) enum VideoPlayerMsg {
     HideControls,
     /// Forwarded from the EventControllerKey on the player surface.
     KeyPressed(gtk::gdk::Key, gtk::gdk::ModifierType),
+    /// The pipeline reported a seek completed, at this position in
+    /// microseconds. Negative means the position query failed.
+    SeekLanded(i64),
 }
 
 /// Independent playback flags grouped to keep `VideoPlayer`'s top-level
@@ -153,8 +155,10 @@ struct OsdState {
 pub(crate) struct VideoPlayer {
     media: Option<PlaybackPipeline>,
     url: Option<String>,
-    duration_us: i64,
-    position_us: i64,
+    /// Playhead position and duration, including seeks that haven't
+    /// landed yet. See `stash_player_core::playback` for why this can't
+    /// just be the polled position.
+    seek: SeekTracker,
     volume: f64,
     muted: bool,
     playback: PlaybackFlags,
@@ -173,12 +177,9 @@ pub(crate) struct VideoPlayer {
     /// `value-changed` handler can ignore our own writes.
     suppress_scale: Rc<Cell<bool>>,
     suppress_volume: Rc<Cell<bool>>,
-    /// Timestamp of the most recent user-driven seek slider change. Used
-    /// by `refresh_widgets` to suppress pushing polled positions onto the
-    /// thumb for a brief window after the user touches it — without this
-    /// the thumb visibly skips backward to GStreamer's SNAP_BEFORE
-    /// keyframe in between drag updates.
-    last_user_seek: Rc<Cell<Option<Instant>>>,
+    /// True while a pointer button is held on the seek slider, so
+    /// `refresh_widgets` doesn't fight the user's drag.
+    dragging: Rc<Cell<bool>>,
     // ─── activity tracking ───────────────────────────────────────────────
     /// Set while the underlying stream reports `is_playing()`; cleared on
     /// every transition out of playing so we can sum up watched time.
@@ -448,13 +449,13 @@ impl Component for VideoPlayer {
     ) -> ComponentParts<Self> {
         let suppress_scale = Rc::new(Cell::new(false));
         let suppress_volume = Rc::new(Cell::new(false));
-        let last_user_seek: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let dragging = Rc::new(Cell::new(false));
 
         let mut model = VideoPlayer::new_model(
             &init,
             suppress_scale.clone(),
             suppress_volume.clone(),
-            last_user_seek.clone(),
+            dragging.clone(),
         );
 
         let widgets = view_output!();
@@ -464,7 +465,7 @@ impl Component for VideoPlayer {
             &sender,
             &suppress_scale,
             &suppress_volume,
-            &last_user_seek,
+            &dragging,
         );
         wire_pointer_handlers(&widgets, &sender);
         wire_keyboard_handlers(&widgets, &sender);
@@ -533,6 +534,7 @@ impl Component for VideoPlayer {
                     sender.input(VideoPlayerMsg::PointerActive);
                 }
             }
+            VideoPlayerMsg::SeekLanded(landed_us) => self.seek.on_async_done(landed_us),
         }
 
         // Notify the parent on reveal-state edges so it can fade the
@@ -540,7 +542,7 @@ impl Component for VideoPlayer {
         // in `refresh_widgets`) because we need `&mut self` to latch the
         // last value, and emitting only on changes avoids spamming the
         // parent on every tick.
-        let force_visible = self.media.is_none() || self.duration_us == 0;
+        let force_visible = self.media.is_none() || self.seek.duration_us() == 0;
         let revealed = self.osd.show_controls || force_visible;
         if revealed != self.osd.controls_revealed {
             self.osd.controls_revealed = revealed;
@@ -578,7 +580,7 @@ impl Component for VideoPlayer {
         // weight, this is just a safety net for the close-while-playing
         // case.
         self.capture_play_time();
-        let resume_secs = self.position_us.max(0) as f64 / 1_000_000.0;
+        let resume_secs = self.seek.position_us().max(0) as f64 / 1_000_000.0;
         let play_duration_secs = self.play_duration_us as f64 / 1_000_000.0;
         if self.media.is_some() && (play_duration_secs > 0.0 || resume_secs > 0.0) {
             let _ = output.send(VideoPlayerOutput::ActivityCheckpoint {
@@ -590,26 +592,41 @@ impl Component for VideoPlayer {
 }
 
 /// Hook the seek + volume scales: anything that isn't our own programmatic
-/// write becomes a UserSeek/SetVolume; the seek slider also stamps an
-/// `Instant` so `refresh_widgets` doesn't yank the thumb back during a drag.
+/// write becomes a UserSeek/SetVolume. A capture-phase click gesture on the
+/// seek scale tracks whether a pointer button is currently held, so
+/// `refresh_widgets` can leave the thumb alone mid-drag.
 fn wire_slider_handlers(
     widgets: &VideoPlayerWidgets,
     sender: &ComponentSender<VideoPlayer>,
     suppress_scale: &Rc<Cell<bool>>,
     suppress_volume: &Rc<Cell<bool>>,
-    last_user_seek: &Rc<Cell<Option<Instant>>>,
+    dragging: &Rc<Cell<bool>>,
 ) {
     {
         let sender = sender.clone();
         let suppress = suppress_scale.clone();
-        let stamp = last_user_seek.clone();
         widgets.seek_scale.connect_value_changed(move |s| {
             if suppress.get() {
                 return;
             }
-            stamp.set(Some(Instant::now()));
             sender.input(VideoPlayerMsg::UserSeek(s.value() as i64));
         });
+    }
+    {
+        // Capture phase: GtkScale's own gestures would otherwise claim
+        // the sequence before we see the press.
+        let drag = gtk::GestureClick::new();
+        drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let on_press = dragging.clone();
+        drag.connect_pressed(move |_, _, _, _| on_press.set(true));
+        let on_release = dragging.clone();
+        drag.connect_released(move |_, _, _, _| on_release.set(false));
+        // A cancelled gesture (grab stolen, pointer left the surface)
+        // never delivers `released`; without this the thumb would stay
+        // frozen for the rest of the session.
+        let on_cancel = dragging.clone();
+        drag.connect_cancel(move |_, _| on_cancel.set(false));
+        widgets.seek_scale.add_controller(drag);
     }
     let sender = sender.clone();
     let suppress = suppress_volume.clone();
@@ -683,13 +700,12 @@ impl VideoPlayer {
         init: &VideoPlayerInit,
         suppress_scale: Rc<Cell<bool>>,
         suppress_volume: Rc<Cell<bool>>,
-        last_user_seek: Rc<Cell<Option<Instant>>>,
+        dragging: Rc<Cell<bool>>,
     ) -> Self {
         VideoPlayer {
             media: None,
             url: init.url.clone(),
-            duration_us: 0,
-            position_us: 0,
+            seek: SeekTracker::new(),
             volume: init.volume.clamp(0.0, 1.0),
             muted: init.muted,
             playback: PlaybackFlags {
@@ -707,7 +723,7 @@ impl VideoPlayer {
             tick_source: None,
             suppress_scale,
             suppress_volume,
-            last_user_seek,
+            dragging,
             playing_since: None,
             play_duration_us: 0,
             last_save_at: None,
@@ -730,7 +746,7 @@ impl VideoPlayer {
     /// `playing_since` watermark so subsequent ticks keep counting.
     fn emit_checkpoint(&mut self, sender: &ComponentSender<Self>) {
         self.capture_play_time();
-        let resume_secs = self.position_us.max(0) as f64 / 1_000_000.0;
+        let resume_secs = self.seek.position_us().max(0) as f64 / 1_000_000.0;
         let play_duration_secs = self.play_duration_us as f64 / 1_000_000.0;
         self.play_duration_us = 0;
         self.last_save_at = Some(Instant::now());
@@ -748,38 +764,25 @@ impl VideoPlayer {
         widgets: &<Self as Component>::Widgets,
         _root: &<Self as Component>::Root,
     ) {
-        // Seek slider: max = duration, value = position. Clamp to a tiny
-        // positive max to avoid GtkRange complaining when duration is 0.
-        // Skip pushing polled values onto the thumb when (a) the stream
-        // is mid-seek or (b) the user touched the slider very recently —
-        // the polled timestamp lags GStreamer's SNAP_BEFORE keyframe and
-        // would visibly snap the thumb backward in between drag updates.
-        // 400 ms covers the gap between consecutive value-changed events
-        // during a continuous drag without leaving the thumb desynced for
-        // long after the user lets go.
-        let media_seeking = self
-            .media
-            .as_ref()
-            .is_some_and(|m| m.is_seeking());
-        let user_holding = self
-            .last_user_seek
-            .get()
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
-        let max = (self.duration_us.max(1)) as f64;
+        // The tracker's position never regresses spuriously, so we push
+        // it unconditionally — except while the user has the thumb held,
+        // where our writes would fight the drag.
+        let duration_us = self.seek.duration_us();
+        let max = duration_us.max(1) as f64;
         widgets.seek_scale.set_range(0.0, max);
-        if !media_seeking && !user_holding {
-            let pos = (self.position_us.clamp(0, self.duration_us.max(0))) as f64;
+        if !self.dragging.get() {
+            let pos = self.seek.position_us().clamp(0, duration_us.max(0)) as f64;
             self.suppress_scale.set(true);
             widgets.seek_scale.set_value(pos);
             self.suppress_scale.set(false);
         }
-        widgets.seek_scale.set_sensitive(self.duration_us > 0);
+        widgets.seek_scale.set_sensitive(duration_us > 0);
 
         widgets
             .position_label
-            .set_label(&format_us(self.position_us));
-        let duration_text = if self.duration_us > 0 {
-            format_us(self.duration_us)
+            .set_label(&format_us(self.seek.position_us()));
+        let duration_text = if duration_us > 0 {
+            format_us(duration_us)
         } else {
             "--:--".into()
         };
@@ -913,8 +916,7 @@ impl VideoPlayer {
         }
 
         self.url = url.clone();
-        self.duration_us = 0;
-        self.position_us = 0;
+        self.seek.on_stream_reset();
         self.playback.playing = false;
         self.playing_since = None;
         self.play_duration_us = 0;
@@ -962,7 +964,6 @@ impl VideoPlayer {
             status: PipelineStatus {
                 now_playing: media.is_playing(),
                 is_prepared: media.is_prepared(),
-                media_seeking: media.is_seeking(),
             },
             duration_us: media.duration_us().max(0),
             position_us: media.position_us().max(0),
@@ -975,16 +976,13 @@ impl VideoPlayer {
         self.update_playing_window(was_playing, status.now_playing);
 
         // Duration queries can transiently return 0 while a flushing
-        // seek is in flight. Don't let that wipe our cached duration —
-        // once we know the stream length we hold onto it.
-        if snapshot.duration_us > 0 {
-            self.duration_us = snapshot.duration_us;
-        }
+        // seek is in flight; SeekTracker::set_duration_us ignores those.
+        self.seek.set_duration_us(snapshot.duration_us);
         self.playback.playing = status.now_playing;
         self.volume = snapshot.volume;
         self.muted = snapshot.muted;
 
-        self.update_position_from_poll(snapshot.position_us, status.media_seeking);
+        self.seek.on_poll(snapshot.position_us, Instant::now());
         self.apply_pending_resume(status.is_prepared);
 
         // Throttled activity checkpoint while playing.
@@ -1006,50 +1004,19 @@ impl VideoPlayer {
         }
     }
 
-    /// Trust the polled position only when there isn't a user-initiated
-    /// seek in flight. The seek handlers stamp `last_user_seek` before
-    /// they call `media.seek()`; that timestamp, plus the bus-driven
-    /// `is_seeking` flag, defines the window we ignore polled values in.
-    fn update_position_from_poll(&mut self, position_us: i64, media_seeking: bool) {
-        let user_seek_recent = self
-            .last_user_seek
-            .get()
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
-        if media_seeking || user_seek_recent {
-            tracing::trace!(
-                polled_us = position_us,
-                held_us = self.position_us,
-                media_seeking,
-                user_seek_recent,
-                "Tick: holding position_us (seek window)"
-            );
-            return;
-        }
-        if position_us != self.position_us {
-            tracing::trace!(
-                old_us = self.position_us,
-                new_us = position_us,
-                "Tick: position_us updated from poll"
-            );
-        }
-        self.position_us = position_us;
-    }
-
     /// Apply the pending resume seek once the stream is ready enough
     /// that a clamp against duration is meaningful.
     fn apply_pending_resume(&mut self, is_prepared: bool) {
-        if !is_prepared || self.duration_us <= 0 {
+        if !is_prepared || self.seek.duration_us() <= 0 {
             return;
         }
         let Some(resume) = self.resume_pending.take() else {
             return;
         };
-        let target_us = (resume * 1_000_000.0) as i64;
-        let target = target_us.clamp(0, self.duration_us);
-        if let Some(media) = self.media.as_ref() {
-            media.seek(target);
-        }
-        self.position_us = target;
+        let target = self
+            .seek
+            .seek_absolute((resume * 1_000_000.0) as i64, Instant::now());
+        self.issue_seek(target);
     }
 
     fn checkpoint_due(&self) -> bool {
@@ -1085,78 +1052,49 @@ impl VideoPlayer {
     }
 
     fn handle_seek_relative(&mut self, sender: &ComponentSender<Self>, secs: i64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let delta = secs.saturating_mul(1_000_000);
-        // Anchor on our local position and our cached duration, not the
-        // live `media.*()` queries. While a seek is in flight playbin3
-        // reports the pre-seek (or 0) position and a 0 duration, so two
-        // quick presses of "+10s" would both compute their target from
-        // the same base and the clamp would collapse the target to 0.
-        let base_us = self.position_us;
-        let cached_dur_us = self.duration_us.max(0);
-        let target = base_us.saturating_add(delta).clamp(0, cached_dur_us);
-        tracing::debug!(
-            secs,
-            delta_us = delta,
-            base_us,
-            cached_dur_us,
-            target_us = target,
-            live_pos_us = media.position_us(),
-            live_dur_us = media.duration_us(),
-            "SeekRelative"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self
+            .seek
+            .seek_relative(secs.saturating_mul(1_000_000), Instant::now());
+        tracing::debug!(secs, target_us = target, "SeekRelative");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
         sender.input(VideoPlayerMsg::PointerActive);
     }
 
     fn handle_seek_fraction(&mut self, sender: &ComponentSender<Self>, fraction: f64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let dur = self.duration_us.max(0);
-        let target = ((dur as f64) * fraction.clamp(0.0, 1.0)) as i64;
-        tracing::debug!(
-            fraction,
-            cached_dur_us = dur,
-            target_us = target,
-            "SeekFraction"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self.seek.seek_fraction(fraction, Instant::now());
+        tracing::debug!(fraction, target_us = target, "SeekFraction");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
         sender.input(VideoPlayerMsg::PointerActive);
     }
 
     fn handle_user_seek(&mut self, sender: &ComponentSender<Self>, us: i64) {
-        let Some(media) = self.media.as_ref() else {
-            return;
-        };
-        if !media.is_prepared() {
+        if !self.is_prepared() {
             return;
         }
-        let target = us.clamp(0, self.duration_us.max(0));
-        tracing::debug!(
-            slider_us = us,
-            cached_dur_us = self.duration_us,
-            target_us = target,
-            "UserSeek"
-        );
-        self.last_user_seek.set(Some(Instant::now()));
-        media.seek(target);
-        self.position_us = target;
+        let target = self.seek.seek_absolute(us, Instant::now());
+        tracing::debug!(slider_us = us, target_us = target, "UserSeek");
+        self.issue_seek(target);
         self.emit_checkpoint(sender);
+    }
+
+    /// True when there's a stream loaded and prepared enough to seek.
+    fn is_prepared(&self) -> bool {
+        self.media.as_ref().is_some_and(|m| m.is_prepared())
+    }
+
+    /// Hand a target the tracker has already clamped to the pipeline.
+    fn issue_seek(&self, target_us: i64) {
+        if let Some(media) = self.media.as_ref() {
+            media.seek(target_us);
+        }
     }
 
     fn handle_set_volume(&mut self, sender: &ComponentSender<Self>, v: f64) {
@@ -1275,7 +1213,6 @@ impl VideoPlayer {
 struct PipelineStatus {
     now_playing: bool,
     is_prepared: bool,
-    media_seeking: bool,
 }
 
 /// Snapshot of pipeline state captured once per tick so the rest of the
