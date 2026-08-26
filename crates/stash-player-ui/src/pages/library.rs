@@ -26,7 +26,10 @@ const MIN_RATING_OPTIONS: &[(&str, Option<i32>)] = &[
     ("5 stars", Some(100)),
 ];
 
-const PAGE_SIZE: u32 = 24;
+const PAGE_SIZE: u32 = 48;
+/// How many viewport-heights of not-yet-scrolled content to keep loaded
+/// ahead of the user.
+const PREFETCH_VIEWPORTS: f64 = 1.5;
 /// Cap concurrent thumbnail fetches so we don't open a connection per scene
 /// the moment a page lands. 12 keeps the pipe full without thrashing reqwest's
 /// per-host pool (default 10) too hard.
@@ -51,6 +54,9 @@ pub(crate) struct LibraryPage {
     total: i64,
     loaded: u32,
     loading: bool,
+    /// Set once the server returns a short page — there is nothing left
+    /// to fetch for the current filter, whatever `total` claims.
+    exhausted: bool,
     error: Option<String>,
     /// Pictures keyed by scene id so the async thumbnail handler can
     /// patch the right cell when the bytes arrive.
@@ -73,6 +79,9 @@ pub(crate) enum LibraryMsg {
     SetClient(stash_api::Client),
     Refresh,
     LoadMore,
+    /// Re-evaluate whether another page is needed, based on how much
+    /// unscrolled content is left. Cheap and idempotent.
+    MaybeLoadMore,
     SearchChanged(String),
     SortKeyChanged(u32),
     SetDirection(SortDirection),
@@ -431,13 +440,9 @@ impl Component for LibraryPage {
                         },
                     },
 
+                    #[name = "scroller"]
                     add_named[Some("grid")] = &gtk::ScrolledWindow {
                         set_hscrollbar_policy: gtk::PolicyType::Never,
-                        connect_edge_reached[sender] => move |_, edge| {
-                            if edge == gtk::PositionType::Bottom {
-                                sender.input(LibraryMsg::LoadMore);
-                            }
-                        },
 
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
@@ -543,6 +548,7 @@ impl Component for LibraryPage {
             total: 0,
             loaded: 0,
             loading: false,
+            exhausted: false,
             error: None,
             cells: Rc::new(RefCell::new(HashMap::new())),
             scene_ids: Rc::new(RefCell::new(Vec::new())),
@@ -557,6 +563,18 @@ impl Component for LibraryPage {
         widgets
             .tasks_popover
             .set_parent(&widgets.tasks_btn);
+
+        // Scroll-driven prefetch. This replaces `edge-reached`, which
+        // never fires when the content already fits the viewport.
+        {
+            let sender = sender.clone();
+            widgets
+                .scroller
+                .vadjustment()
+                .connect_value_changed(move |_| {
+                    sender.input(LibraryMsg::MaybeLoadMore);
+                });
+        }
 
         if model.client.is_some() {
             sender.input(LibraryMsg::Refresh);
@@ -584,10 +602,16 @@ impl Component for LibraryPage {
             }
             LibraryMsg::LoadMore => {
                 if !self.loading
+                    && !self.exhausted
                     && self.client.is_some()
                     && (self.total == 0 || self.loaded < self.total as u32)
                 {
                     self.fetch_next_page(&sender);
+                }
+            }
+            LibraryMsg::MaybeLoadMore => {
+                if should_load_more(&widgets.scroller.vadjustment()) {
+                    sender.input(LibraryMsg::LoadMore);
                 }
             }
             LibraryMsg::SearchChanged(q) => {
@@ -689,6 +713,19 @@ impl Component for LibraryPage {
                     self.append_cell(widgets, scene, start_index + i as u32, &sender);
                 }
                 self.loaded = start_index + count;
+                // A short page means the result set is done, whatever
+                // `count` claims — this is what stops the fill loop if
+                // the server over-reports its total.
+                if count < PAGE_SIZE {
+                    self.exhausted = true;
+                }
+                // The adjustment still holds pre-layout values right
+                // after appending children, so defer the check by one
+                // main-loop iteration.
+                let tx = sender.input_sender().clone();
+                glib::idle_add_local_once(move || {
+                    let _ = tx.send(LibraryMsg::MaybeLoadMore);
+                });
             }
             LibraryCmd::Page(Err(e)) => {
                 self.loading = false;
@@ -750,6 +787,7 @@ impl LibraryPage {
         self.page = 0;
         self.total = 0;
         self.loaded = 0;
+        self.exhausted = false;
         self.error = None;
         self.cells.borrow_mut().clear();
         self.scene_ids.borrow_mut().clear();
@@ -1344,6 +1382,22 @@ fn fresh_seed() -> u32 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0)
+}
+
+/// True when the grid should pull another page.
+///
+/// One condition covers both cases we care about. If the content doesn't
+/// fill the viewport at all, `upper == page_size` and `value == 0`, so
+/// `remaining` is 0 and we load more — this is the case `edge-reached`
+/// could never catch, because nothing is scrollable. Otherwise it's a
+/// plain prefetch check against how much unseen content is left below.
+fn should_load_more(adj: &gtk::Adjustment) -> bool {
+    let page = adj.page_size();
+    if page <= 0.0 {
+        return false;
+    }
+    let remaining = adj.upper() - adj.value() - page;
+    remaining < page * PREFETCH_VIEWPORTS
 }
 
 fn format_duration(secs: f64) -> String {
