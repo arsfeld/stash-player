@@ -184,9 +184,11 @@ relm4 components, top-down:
    painted into `gtk::Picture` inside `gtk::GraphicsOffload`, with a
    custom OSD (seek + transport + volume + fullscreen), mpv-style
    keyboard shortcuts, click-to-toggle / double-click-fullscreen, and
-   auto-hiding controls — as originally planned (see "Decisions" above);
-   an earlier revision of this doc claimed we'd let `gtk::MediaFile` wrap
-   the pipeline instead, but that was never actually shipped. Resume +
+   auto-hiding controls — as originally planned (see "Decisions" above).
+   The initial import shipped `gtk::MediaFile` wrapping the pipeline
+   instead; `4280ba1` replaced it with the direct `playbin3` pipeline
+   described here (GtkMediaFile routes URLs through GIO, which the
+   flatpak runtime can't resolve for remote streams). Resume +
    `sceneSaveActivity` writeback is done too, throttled to ~10s and
    flushed on pause / seek / close. `stash_player_core::playback::SeekTracker`
    later fixed a bug where a flushing seek's stale position report made

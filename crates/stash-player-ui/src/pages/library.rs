@@ -54,6 +54,11 @@ pub(crate) struct LibraryPage {
     total: i64,
     loaded: u32,
     loading: bool,
+    /// Bumped every time `reset()` restarts the result set (filter/sort
+    /// change). Carried on in-flight `LibraryCmd::Page` fetches so a
+    /// response for a superseded filter can be told apart from one that
+    /// still matches — see `reset()` and `update_cmd_with_view`.
+    generation: u64,
     /// Set once the server returns a short page — there is nothing left
     /// to fetch for the current filter, whatever `total` claims.
     exhausted: bool,
@@ -100,7 +105,9 @@ pub(crate) enum LibraryMsg {
 }
 
 pub(crate) enum LibraryCmd {
-    Page(Result<FindScenesPage, String>),
+    /// The generation the originating fetch was issued under — see
+    /// `LibraryPage::generation`.
+    Page(u64, Result<FindScenesPage, String>),
     Random(Result<Box<RandomPick>, String>),
     Thumbnail(Box<ThumbnailPayload>),
     ScanTriggered(Result<String, String>),
@@ -125,7 +132,11 @@ impl std::fmt::Debug for LibraryCmd {
     // debug level — just print the dimensions.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LibraryCmd::Page(res) => f.debug_tuple("Page").field(res).finish(),
+            LibraryCmd::Page(generation, res) => f
+                .debug_tuple("Page")
+                .field(generation)
+                .field(res)
+                .finish(),
             LibraryCmd::Random(res) => f
                 .debug_tuple("Random")
                 .field(&res.as_ref().map(|p| p.scene.as_ref().map(|s| &s.id)))
@@ -548,6 +559,7 @@ impl Component for LibraryPage {
             total: 0,
             loaded: 0,
             loading: false,
+            generation: 0,
             exhausted: false,
             error: None,
             cells: Rc::new(RefCell::new(HashMap::new())),
@@ -719,7 +731,19 @@ impl Component for LibraryPage {
         _root: &Self::Root,
     ) {
         match msg {
-            LibraryCmd::Page(Ok(page)) => {
+            LibraryCmd::Page(generation, _result) if generation != self.generation => {
+                // Superseded by a filter/sort change (`reset()` bumped the
+                // generation and already cleared `loading` for the fetch
+                // that replaced this one) — drop it untouched. Do not touch
+                // `loading`/`total`/`loaded`/`exhausted`/the grid: those
+                // belong to whichever fetch is current, and this response
+                // isn't it.
+                tracing::debug!(
+                    "dropping stale scene page response (gen {generation}, current {})",
+                    self.generation
+                );
+            }
+            LibraryCmd::Page(_generation, Ok(page)) => {
                 self.loading = false;
                 self.error = None;
                 self.total = page.count;
@@ -743,7 +767,7 @@ impl Component for LibraryPage {
                     let _ = tx.send(LibraryMsg::MaybeLoadMore);
                 });
             }
-            LibraryCmd::Page(Err(e)) => {
+            LibraryCmd::Page(_generation, Err(e)) => {
                 self.loading = false;
                 self.error = Some(e);
             }
@@ -800,6 +824,12 @@ impl Component for LibraryPage {
 
 impl LibraryPage {
     fn reset(&mut self, widgets: &<Self as Component>::Widgets) {
+        // Supersede any in-flight fetch: bump the generation so its response
+        // gets dropped on arrival (see `update_cmd_with_view`), and clear
+        // `loading` so the caller's immediately-following `fetch_next_page`
+        // isn't blocked by that now-irrelevant in-flight request.
+        self.generation += 1;
+        self.loading = false;
         self.page = 0;
         self.total = 0;
         self.loaded = 0;
@@ -851,14 +881,15 @@ impl LibraryPage {
         self.page += 1;
         let filter = self.filter.clone();
         let page = self.page;
-        tracing::debug!("fetching scenes page {page}");
+        let generation = self.generation;
+        tracing::debug!("fetching scenes page {page} (gen {generation})");
         sender.oneshot_command(async move {
             let result = client.find_scenes(&filter, page, PAGE_SIZE).await;
             match &result {
                 Ok(p) => tracing::debug!("got {} scenes (total {})", p.scenes.len(), p.count),
                 Err(e) => tracing::warn!("find_scenes failed: {e}"),
             }
-            LibraryCmd::Page(result.map_err(|e| e.to_string()))
+            LibraryCmd::Page(generation, result.map_err(|e| e.to_string()))
         });
     }
 

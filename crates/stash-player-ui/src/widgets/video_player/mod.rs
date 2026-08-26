@@ -204,8 +204,9 @@ pub(crate) struct VideoPlayer {
     /// Transient borderless window holding the player while in fullscreen.
     /// `None` outside fullscreen.
     fs_window: Option<gtk::Window>,
-    /// Original parent of `root_box` to reparent back to on exit. Stored as
-    /// the inline overlay we were embedded in.
+    /// Original parent of `root_box` to reparent back to on exit. This is
+    /// the scene page's `player_slot` `gtk::Box` — `handle_toggle_fullscreen`
+    /// downcasts it back to `gtk::Box` to reattach, so it must stay one.
     fs_original_parent: Option<gtk::Widget>,
     /// OSD reveal-state flags (current request + most recently emitted edge).
     osd: OsdState,
