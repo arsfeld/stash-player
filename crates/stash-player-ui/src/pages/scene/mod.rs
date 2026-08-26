@@ -13,7 +13,8 @@ use adw::prelude::*;
 use stash_api::{Scene, SceneFilter};
 
 use crate::widgets::video_player::{
-    VideoPlayer, VideoPlayerInit, VideoPlayerMsg, VideoPlayerOutput,
+    SceneAction, SceneActionState, VideoPlayer, VideoPlayerInit, VideoPlayerMsg,
+    VideoPlayerOutput,
 };
 
 /// Position within a filtered result set so the scene page can fetch
@@ -446,6 +447,12 @@ impl Component for ScenePage {
                 VideoPlayerOutput::VolumeChanged { volume, muted } => {
                     SceneMsg::VolumeChanged { volume, muted }
                 }
+                VideoPlayerOutput::SceneAction(action) => match action {
+                    SceneAction::Prev => SceneMsg::Prev,
+                    SceneAction::Next => SceneMsg::Next,
+                    SceneAction::IncrementO => SceneMsg::IncrementO,
+                    SceneAction::ResetO => SceneMsg::ResetO,
+                },
             });
 
         let model = ScenePage {
@@ -551,6 +558,7 @@ impl Component for ScenePage {
                 });
             }
         }
+        self.push_scene_actions();
         self.update_view(widgets, sender);
     }
 
@@ -622,6 +630,7 @@ impl Component for ScenePage {
                 Err(e) => tracing::warn!("o-counter update failed for scene {scene_id}: {e}"),
             },
         }
+        self.push_scene_actions();
         self.update_view(widgets, sender);
     }
 }
@@ -659,6 +668,26 @@ impl ScenePage {
                 .as_ref()
                 .map(|c| c.total < 0 || (c.index as i64) + 1 < c.total)
                 .unwrap_or(false)
+    }
+
+    /// Push the OSD's scene-level control state to the player. Called
+    /// after anything that changes what those controls should show.
+    fn push_scene_actions(&self) {
+        let o_count = match &self.state {
+            State::Loaded(scene) => scene.o_counter.unwrap_or(0),
+            _ => 0,
+        };
+        let rating100 = match &self.state {
+            State::Loaded(scene) => scene.rating100,
+            _ => None,
+        };
+        self.player
+            .emit(VideoPlayerMsg::SetSceneActions(SceneActionState {
+                can_prev: self.can_go_prev(),
+                can_next: self.can_go_next(),
+                o_count,
+                rating100,
+            }));
     }
 
     fn spawn_o_mutation(&self, sender: &ComponentSender<Self>, mutation: OMutation) {
