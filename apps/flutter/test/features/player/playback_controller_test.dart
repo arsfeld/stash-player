@@ -1236,6 +1236,65 @@ void main() {
   });
 
   group('disposal', () {
+    test("disposing while a scene is still loading (before its own resume "
+        "seek ever landed) does not wipe that scene's real resume point "
+        'with a bogus zero (Item 1: N4 threaded into the dispose boundary, '
+        "not just replaceScene — dispose's own flush must respect "
+        '_positionEstablished too)', () async {
+      final engine = FakePlaybackEngine();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final connectionCompleter = Completer<ConnectionConfig>();
+      final controller = PlaybackController(
+        engine: engine,
+        resolveConnection: () => connectionCompleter.future,
+        setFullscreenPlatform: (value) async => true,
+        activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
+          resumePositionSeconds: resumePositionSeconds,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async {
+                calls.add((
+                  id: id,
+                  resumeTime: resumeTime,
+                  playDuration: playDuration,
+                ));
+              },
+          delay: (_) async {},
+        ),
+      );
+
+      // Scene b starts loading but never reaches its own resume-seek
+      // decision point — parked awaiting resolveConnection, well
+      // before `_engine.open`/`seek`. The user never watches a frame
+      // of it.
+      final loadFuture = controller.loadScene(
+        _sceneWith(id: 'b', duration: 2000),
+      );
+      await pumpEventQueue();
+
+      // The user navigates away (closes the window) before b ever
+      // finishes loading.
+      await controller.dispose();
+
+      expect(
+        calls.where((c) => c.id == 'b'),
+        isEmpty,
+        reason:
+            "b's position was never established and nothing was ever "
+            'queued for it either — there is nothing genuine to '
+            'report, so dispose must not send resumeTime: 0.0, '
+            'playDuration: 0.0 for it',
+      );
+
+      // Let the parked loadScene settle harmlessly (it bails out on
+      // its own post-dispose generation/disposed guard).
+      connectionCompleter.complete(_config);
+      await loadFuture;
+    });
+
     test(
       'flushes activity before disposing the engine, exactly once',
       () async {
@@ -1335,46 +1394,53 @@ void main() {
       },
     );
 
-    test(
-      'a throwing flush does not strand the engine undisposed, and does '
-      'not escape as an unhandled error (I5) — it still reports a warning',
-      () async {
-        final engine = FakePlaybackEngine();
-        final warnings = <String>[];
-        final controller = _buildController(
-          engine: engine,
-          saveActivity:
-              ({
-                required id,
-                required resumeTime,
-                required playDuration,
-              }) async => throw StateError('network down'),
-          onActivityWarning: warnings.add,
-          // Retry backoffs resolve instantly (as everywhere else in this
-          // file), but ActivitySync.dispose races its own flush against
-          // disposeFlushTimeout using this *same* injected delay function
-          // — with every delay instant, the timeout branch can "win" on
-          // raw microtask-hop count alone (fewer hops than a full
-          // 4-attempt cycle), hard-stopping the flush before it ever
-          // reaches its warning. That race has its own dedicated,
-          // deterministic tests in activity_sync_test.dart; this test is
-          // about the flush's own warning, so disposeFlushTimeout
-          // specifically never resolves here, letting dispose() wait for
-          // the flush's full (instantly-retried) cycle to genuinely
-          // finish instead.
-          activityDelay: (duration) => duration == disposeFlushTimeout
-              ? Completer<void>().future
-              : Future<void>.value(),
-        );
-        await controller.loadScene(_sceneWith());
+    test('a throwing flush does not strand the engine undisposed, and does '
+        'not escape as an unhandled error (I5) — it still reports a '
+        'warning, and the engine still gets disposed, once the flush chain '
+        'settles', () async {
+      // This is a wiring test, not a timing one: it proves the
+      // controller correctly disposes the engine and forwards
+      // ActivitySync's warning through its own `onActivityWarning`,
+      // regardless of how long the underlying flush chain takes to
+      // settle. Whether a fully-failing dispose flush *genuinely*
+      // manages to warn within the real disposeFlushTimeout budget is
+      // a question about ActivitySync's own timing, proved directly —
+      // with fake_async and the real retry/timeout durations, no
+      // PlaybackController involved — by
+      // "a fully-failing dispose flush warns within the real
+      // disposeFlushTimeout budget" in activity_sync_test.dart.
+      // Reproducing that same proof here isn't possible: fake_async
+      // does not reliably drive a broadcast StreamController
+      // subscription's `.cancel()` future (a well-known limitation —
+      // verified directly: it resolves on the real event loop after
+      // the fakeAsync zone's callback returns, not during any
+      // elapse()/flushMicrotasks() call within it), and
+      // `_cancelSubscriptions()` in `PlaybackController.dispose()`
+      // depends on exactly that. So this test keeps the instant-delay
+      // style used everywhere else in this file — disposeFlushTimeout
+      // specifically never resolves, letting the flush's own
+      // (instantly-retried) 4-attempt cycle genuinely finish and warn,
+      // which is all this test needs to prove the wiring.
+      final engine = FakePlaybackEngine();
+      final warnings = <String>[];
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async =>
+                throw StateError('network down'),
+        onActivityWarning: warnings.add,
+        activityDelay: (duration) => duration == disposeFlushTimeout
+            ? Completer<void>().future
+            : Future<void>.value(),
+      );
+      await controller.loadScene(_sceneWith());
 
-        await controller.dispose();
+      await controller.dispose();
 
-        expect(engine.isDisposed, isTrue);
-        expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));
-        expect(warnings, [activitySyncWarningMessage]);
-      },
-    );
+      expect(engine.isDisposed, isTrue);
+      expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));
+      expect(warnings, [activitySyncWarningMessage]);
+    });
 
     test(
       'commands issued after dispose are no-ops, never reaching the engine',

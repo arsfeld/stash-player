@@ -453,7 +453,13 @@ class PlaybackController extends ChangeNotifier {
       // or the engine dispose below from still running.
     }
     try {
-      await _activitySync.dispose();
+      // `_positionEstablished` covers this flush boundary the same way it
+      // already covers `replaceScene` (N4): if the user navigated away
+      // before this scene's own resume seek (or any position event) ever
+      // landed, `_state.position` is still just the zeroed placeholder
+      // from `loadScene`'s initial state build, not a real position — so
+      // ActivitySync must not fall back to reporting it as one.
+      await _activitySync.dispose(resumePositionKnown: _positionEstablished);
     } catch (_) {
       // ActivitySync.dispose is contractually guaranteed not to throw,
       // but this stays as belt-and-braces (I5): a sync failure must never

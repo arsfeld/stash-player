@@ -53,18 +53,38 @@ const _tickWakeupInterval = Duration(seconds: 1);
 /// the safe assumption is that they weren't.
 const _maxSingleActiveSpan = Duration(seconds: 30);
 
+/// Flat headroom added to [retryDelays]'s own sum when computing
+/// [disposeFlushTimeout] — see that constant's doc for why a margin is
+/// needed at all. 3 seconds is deliberately small: a clearly-down
+/// checkpoint endpoint (connection refused, DNS failure) typically fails
+/// each attempt in well under a second, so this comfortably covers all
+/// four attempts' own round-trip time without materially loosening the
+/// dispose bound. It does not, and cannot, cover an endpoint that hangs
+/// instead of failing fast — `stash-api`'s HTTP client has no per-request
+/// `.timeout()` today, which is a separate, already-tracked gap.
+const _disposeFlushMargin = Duration(seconds: 3);
+
 /// Upper bound on how long [ActivitySync.dispose] will wait for its final
-/// checkpoint before giving up and letting teardown proceed — the sum of
-/// [retryDelays] (the worst case for one flush's own retry schedule) is
-/// the natural, principled choice: any single flush that hasn't resolved
-/// by then is either still waiting on a slow network response or genuinely
-/// stuck, and either way `PlaybackController.dispose` must not be starved
-/// behind it (a disposed engine is a "keeps playing audio in the
-/// background" bug, which is strictly worse than an unsynced checkpoint).
-final Duration disposeFlushTimeout = retryDelays.fold(
-  Duration.zero,
-  (sum, delay) => sum + delay,
-);
+/// checkpoint before giving up and letting teardown proceed. Must be
+/// *strictly greater* than the sum of [retryDelays] (not merely equal to
+/// it, as an earlier version of this constant was): a fully-failing
+/// checkpoint's fourth attempt only begins once all three backoff delays
+/// (1s + 2s + 4s = 7s) have elapsed, so a timeout of exactly 7s always
+/// resolves at the same instant that final attempt would even start,
+/// hard-stopping the chain (see [ActivitySync.dispose]'s own doc) before
+/// it can be sent and before the brief's mandated "after the final failed
+/// retry, call onWarning once" can ever happen on this boundary. Any
+/// single flush that hasn't resolved by [retryDelays]'s sum plus
+/// [_disposeFlushMargin] is either still waiting on a slow network
+/// response or genuinely stuck, and either way `PlaybackController.dispose`
+/// must not be starved behind it indefinitely (a disposed engine is a
+/// "keeps playing audio in the background" bug) — but `PlaybackController`
+/// pauses the engine before this flush ever runs (see its own `dispose`
+/// doc), so the few extra seconds this margin adds no longer carry that
+/// risk the way an unbounded wait would have.
+final Duration disposeFlushTimeout =
+    retryDelays.fold(Duration.zero, (sum, delay) => sum + delay) +
+    _disposeFlushMargin;
 
 /// Wall-clock activity accounting for one [PlaybackController]: how many
 /// seconds of a scene the user has actually watched since the last
@@ -585,14 +605,24 @@ class ActivitySync {
   /// still-detached one occupying [_flushTail] ahead of it) actually
   /// settles, [_hardStopped] is set so it can never call `saveActivity` or
   /// `onWarning` again afterwards. Safe to call more than once.
-  Future<void> dispose() async {
+  ///
+  /// [resumePositionKnown] mirrors [replaceScene]'s own
+  /// `outgoingResumeSeconds` — pass `false` when the caller's live
+  /// `resumePositionSeconds` callback doesn't yet reflect a real,
+  /// established position for the current scene (e.g. the user navigated
+  /// away before a resume seek ever landed). With nothing queued either,
+  /// this skips the network call entirely rather than reporting a bogus
+  /// `resumeTime: 0.0` that would wipe that scene's real resume point —
+  /// the same failure mode [replaceScene] already guards against, just on
+  /// this flush boundary instead.
+  Future<void> dispose({bool resumePositionKnown = true}) async {
     if (_disposed) return;
     _disposed = true;
     _timer?.cancel();
     _timer = null;
     final flushSettled = Completer<void>();
     unawaited(
-      _enqueueFlush().then((_) {
+      _enqueueFlush(requireKnownResumeTime: !resumePositionKnown).then((_) {
         if (!flushSettled.isCompleted) flushSettled.complete();
       }),
     );

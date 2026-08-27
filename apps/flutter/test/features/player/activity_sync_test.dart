@@ -709,6 +709,50 @@ void main() {
         expect(delay.requested, contains(disposeFlushTimeout));
       },
     );
+
+    test('a fully-failing dispose flush warns within the real '
+        'disposeFlushTimeout budget (Item 2: disposeFlushTimeout must '
+        "exceed the retry schedule's own 1s+2s+4s=7s sum, or the fourth "
+        'attempt — and its warning — could never happen at all on this '
+        'boundary)', () {
+      fakeAsync((async) {
+        var saveCalls = 0;
+        final warnings = <String>[];
+        // No `clock`/`delay` overrides here — the real `DateTime.now`
+        // and `Future.delayed` defaults are the point: this proves the
+        // genuine production timing (the real retry backoff racing the
+        // real disposeFlushTimeout), not an injected stand-in for
+        // either side. fakeAsync drives both deterministically, with
+        // no real sleeping.
+        final sync = ActivitySync(
+          resumePositionSeconds: () => 0.0,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async {
+                saveCalls++;
+                throw StateError('checkpoint endpoint down');
+              },
+          onWarning: warnings.add,
+        );
+        sync.replaceScene('s1', outgoingResumeSeconds: 0);
+        async.flushMicrotasks();
+
+        sync.dispose();
+        async.elapse(disposeFlushTimeout + const Duration(seconds: 1));
+
+        expect(
+          saveCalls,
+          4,
+          reason:
+              'all four attempts (1 initial + 3 retries) must be sent '
+              'within the real budget',
+        );
+        expect(warnings, [activitySyncWarningMessage]);
+      });
+    });
   });
 
   group('hard stop after a timed-out dispose (N2)', () {
