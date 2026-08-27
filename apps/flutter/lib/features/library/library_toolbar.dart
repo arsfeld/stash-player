@@ -6,7 +6,10 @@ import '../../domain/scene_filter.dart';
 
 /// Width, in logical pixels, at and above which every control renders
 /// directly in one [Wrap]. Below it, only search and "Play random" stay
-/// in the primary row; the rest move into a [MenuAnchor].
+/// in the primary row; the rest move into a collapsible second row,
+/// toggled by a "Filters" button (the brief's own wording explicitly
+/// allows either "wrap into a second row or Filters popup" — see the
+/// class doc for why this picked the row).
 const double libraryToolbarWideBreakpoint = 760;
 
 /// The library's filter/sort/paging controls.
@@ -18,6 +21,19 @@ const double libraryToolbarWideBreakpoint = 760;
 /// signature intentionally matches a [LibraryController] intent 1:1 so
 /// the owning screen can pass the controller's methods straight through
 /// as tear-offs.
+///
+/// The secondary controls at a narrow width are an **in-tree collapsible
+/// row**, not a [MenuAnchor] popup. An earlier version used `MenuAnchor`
+/// for this — it looked keyboard-accessible (`Enter` on the trigger did
+/// open it, and the opened items were findable), but a dedicated probe
+/// showed `Tab` from the trigger jumps straight past the *entire open
+/// overlay* to "Play random": `MenuAnchor`'s overlay is not part of the
+/// same focus-traversal chain as the surrounding page, so nothing inside
+/// it is reachable by sequential `Tab` at all. Keeping every control as a
+/// normal descendant — just conditionally visible — keeps it in the
+/// page's own [FocusTraversalGroup], where explicit [FocusTraversalOrder]
+/// values below pin the required Tab sequence regardless of which
+/// visual row a control currently renders in.
 class LibraryToolbar extends StatefulWidget {
   const LibraryToolbar({
     required this.filter,
@@ -49,6 +65,11 @@ class LibraryToolbar extends StatefulWidget {
 class _LibraryToolbarState extends State<LibraryToolbar> {
   late final TextEditingController _searchController;
   Timer? _debounce;
+
+  /// Whether the narrow-width secondary-controls row is expanded. Unused
+  /// at/above [libraryToolbarWideBreakpoint], where every control always
+  /// shows.
+  bool _filtersOpen = false;
 
   final _searchFocusNode = FocusNode(debugLabel: 'library-search');
   final _sortFocusNode = FocusNode(debugLabel: 'library-sort');
@@ -105,6 +126,12 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 250), () {
+      // The widget itself may have been unmounted between scheduling
+      // this timer and it firing — `dispose()` above already cancels
+      // the timer in that case, but this guard is cheap defense in
+      // depth against ever reaching into a stale `widget.onQueryChanged`
+      // once this State is no longer part of the tree.
+      if (!mounted) return;
       widget.onQueryChanged(value);
     });
   }
@@ -113,36 +140,67 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final wide = constraints.maxWidth >= libraryToolbarWideBreakpoint;
-      if (wide) {
-        return Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(width: 260, child: _searchField()),
-            _sortDropdown(),
-            _directionToggle(),
-            _minimumRatingDropdown(),
-            _organizedControl(),
-            _hideTrackedControl(),
-            _playRandomButton(),
-            _settingsButton(),
-          ],
-        );
-      }
-      return Row(
-        children: [
-          Expanded(child: _searchField()),
-          const SizedBox(width: 8),
-          _filtersMenu(),
-          const SizedBox(width: 8),
-          _playRandomButton(),
-          const SizedBox(width: 8),
-          _settingsButton(),
-        ],
+      return FocusTraversalGroup(
+        policy: OrderedTraversalPolicy(),
+        child: wide ? _wideLayout() : _narrowLayout(),
       );
     },
   );
+
+  Widget _wideLayout() => Wrap(
+    spacing: 12,
+    runSpacing: 12,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    children: [
+      _ordered(1, SizedBox(width: 260, child: _searchField())),
+      _ordered(2, _sortDropdown()),
+      _ordered(3, _directionToggle()),
+      _ordered(4, _minimumRatingDropdown()),
+      _ordered(5, _organizedControl()),
+      _ordered(6, _hideTrackedControl()),
+      _ordered(7, _playRandomButton()),
+      _ordered(8, _settingsButton()),
+    ],
+  );
+
+  Widget _narrowLayout() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(child: _ordered(1, _searchField())),
+          const SizedBox(width: 8),
+          _ordered(1.5, _filtersToggleButton()),
+          const SizedBox(width: 8),
+          _ordered(7, _playRandomButton()),
+          const SizedBox(width: 8),
+          _ordered(8, _settingsButton()),
+        ],
+      ),
+      if (_filtersOpen)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _ordered(2, _sortDropdown()),
+              _ordered(3, _directionToggle()),
+              _ordered(4, _minimumRatingDropdown()),
+              _ordered(5, _organizedControl()),
+              _ordered(6, _hideTrackedControl()),
+            ],
+          ),
+        ),
+    ],
+  );
+
+  /// Pins [child]'s position in the toolbar's [OrderedTraversalPolicy]
+  /// regardless of which visual row it currently renders in — see the
+  /// class doc for why this is necessary at the narrow width.
+  Widget _ordered(double order, Widget child) =>
+      FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
 
   Widget _searchField() => TextField(
     key: const Key('library-search'),
@@ -259,36 +317,14 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     ),
   );
 
-  Widget _filtersMenu() => MenuAnchor(
-    builder: (context, controller, child) => Tooltip(
-      message: 'Filters',
-      child: IconButton(
-        focusNode: _filtersFocusNode,
-        icon: const Icon(Icons.tune),
-        onPressed: () =>
-            controller.isOpen ? controller.close() : controller.open(),
-      ),
+  Widget _filtersToggleButton() => Tooltip(
+    message: 'Filters',
+    child: IconButton(
+      focusNode: _filtersFocusNode,
+      isSelected: _filtersOpen,
+      icon: const Icon(Icons.tune),
+      onPressed: () => setState(() => _filtersOpen = !_filtersOpen),
     ),
-    menuChildren: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _sortDropdown(),
-            const SizedBox(height: 8),
-            _directionToggle(),
-            const SizedBox(height: 8),
-            _minimumRatingDropdown(),
-            const SizedBox(height: 8),
-            _organizedControl(),
-            const SizedBox(height: 8),
-            _hideTrackedControl(),
-          ],
-        ),
-      ),
-    ],
   );
 
   String _sortLabel(SceneSort sort) => switch (sort) {

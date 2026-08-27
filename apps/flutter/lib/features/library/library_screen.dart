@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/app_controller.dart';
 import '../../app/notices.dart';
 import '../../app/providers.dart';
+import '../../domain/failure.dart';
 import '../../services/thumbnail_repository.dart';
 import 'library_controller.dart';
 import 'library_state.dart';
@@ -47,38 +48,41 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     });
   }
 
-  Future<void> _clearFilters(LibraryController controller) async {
-    // Each call below is its own `set*` intent — the controller has no
-    // single "reset the whole filter" method, so this awaits each in
-    // turn rather than firing them concurrently, which would otherwise
-    // issue (and immediately discard) a wasted request per intermediate
-    // call. Every intent goes through the controller's own `clear*`
-    // flags (see `setMinimumRating`/`setOrganized`), so this can't fall
-    // into the "passing null is a silent no-op" trap described in
-    // `SceneFilter.copyWith`'s own doc comment — that trap only exists
-    // for code that builds a `SceneFilter` directly.
-    await controller.setQuery('');
-    await controller.setMinimumRating(null);
-    await controller.setOrganized(null);
-    await controller.setHideTracked(false);
+  /// Surfaces both `playRandom`'s explicit "nothing matched" outcome and
+  /// any thrown failure as a dismissible [globalNoticeProvider] notice —
+  /// `LibraryController.playRandom` has no try/catch of its own (it
+  /// calls the API directly, not through `_fetchNextPage`'s error
+  /// handling), and this was previously invoked as a fire-and-forget
+  /// `VoidCallback` with nothing downstream to observe a thrown
+  /// `Failure`: a server outage during "Play random" silently did
+  /// nothing but leave an unhandled async error on stderr.
+  Future<void> _handlePlayRandom(LibraryController controller) async {
+    try {
+      final result = await controller.playRandom();
+      if (!mounted) return;
+      switch (result) {
+        case RandomSceneFound(:final scene):
+          ref.read(appControllerProvider.notifier).openScene(scene.id);
+        case RandomSceneEmpty():
+          _showNotice('No scenes match these filters', AppNoticeSeverity.info);
+      }
+    } on Failure catch (failure) {
+      if (!mounted) return;
+      _showNotice(failure.userMessage, AppNoticeSeverity.error);
+    } catch (_) {
+      // Mirrors `LibraryController`'s own fallback for a bare,
+      // non-`Failure` error surfacing through the deferred `StashApi`
+      // adapter (e.g. secure storage access denied) — see that class's
+      // doc comment on `_fetchNextPage`.
+      if (!mounted) return;
+      _showNotice('Could not play a random scene.', AppNoticeSeverity.error);
+    }
   }
 
-  Future<void> _handlePlayRandom(LibraryController controller) async {
-    final result = await controller.playRandom();
-    if (!mounted) return;
-    switch (result) {
-      case RandomSceneFound(:final scene):
-        ref.read(appControllerProvider.notifier).openScene(scene.id);
-      case RandomSceneEmpty():
-        ref
-            .read(globalNoticeProvider.notifier)
-            .show(
-              AppNotice(
-                message: 'No scenes match these filters',
-                severity: AppNoticeSeverity.info,
-              ),
-            );
-    }
+  void _showNotice(String message, AppNoticeSeverity severity) {
+    ref
+        .read(globalNoticeProvider.notifier)
+        .show(AppNotice(message: message, severity: severity));
   }
 
   @override
@@ -124,7 +128,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 state: state,
                 controller: controller,
                 thumbnailRepository: thumbnailRepository,
-                onClearFilters: () => _clearFilters(controller),
+                onClearFilters: controller.clearFilters,
                 onOpenScene: (sceneId) =>
                     ref.read(appControllerProvider.notifier).openScene(sceneId),
               ),

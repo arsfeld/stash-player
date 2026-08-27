@@ -136,8 +136,9 @@ ProviderContainer _container({
       // keeps that fetch from staying in `loading` forever (an
       // indeterminate `CircularProgressIndicator`, which would hang any
       // `pumpAndSettle` in this file that lands on the library).
-      (config) => FakeStashApi(versionValue: 'v0.31.0')
-        ..pages.add(ScenePage(total: 0, scenes: const [])),
+      (config) =>
+          FakeStashApi(versionValue: 'v0.31.0')
+            ..pages.add(ScenePage(total: 0, scenes: const [])),
     ),
     connectionControllerOverride,
   ],

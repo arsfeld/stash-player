@@ -97,6 +97,26 @@ class LibraryController extends ChangeNotifier {
     bumpGeneration: true,
   );
 
+  /// Resets query, minimum rating, organized, and hide-tracked to a
+  /// neutral "show everything" state in a single request.
+  ///
+  /// Deliberately not four chained `set*` calls: each is its own full
+  /// `_resetAndFetch` (bump generation, reset state, fetch page 1), so
+  /// chaining them would issue four page-1 requests and discard three —
+  /// blanking the grid to empty between each — for one logical intent.
+  /// Building one `SceneFilter` with every `clear*` flag set keeps this
+  /// to exactly one round trip. Sort and direction are left untouched —
+  /// they don't affect whether any scenes match, only their order.
+  Future<void> clearFilters() => _resetAndFetch(
+    _state.filter.copyWith(
+      query: '',
+      clearMinimumRating: true,
+      clearOrganized: true,
+      hideTracked: false,
+    ),
+    bumpGeneration: true,
+  );
+
   /// Re-requests the page that just failed, keeping whatever scenes were
   /// already accepted before the failure.
   Future<void> retry() async {
@@ -158,6 +178,14 @@ class LibraryController extends ChangeNotifier {
         ? _state.generation + 1
         : _state.generation;
     _state = LibraryState(filter: prepared, generation: generation);
+    // Guards `notifyListeners()` exactly like `_fetchNextPage`'s own
+    // post-await calls do (see that method's stale-response comment) —
+    // a caller can reach this after `dispose()` when e.g. a widget's
+    // debounced search callback still holds a tear-off of a `set*`
+    // method bound to a controller a connection-generation bump has
+    // since disposed. `ChangeNotifier.notifyListeners` asserts (and
+    // throws) when called on a disposed notifier.
+    if (_disposed) return;
     notifyListeners();
     await _fetchNextPage();
   }

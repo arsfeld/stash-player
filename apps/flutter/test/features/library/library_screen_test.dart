@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app_controller.dart';
+import 'package:stash_player_flutter/app/notices.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
@@ -12,6 +13,7 @@ import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/library/library_controller.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/library/library_state.dart';
+import 'package:stash_player_flutter/features/library/scene_card.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 
@@ -22,10 +24,11 @@ Scene _scene({
   String? title,
   int? rating100,
   double? resumeTime,
+  String? screenshot,
   List<SceneFile> files = const [],
 }) => Scene(
   id: id,
-  paths: const ScenePaths(),
+  paths: ScenePaths(screenshot: screenshot),
   title: title,
   rating100: rating100,
   resumeTime: resumeTime,
@@ -34,6 +37,81 @@ Scene _scene({
 
 List<Scene> _scenes(int count, {int start = 0}) =>
     List.generate(count, (i) => _scene(id: '${start + i}'));
+
+/// A minimal, genuinely decodable 1x1 transparent PNG — used wherever a
+/// test needs `Image.memory` to actually succeed rather than merely
+/// receiving non-empty bytes (arbitrary bytes would fail to decode and
+/// could surface as an async image error rather than exercising the
+/// success path this is meant to test).
+final Uint8List _transparentPng = Uint8List.fromList(const [
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+]);
 
 class _Harness {
   _Harness(this.container, this.controller, this.api);
@@ -277,6 +355,168 @@ void main() {
       // in `shared/scene_placeholder.dart`'s own usage.
       expect(find.byType(ScenePlaceholder), findsOneWidget);
     });
+
+    testWidgets('a scene with a screenshot and a successfully loaded thumbnail '
+        'renders as an Image', (tester) async {
+      final scene = _scene(id: '1', screenshot: 'thumb.jpg');
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: [scene]));
+      await _pumpLibrary(
+        tester,
+        api: api,
+        thumbnailRepository: FakeThumbnailRepository(bytes: _transparentPng),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byType(SceneCard),
+          matching: find.byType(Image),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(ScenePlaceholder), findsNothing);
+    });
+
+    testWidgets(
+      'a scene with a screenshot that fails to load falls back to the '
+      'placeholder, not a crash',
+      (tester) async {
+        final scene = _scene(id: '1', screenshot: 'thumb.jpg');
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: [scene]));
+        // `bytes: null` (the default) is exactly what `ThumbnailRepository`
+        // resolves to for a failed fetch/decode per its own contract.
+        await _pumpLibrary(
+          tester,
+          api: api,
+          thumbnailRepository: FakeThumbnailRepository(),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(ScenePlaceholder), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(SceneCard),
+            matching: find.byType(Image),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'does not re-fetch an already-served or in-flight thumbnail when an '
+      'unrelated state change rebuilds the still-visible card',
+      (tester) async {
+        // Reproduces the exact failure scenario: `LibraryScreen` watches
+        // the whole `ChangeNotifierProvider`, so the `phase: loading`
+        // notification a page-2 fetch fires rebuilds every card that's
+        // still on screen from page 1 — calling `repository.load` again
+        // for those already-fetched sources without the fix in
+        // `_SceneThumbnailState` (Finding 1). Page 1 must be a full,
+        // exactly-`libraryPageSize`-long page: `hasMore` (and so whether
+        // a second page can even be requested at all) goes false the
+        // instant a page comes back shorter than that, regardless of
+        // `total` — see `LibraryController._fetchNextPage`.
+        final page1Sources = List.generate(48, (i) => 'thumb-$i.jpg');
+        final page1 = List.generate(
+          48,
+          (i) => _scene(id: '$i', screenshot: page1Sources[i]),
+        );
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 100, scenes: page1));
+        final thumbnailRepo = FakeThumbnailRepository(bytes: _transparentPng);
+        final harness = await _pumpLibrary(
+          tester,
+          api: api,
+          thumbnailRepository: thumbnailRepo,
+          size: const Size(1200, 900),
+        );
+        await tester.pumpAndSettle();
+
+        // Only the cards actually laid out within the (finite) test
+        // viewport get built by the lazy `GridView.builder`, so this
+        // asserts a non-empty subset of page 1 was fetched exactly once
+        // each, not the full 48.
+        final afterPage1 = List<String>.of(thumbnailRepo.requestedSources);
+        expect(afterPage1, isNotEmpty);
+        expect(afterPage1.toSet().length, afterPage1.length); // no dupes yet
+        expect(page1Sources.toSet().containsAll(afterPage1), isTrue);
+
+        // Start a page-2 fetch without letting it resolve yet — this is
+        // the `phase: loading` notify that rebuilds every visible card.
+        final pending = harness.controller.ensureViewportFilled(
+          contentExtent: 100,
+          viewportExtent: 900,
+        );
+        await tester.pump();
+        expect(harness.controller.state.isLoading, isTrue);
+
+        // The already-fetched page-1 thumbnails must not be re-requested
+        // just because the controller notified its listeners.
+        expect(thumbnailRepo.requestedSources, afterPage1);
+
+        api.calls[1].completer.complete(
+          ScenePage(
+            total: 100,
+            scenes: [_scene(id: '48', screenshot: 'thumb-48.jpg')],
+          ),
+        );
+        await pending;
+        await tester.pumpAndSettle();
+
+        // Page 1's already-fetched sources are still not repeated once
+        // page 2 lands and the grid rebuilds again, and everything
+        // fetched so far is still unique — item 48 itself isn't asserted
+        // here since it's appended off the end of the list and, being
+        // outside the finite test viewport, is never built/fetched by
+        // the lazy `GridView.builder` in the first place.
+        final afterPage2 = thumbnailRepo.requestedSources;
+        expect(afterPage2.toSet().length, afterPage2.length);
+        expect(afterPage2, containsAll(afterPage1));
+      },
+    );
+  });
+
+  group('card metadata overflow', () {
+    // The grid delegate's `childAspectRatio` (16/12) leaves only
+    // `0.1875 * tileWidth` below the 16:9 thumbnail for the title +
+    // metadata row. `tileWidth = gridWidth / ceil(gridWidth / 320)` dips
+    // below the ~245px that budget needs at some common window widths
+    // (e.g. 384-554) and at any width once the system text scale grows
+    // — `SceneCard`'s `Expanded` + `FittedBox` (see that file) is meant
+    // to shrink to fit instead of overflowing in either case.
+    Scene longTitledScene() => _scene(
+      id: '1',
+      title: 'A reasonably long scene title for overflow testing',
+      rating100: 80,
+      files: const [SceneFile(duration: 3723)],
+    );
+
+    testWidgets('does not overflow at a narrow window width inside the '
+        'known-bad band', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: [longTitledScene()]));
+      await _pumpLibrary(tester, api: api, size: const Size(500, 900));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('does not overflow at an increased system text scale', (
+      tester,
+    ) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: [longTitledScene()]));
+      await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('responsive toolbar', () {
@@ -296,7 +536,7 @@ void main() {
     });
 
     testWidgets('at 620 search / Play random stay visible and secondary '
-        'controls move into a keyboard-accessible Filters popup', (
+        'controls move into a Filters row, opened by a mouse tap', (
       tester,
     ) async {
       final api = FakeStashApi()
@@ -309,26 +549,84 @@ void main() {
       expect(find.byTooltip('Filters'), findsOneWidget);
       expect(find.byType(DropdownButton<SceneSort>), findsNothing);
 
-      // Reachable by keyboard, not just a mouse tap: give the trigger
-      // focus and activate it with Enter, exactly as a keyboard-only user
-      // would, then confirm the secondary controls became available.
-      final filtersNode = tester
-          .widget<IconButton>(
-            find.descendant(
-              of: find.byTooltip('Filters'),
-              matching: find.byType(IconButton),
-            ),
-          )
-          .focusNode!;
-      filtersNode.requestFocus();
-      await tester.pump();
-      expect(FocusManager.instance.primaryFocus, filtersNode);
-
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.tap(find.byTooltip('Filters'));
       await tester.pumpAndSettle();
 
       expect(find.byType(DropdownButton<SceneSort>), findsOneWidget);
     });
+
+    testWidgets(
+      'at 620, Tab reaches the Filters trigger, Enter opens it, and Tab '
+      'then walks and can activate every secondary control inside — not '
+      'just a mouse-openable popup',
+      (tester) async {
+        // Regression test for a real, previously-shipped bug: an earlier
+        // version used a `MenuAnchor` popup here. `Enter` did open it and
+        // its contents were findable, but a dedicated probe showed `Tab`
+        // from the (still-focused) trigger jumped straight past the
+        // entire open overlay to "Play random" — none of the five
+        // secondary controls were reachable by keyboard at all, because
+        // `MenuAnchor`'s overlay isn't part of the surrounding page's
+        // focus-traversal chain. The fix replaced it with an in-tree
+        // collapsible row (see `LibraryToolbar`'s class doc), which this
+        // test exercises end-to-end by keyboard only.
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await _pumpLibrary(tester, api: api, size: const Size(620, 900));
+        await tester.pumpAndSettle();
+
+        // Reach the trigger the same way a keyboard-only user would —
+        // sequential Tab from nothing, not `FocusNode.requestFocus()`.
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab); // search
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab); // filters trigger
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'library-filters',
+        );
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(find.byType(DropdownButton<SceneSort>), findsOneWidget);
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab); // sort
+        await tester.pump();
+        expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-sort');
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab); // direction
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'library-direction',
+        );
+
+        // Activate it — not just reachable, but usable by keyboard.
+        api.pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(api.requestedFilters.last.direction, SortDirection.ascending);
+
+        for (final label in [
+          'library-minimum-rating',
+          'library-organized',
+          'library-hide-tracked',
+        ]) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pump();
+          expect(FocusManager.instance.primaryFocus?.debugLabel, label);
+        }
+
+        // Tab continues on into the primary row afterward, exactly as at
+        // the wide breakpoint.
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab); // random
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'library-random',
+        );
+      },
+    );
   });
 
   group('sort labels', () {
@@ -372,6 +670,117 @@ void main() {
       expect(find.byTooltip('Connection settings'), findsOneWidget);
       expect(find.byTooltip('Organized: any'), findsOneWidget);
     });
+  });
+
+  group('search debounce', () {
+    testWidgets(
+      'coalesces rapid typing into exactly one outgoing request, 250ms '
+      'after the last keystroke',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await _pumpLibrary(tester, api: api);
+        await tester.pumpAndSettle();
+        expect(api.calls, hasLength(1)); // the initial load only, so far
+
+        api.pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        final searchField = find.byKey(const Key('library-search'));
+        await tester.enterText(searchField, 'a');
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.enterText(searchField, 'ab');
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.enterText(searchField, 'abc');
+        // Each keystroke above landed well inside the previous one's
+        // 250ms window, so only the *last* debounce timer should ever
+        // fire — this pump is long enough to let it.
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(api.calls, hasLength(2)); // initial load + exactly one query
+        expect(api.requestedFilters.last.query, 'abc');
+      },
+    );
+
+    testWidgets(
+      'typing then unmounting before the debounce fires does not throw',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await _pumpLibrary(tester, api: api);
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+          find.byKey(const Key('library-search')),
+          'partial',
+        );
+        // The 250ms debounce timer is now armed but hasn't fired.
+        await tester.pumpWidget(const SizedBox.shrink());
+
+        // Must not throw once the timer's original fire time passes —
+        // regression guard for both the widget-level `mounted` check in
+        // `LibraryToolbar._onSearchChanged` and the controller-level
+        // `_disposed` guard in `LibraryController._resetAndFetch`.
+        await tester.pump(const Duration(milliseconds: 300));
+      },
+    );
+  });
+
+  group('play random', () {
+    testWidgets('a successful pick navigates to the chosen scene', (
+      tester,
+    ) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      final harness = await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      api.pages.add(ScenePage(total: 1, scenes: _scenes(1, start: 99)));
+      await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.container.read(appControllerProvider),
+        const AppDestination.scene('99'),
+      );
+    });
+
+    testWidgets('no matches shows a dismissible info notice', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      final harness = await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      api.pages.add(ScenePage(total: 0, scenes: const []));
+      await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+      await tester.pumpAndSettle();
+
+      final notice = harness.container.read(globalNoticeProvider);
+      expect(notice?.message, 'No scenes match these filters');
+      expect(notice?.severity, AppNoticeSeverity.info);
+    });
+
+    testWidgets(
+      'a server failure shows an error notice instead of an unhandled '
+      'exception',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        final harness = await _pumpLibrary(tester, api: api);
+        await tester.pumpAndSettle();
+
+        api.pageFailures.add(const TransportFailure());
+        await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+        await tester.pumpAndSettle();
+
+        final notice = harness.container.read(globalNoticeProvider);
+        expect(notice?.message, 'Could not reach the Stash server.');
+        expect(notice?.severity, AppNoticeSeverity.error);
+        // No card navigation happened as a side effect of the failure.
+        expect(
+          harness.container.read(appControllerProvider),
+          const AppDestination.connection(),
+        );
+      },
+    );
   });
 
   group('keyboard reachability', () {
@@ -461,16 +870,16 @@ void main() {
         expect(harness.controller.state.filter.organized, isTrue);
         expect(find.text('No scenes match these filters'), findsOneWidget);
 
-        // "Clear filters" issues its own four sequential `set*` calls
-        // (see `LibraryScreen._clearFilters`) — one queued page per call.
-        api.pages.addAll([
-          ScenePage(total: 1, scenes: _scenes(1)),
-          ScenePage(total: 1, scenes: _scenes(1)),
-          ScenePage(total: 1, scenes: _scenes(1)),
-          ScenePage(total: 1, scenes: _scenes(1)),
-        ]);
+        // "Clear filters" now forwards straight to
+        // `LibraryController.clearFilters()`, a single request rather
+        // than four chained `set*` calls — one queued page, and the
+        // call count assertion below, is what pins that.
+        final callsBeforeClear = api.calls.length;
+        api.pages.add(ScenePage(total: 1, scenes: _scenes(1)));
         await tester.tap(find.widgetWithText(OutlinedButton, 'Clear filters'));
         await tester.pumpAndSettle();
+
+        expect(api.calls, hasLength(callsBeforeClear + 1));
 
         final outgoing = api.requestedFilters.last;
         expect(outgoing.query, '');

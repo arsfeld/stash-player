@@ -96,45 +96,72 @@ class _SceneCardState extends State<SceneCard> {
                     ),
                 ],
               ),
-              Padding(
-                // Kept deliberately tight: the grid delegate's
-                // `childAspectRatio` (16/12) budgets only enough height
-                // below a 16:9 thumbnail for a single title line plus one
-                // metadata row — anything roomier overflows the cell.
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      scene.displayTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (duration != null) ...[
-                          const Icon(Icons.schedule, size: 14),
-                          const SizedBox(width: 4),
+              // The grid delegate's `childAspectRatio` (16/12) leaves only
+              // `0.1875 * tileWidth` below the 16:9 thumbnail for this
+              // metadata block, and that budget shrinks below what a
+              // title line plus one metadata row needs at some common
+              // window widths (and at any width once the system text
+              // scale grows) — a fixed-height Column here overflows in
+              // exactly those cases. `Expanded` gives this block whatever
+              // is actually left (never negative, since the thumbnail
+              // above is always shorter than the whole cell), and
+              // `FittedBox` uniformly shrinks its content to fit that
+              // space instead of overflowing it — the tradeoff is that a
+              // card squeezed enough shows smaller text rather than
+              // truncating further, which is preferable to a rendering
+              // error. `ConstrainedBox` caps the *reference* size the
+              // title lays out at before any shrinking, so the `Text`'s
+              // own `overflow: ellipsis` still has a meaningful width to
+              // truncate against for a very long title.
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 400),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            formatDuration(duration),
-                            style: Theme.of(context).textTheme.bodySmall,
+                            scene.displayTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (duration != null) ...[
+                                const Icon(Icons.schedule, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  formatDuration(duration),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                              if (duration != null && scene.rating100 != null)
+                                const SizedBox(width: 12),
+                              if (scene.rating100 case final int rating100) ...[
+                                const Icon(Icons.star, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  formatRating(rating100),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ],
                           ),
                         ],
-                        if (duration != null && scene.rating100 != null)
-                          const SizedBox(width: 12),
-                        if (scene.rating100 case final int rating100) ...[
-                          const Icon(Icons.star, size: 14),
-                          const SizedBox(width: 4),
-                          Text(
-                            formatRating(rating100),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -145,7 +172,21 @@ class _SceneCardState extends State<SceneCard> {
   }
 }
 
-class _SceneThumbnail extends StatelessWidget {
+/// Loads (and caches) the thumbnail for [source] via [thumbnailRepository].
+///
+/// A `StatefulWidget` specifically so the loaded [Future] is created once
+/// per (source, repository) pair and reused across rebuilds, rather than
+/// inside `build()` — [LibraryScreen] watches a `ChangeNotifierProvider`,
+/// so *every* `notifyListeners()` (a page landing, a filter change, a
+/// bottom-of-grid fetch starting or finishing) rebuilds every currently
+/// visible card. Calling `repository.load(...)` directly in `build()`
+/// would fire a brand new HTTP fetch for the same already-fetched (or
+/// already in-flight) thumbnail on every single one of those
+/// notifications — with dozens of cards on screen and no in-flight dedupe
+/// in `DiskThumbnailRepository` itself, a few page loads would queue
+/// hundreds of duplicate GETs behind the fetch semaphore and starve the
+/// thumbnails actually needed next.
+class _SceneThumbnail extends StatefulWidget {
   const _SceneThumbnail({
     required this.source,
     required this.thumbnailRepository,
@@ -155,17 +196,52 @@ class _SceneThumbnail extends StatelessWidget {
   final ThumbnailRepository? thumbnailRepository;
 
   @override
+  State<_SceneThumbnail> createState() => _SceneThumbnailState();
+}
+
+class _SceneThumbnailState extends State<_SceneThumbnail> {
+  Future<Uint8List?>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SceneThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only start a new load when the source or the repository *instance*
+    // actually changed — e.g. the connection-bound repository just
+    // resolved from `null` to a real one, or (across a card recycling
+    // the same `State`, which `ValueKey(scene.id)` at the grid level
+    // prevents) the scene itself changed. Every other rebuild reuses the
+    // cached `_future`.
+    if (widget.source != oldWidget.source ||
+        widget.thumbnailRepository != oldWidget.thumbnailRepository) {
+      _startLoad();
+    }
+  }
+
+  void _startLoad() {
+    final source = widget.source;
+    final repository = widget.thumbnailRepository;
+    _future = (source == null || repository == null)
+        ? null
+        : repository.load(
+            source,
+            SceneCard.thumbnailWidth,
+            SceneCard.thumbnailHeight,
+          );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final source = this.source;
-    final repository = thumbnailRepository;
-    if (source == null || repository == null) return const ScenePlaceholder();
+    final future = _future;
+    if (future == null) return const ScenePlaceholder();
 
     return FutureBuilder<Uint8List?>(
-      future: repository.load(
-        source,
-        SceneCard.thumbnailWidth,
-        SceneCard.thumbnailHeight,
-      ),
+      future: future,
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes == null) return const ScenePlaceholder();

@@ -170,6 +170,37 @@ void main() {
       },
     );
 
+    test('clearFilters resets query, minimum rating, organized, and hide '
+        'tracked in a single request', () async {
+      api.pages.add(ScenePage(total: 1, scenes: scenes(1)));
+      await controller.loadInitial();
+      api.pages.add(ScenePage(total: 1, scenes: scenes(1)));
+      await controller.setQuery('bunnies');
+      api.pages.add(ScenePage(total: 1, scenes: scenes(1)));
+      await controller.setMinimumRating(80);
+      api.pages.add(ScenePage(total: 1, scenes: scenes(1)));
+      await controller.setOrganized(true);
+      expect(controller.state.filter.query, 'bunnies');
+      expect(controller.state.filter.minimumRating, 80);
+      expect(controller.state.filter.organized, isTrue);
+
+      api.pages.add(ScenePage(total: 1, scenes: scenes(1)));
+      final callsBefore = api.calls.length;
+
+      await controller.clearFilters();
+
+      // Exactly one more request went out — not one per field cleared.
+      expect(api.calls, hasLength(callsBefore + 1));
+      final outgoing = api.requestedFilters.last;
+      expect(outgoing.query, '');
+      expect(outgoing.minimumRating, isNull);
+      expect(outgoing.organized, isNull);
+      expect(outgoing.hideTracked, isFalse);
+      // Sort/direction are untouched — they don't affect whether any
+      // scenes match, only their order.
+      expect(outgoing.sort, controller.state.filter.sort);
+    });
+
     test('a filter change discards scenes/page/total from before it', () async {
       api.pages.add(ScenePage(total: 120, scenes: scenes(48, start: 0)));
       await controller.loadInitial();
