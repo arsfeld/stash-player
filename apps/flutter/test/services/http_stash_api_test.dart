@@ -257,17 +257,39 @@ void main() {
 
   test('scene display title and effective resume use safe fallbacks', () {
     const paths = ScenePaths();
-    const scene = Scene(
+    final scene = Scene(
       id: '1001',
       paths: paths,
       files: [SceneFile(path: r'C:\\library\\fallback.mkv', duration: 600)],
       resumeTime: 595,
     );
-    const unknownDuration = Scene(id: '1002', paths: paths, resumeTime: 15);
+    final unknownDuration = Scene(id: '1002', paths: paths, resumeTime: 15);
 
     expect(scene.displayTitle, 'fallback');
     expect(scene.effectiveResume, isNull);
     expect(unknownDuration.effectiveResume, 15);
+  });
+
+  test('decoded scene collections cannot be mutated', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(fixture('find_scenes_default.json')),
+    );
+
+    final page = await api.findScenes(
+      const SceneFilter(),
+      page: 1,
+      perPage: 24,
+    );
+    final scene = page.scenes.single;
+
+    expect(() => page.scenes[0] = scene, throwsUnsupportedError);
+    expect(() => scene.files[0] = scene.files.single, throwsUnsupportedError);
+    expect(
+      () => scene.performers[0] = scene.performers.single,
+      throwsUnsupportedError,
+    );
   });
 }
 

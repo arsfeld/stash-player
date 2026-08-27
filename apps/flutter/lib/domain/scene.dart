@@ -1,12 +1,13 @@
 class ScenePage {
-  const ScenePage({required this.total, required this.scenes});
+  ScenePage({required this.total, required List<Scene> scenes})
+    : scenes = List.unmodifiable(scenes);
 
   final int total;
   final List<Scene> scenes;
 }
 
 class Scene {
-  const Scene({
+  Scene({
     required this.id,
     required this.paths,
     this.title,
@@ -16,10 +17,11 @@ class Scene {
     this.resumeTime,
     this.playCount,
     this.playDuration,
-    this.files = const [],
+    List<SceneFile> files = const [],
     this.studio,
-    this.performers = const [],
-  });
+    List<PerformerRef> performers = const [],
+  }) : files = List.unmodifiable(files),
+       performers = List.unmodifiable(performers);
 
   final String id;
   final ScenePaths paths;

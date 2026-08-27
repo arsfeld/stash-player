@@ -7,9 +7,8 @@ Uri authenticatedUrl(Uri baseUri, String source, String apiKey) {
   );
   if (hasApiKey || apiKey.isEmpty) return uri;
 
-  final separator = uri.hasQuery ? '&' : '?';
-  return Uri.parse(
-    '$uri${separator}apikey=${Uri.encodeQueryComponent(apiKey)}',
+  return uri.replace(
+    queryParameters: {...uri.queryParameters, 'apikey': apiKey},
   );
 }
 

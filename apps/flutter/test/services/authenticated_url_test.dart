@@ -31,6 +31,28 @@ void main() {
     );
   });
 
+  test('preserves fragments while authenticating relative URLs', () {
+    expect(
+      authenticatedUrl(
+        Uri.parse('https://stash.test/'),
+        'scene/1/stream?x=1#player',
+        'a key',
+      ),
+      Uri.parse('https://stash.test/scene/1/stream?x=1&apikey=a+key#player'),
+    );
+  });
+
+  test('preserves fragments while authenticating absolute URLs', () {
+    expect(
+      authenticatedUrl(
+        Uri.parse('https://stash.test/'),
+        'https://media.test/v#player',
+        'client-key',
+      ),
+      Uri.parse('https://media.test/v?apikey=client-key#player'),
+    );
+  });
+
   test('redacts both headers and authenticated query parameters', () {
     expect(
       redactSensitive(
