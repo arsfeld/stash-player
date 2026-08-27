@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/features/player/playback_engine.dart';
+import 'package:stash_player_flutter/features/player/playback_state.dart';
 import 'package:stash_player_flutter/features/player/player_shortcuts.dart';
 
 import '../../support/fake_playback_engine.dart';
@@ -40,7 +44,7 @@ KeyDownEvent _keyDown(LogicalKeyboardKey key) => KeyDownEvent(
 );
 
 PlaybackController _buildController({
-  required FakePlaybackEngine engine,
+  required PlaybackEngine engine,
   Future<bool> Function(bool fullscreen)? setFullscreenPlatform,
 }) => PlaybackController(
   engine: engine,
@@ -52,6 +56,57 @@ Scene _scene() => Scene(
   id: 's',
   paths: const ScenePaths(stream: 'stream.mp4'),
 );
+
+/// A [PlaybackEngine] wrapping a [FakePlaybackEngine] whose `play()`
+/// always throws — used to prove (I6) that a shortcut dispatching a
+/// command whose engine call fails never escapes as an unhandled zone
+/// error, end to end through `dispatchPlayerKeyEvent`'s own
+/// unawaited-but-`catchError`-guarded call.
+class _AlwaysThrowsOnPlayEngine implements PlaybackEngine {
+  _AlwaysThrowsOnPlayEngine(this._inner);
+
+  final FakePlaybackEngine _inner;
+
+  @override
+  Stream<bool> get playing => _inner.playing;
+
+  @override
+  Stream<bool> get buffering => _inner.buffering;
+
+  @override
+  Stream<Duration> get position => _inner.position;
+
+  @override
+  Stream<Duration> get duration => _inner.duration;
+
+  @override
+  Stream<String> get errors => _inner.errors;
+
+  @override
+  Widget buildVideoSurface({Key? key}) => _inner.buildVideoSurface(key: key);
+
+  @override
+  Future<void> open(Uri uri, {bool play = false}) =>
+      _inner.open(uri, play: play);
+
+  @override
+  Future<void> play() async => throw StateError('engine play() failed');
+
+  @override
+  Future<void> pause() => _inner.pause();
+
+  @override
+  Future<void> seek(Duration position) => _inner.seek(position);
+
+  @override
+  Future<void> setVolume(double zeroToOne) => _inner.setVolume(zeroToOne);
+
+  @override
+  Future<void> setMuted(bool muted) => _inner.setMuted(muted);
+
+  @override
+  Future<void> dispose() => _inner.dispose();
+}
 
 void main() {
   test('playerKeyBindings matches the exact Step 2 table', () {
@@ -282,10 +337,21 @@ void main() {
     'default modifier detection reads the ambient HardwareKeyboard state',
     () {
       // Exercises the *default* `isModifierPressed` argument (every other
-      // test in this file passes an explicit override) without driving a
-      // full widget tree through simulated hardware key sequences —
-      // `TestWidgetsFlutterBinding` alone is enough to give `HardwareKeyboard
-      // .instance` a live binding to read.
+      // test in this file passes an explicit override). Plain `test()`,
+      // not `testWidgets()`: an earlier version of this group drove a
+      // full widget tree through `tester.sendKeyDownEvent`/
+      // `sendKeyUpEvent` inside `testWidgets`, which hung for the entire
+      // 10-minute test timeout. This dispatcher is a synchronous pure
+      // function with no `Actions`/`Focus`/`Shortcuts` tree anywhere, so
+      // there was nothing for a widget pump to matter to in the first
+      // place — `pumpEventQueue()` inside `testWidgets`'s fake-async zone
+      // never completes unless `tester.pump()` advances the fake clock,
+      // which is almost certainly what actually hung.
+      // `TestWidgetsFlutterBinding.ensureInitialized()` alone is enough
+      // to give `HardwareKeyboard.instance` a live binding to read,
+      // without any of that machinery.
+      tearDown(() => HardwareKeyboard.instance.clearState());
+
       test('no modifiers held: a bound key is handled', () {
         TestWidgetsFlutterBinding.ensureInitialized();
         final engine = FakePlaybackEngine();
@@ -298,6 +364,61 @@ void main() {
 
         expect(result, KeyEventResult.handled);
       });
+
+      test('a real Ctrl held via HardwareKeyboard is detected as modified '
+          '(I3: proves the *detection*, not just the injected-boolean '
+          'branch — emptying _modifierKeys, or swapping it for just '
+          '{shift}, would still pass every other test in this file but '
+          'must fail this one)', () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        final engine = FakePlaybackEngine();
+        final controller = _buildController(engine: engine);
+        await controller.loadScene(_scene());
+        engine.commands.clear();
+
+        await simulateKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        final whileHeld = dispatchPlayerKeyEvent(
+          _keyDown(LogicalKeyboardKey.keyK),
+          controller: controller,
+        );
+        expect(whileHeld, KeyEventResult.ignored);
+        expect(engine.commands, isEmpty);
+
+        await simulateKeyUpEvent(LogicalKeyboardKey.controlLeft);
+
+        // Once released, the same key dispatches normally again —
+        // confirming the ignore above was really about Ctrl still
+        // being held, not some other reason.
+        final afterRelease = dispatchPlayerKeyEvent(
+          _keyDown(LogicalKeyboardKey.keyK),
+          controller: controller,
+        );
+        expect(afterRelease, KeyEventResult.handled);
+      });
     },
   );
+
+  group('engine command failures do not escape as unhandled errors (I6)', () {
+    test('a shortcut whose engine command throws is caught, not left '
+        'unhandled by the dispatch site\'s catchError', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _AlwaysThrowsOnPlayEngine(inner);
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_scene());
+
+      Object? uncaught;
+      await runZonedGuarded(() async {
+        final result = dispatchPlayerKeyEvent(
+          _keyDown(LogicalKeyboardKey.keyK),
+          controller: controller,
+          isModifierPressed: () => false,
+        );
+        expect(result, KeyEventResult.handled);
+        await pumpEventQueue();
+      }, (error, stackTrace) => uncaught = error);
+
+      expect(uncaught, isNull);
+      expect(controller.state.phase, PlaybackPhase.failed);
+    });
+  });
 }

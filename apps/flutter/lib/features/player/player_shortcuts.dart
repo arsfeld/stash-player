@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -42,12 +44,33 @@ final Map<LogicalKeyboardKey, PlayerAction> playerKeyBindings = {
 };
 
 /// Keys whose plain character has no built-in [EditableText] handling of
-/// its own — unlike the arrow keys and Home/End, which move the text
-/// cursor and so are already consumed by a focused text field before
-/// they could ever reach a `Shortcuts` ancestor, these five fall straight
-/// through unhandled. Left ungated, typing them into the metadata/search
-/// UI would silently double as a player shortcut, which is exactly the
-/// "search box becomes unusable" hazard this set exists to prevent.
+/// its own, so they need an explicit escape hatch here to keep typing
+/// them possible in the metadata/search UI.
+///
+/// **Correction (fix round 1):** an earlier version of this comment
+/// claimed the arrow keys and Home/End are excluded because they're
+/// "already consumed by a focused text field before they could ever
+/// reach a `Shortcuts` ancestor." That's wrong for the composition this
+/// app will actually use. Flutter resolves a key event at the
+/// *innermost* `Shortcuts` ancestor of the currently-focused widget
+/// first, and `DefaultTextEditingShortcuts` — which owns cursor
+/// movement, selection, and space/character insertion for a focused
+/// [EditableText] — is mounted up in `WidgetsApp`, near the app root:
+/// *outside*, not inside, any narrower scene-screen-level player
+/// `Shortcuts` Task 11 builds. If a text field ends up nested *inside*
+/// that player `Shortcuts` subtree (e.g. a search/metadata field on the
+/// scene screen), the player's own bindings for arrows/Home/End/Space
+/// would resolve *first* and win over `DefaultTextEditingShortcuts`'s
+/// cursor-movement/space-insertion handling — the opposite of what the
+/// old comment assumed.
+///
+/// This set only covers what's provably safe to gate *right now*
+/// (J/K/L/M/F, which have no competing binding anywhere in the
+/// framework). There is no real `Shortcuts`/`Actions` composition built
+/// yet for this to be tested against (Task 11 owns that). Task 11 needs
+/// to verify empirically — a real `TextField` nested under a real player
+/// `Shortcuts` widget — whether arrows/Home/End/Space need to join this
+/// set too, and widen it if so.
 final Set<LogicalKeyboardKey> playerTextEntryConflictKeys = {
   LogicalKeyboardKey.keyJ,
   LogicalKeyboardKey.keyK,
@@ -56,6 +79,17 @@ final Set<LogicalKeyboardKey> playerTextEntryConflictKeys = {
   LogicalKeyboardKey.keyF,
 };
 
+/// Ctrl/Alt/Meta — held alongside a bound key, these mean "this
+/// keystroke belongs to a different (OS- or app-level) shortcut, not
+/// ours," so the match is suppressed entirely rather than fired anyway.
+///
+/// Shift is deliberately excluded. None of [playerKeyBindings]'s
+/// triggers need it held, and — unlike Ctrl/Alt/Meta — an incidentally
+/// held Shift isn't a reliable "this keystroke means something else"
+/// signal for a single letter/digit key in a media player: it's the kind
+/// of modifier a user's finger can land on by accident while reaching
+/// for K or F. Treating it as a blocking modifier would silently fail
+/// the shortcut in that case, which is worse than just firing it anyway.
 final Set<LogicalKeyboardKey> _modifierKeys = {
   LogicalKeyboardKey.control,
   LogicalKeyboardKey.controlLeft,
@@ -108,6 +142,16 @@ KeyEventResult dispatchPlayerKeyEvent(
     return KeyEventResult.ignored;
   }
 
-  controller.handleAction(action);
+  // Fired unawaited — `onKeyEvent` must return synchronously — so
+  // nothing else is ever positioned to catch a failure here.
+  // `PlaybackController`'s own command methods already swallow engine
+  // failures into `state.failure` rather than throwing (see its
+  // `_runEngineCommand`), but this `catchError` is the last line of
+  // defense against a future regression: an uncaught error at this
+  // boundary means a red screen in debug, or a logged crash in release,
+  // for something as ordinary as pressing a key.
+  unawaited(
+    controller.handleAction(action).catchError((Object _, StackTrace _) {}),
+  );
   return KeyEventResult.handled;
 }

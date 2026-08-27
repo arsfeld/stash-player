@@ -208,10 +208,11 @@ class PlaybackController extends ChangeNotifier {
   /// engine query.
   Future<void> playPause() async {
     if (_disposed) return;
+    final generation = _state.generation;
     if (_state.playing) {
-      await _engine.pause();
+      await _runEngineCommand(_engine.pause, generation: generation);
     } else {
-      await _engine.play();
+      await _runEngineCommand(_engine.play, generation: generation);
     }
   }
 
@@ -225,11 +226,20 @@ class PlaybackController extends ChangeNotifier {
     final generation = _state.generation;
     final clamped = _clamp(target);
 
-    await _onFlushActivity();
+    try {
+      await _onFlushActivity();
+    } catch (_) {
+      // Task 10's flush will be a network call and can fail — that must
+      // never block the user's actual seek (I5): the seek below still
+      // runs regardless of whether the flush succeeded.
+    }
     if (_disposed || generation != _state.generation) return;
 
-    await _engine.seek(clamped);
-    if (_disposed || generation != _state.generation) return;
+    final succeeded = await _runEngineCommand(
+      () => _engine.seek(clamped),
+      generation: generation,
+    );
+    if (!succeeded || _disposed || generation != _state.generation) return;
 
     _state = _state.copyWith(position: clamped);
     notifyListeners();
@@ -248,8 +258,11 @@ class PlaybackController extends ChangeNotifier {
     final generation = _state.generation;
     final clamped = value.clamp(0.0, 1.0);
 
-    await _engine.setVolume(clamped);
-    if (_disposed || generation != _state.generation) return;
+    final succeeded = await _runEngineCommand(
+      () => _engine.setVolume(clamped),
+      generation: generation,
+    );
+    if (!succeeded || _disposed || generation != _state.generation) return;
 
     _state = _state.copyWith(volume: clamped);
     notifyListeners();
@@ -260,8 +273,11 @@ class PlaybackController extends ChangeNotifier {
     final generation = _state.generation;
     final next = !_state.muted;
 
-    await _engine.setMuted(next);
-    if (_disposed || generation != _state.generation) return;
+    final succeeded = await _runEngineCommand(
+      () => _engine.setMuted(next),
+      generation: generation,
+    );
+    if (!succeeded || _disposed || generation != _state.generation) return;
 
     _state = _state.copyWith(muted: next);
     notifyListeners();
@@ -338,7 +354,16 @@ class PlaybackController extends ChangeNotifier {
     _state = _state.copyWith(phase: PlaybackPhase.disposed);
 
     await _cancelSubscriptions();
-    await _onFlushActivity();
+    try {
+      await _onFlushActivity();
+    } catch (_) {
+      // Task 10's flush will be a network call and can fail — that must
+      // never strand the engine undisposed (I5). The GTK client's own
+      // playbin3 pipeline has exactly this documented failure mode
+      // (audio kept playing in the background after teardown) when
+      // disposal is skipped, so the engine dispose below always runs
+      // regardless of whether the flush succeeded.
+    }
     await _engine.dispose();
 
     super.dispose();
@@ -395,6 +420,39 @@ class PlaybackController extends ChangeNotifier {
     ]);
   }
 
+  /// Runs [call] (one of the engine's own command methods) and reports
+  /// whether it completed without throwing.
+  ///
+  /// Every command method above (`playPause`, `seekAbsolute`, `setVolume`,
+  /// `toggleMute`) runs unawaited from keyboard-shortcut dispatch, where
+  /// `onKeyEvent` must return synchronously — nothing else is ever in a
+  /// position to catch a thrown engine error (I6). Once a real engine's
+  /// player has errored, `play`/`pause`/`seek`/`setVolume`/`setMuted` can
+  /// all throw, so an uncaught error here would otherwise surface as an
+  /// unhandled `Future` error (`FlutterError.onError`: a red screen in
+  /// debug, a logged crash in release) for something as ordinary as
+  /// pressing a key after playback has already failed. On failure this
+  /// marks [state] failed instead — the same redacted, generation-guarded
+  /// shape [loadScene]'s own `catch` uses — rather than letting the error
+  /// escape.
+  Future<bool> _runEngineCommand(
+    Future<void> Function() call, {
+    required int generation,
+  }) async {
+    try {
+      await call();
+      return true;
+    } catch (error) {
+      if (_disposed || generation != _state.generation) return false;
+      _state = _state.copyWith(
+        phase: PlaybackPhase.failed,
+        failure: redactSensitive('$error', apiKey: ''),
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
   Duration _clamp(Duration target) {
     final lower = target < Duration.zero ? Duration.zero : target;
     final knownDuration = _state.duration;
@@ -409,14 +467,43 @@ class PlaybackController extends ChangeNotifier {
   );
 }
 
-/// Builds the [PlaybackEngine] [playbackControllerProvider] uses.
-/// Production's default constructs a real [MediaKitPlaybackEngine],
-/// which starts native playback libraries — tests override this with a
-/// `FakePlaybackEngine` instead, the same way `stashApiFactoryProvider`
-/// lets `LibraryController` tests swap in a `FakeStashApi`.
-final playbackEngineProvider = Provider<PlaybackEngine>(
-  (ref) => MediaKitPlaybackEngine(),
+/// Constructs one concrete [PlaybackEngine] instance. Production's
+/// default is a real [MediaKitPlaybackEngine], which starts native
+/// playback libraries — tests override *this* provider (not
+/// [playbackEngineProvider] itself; see that provider's doc for why)
+/// with a factory that hands back a `FakePlaybackEngine` instead, the
+/// same way `stashApiFactoryProvider` lets `LibraryController` tests
+/// swap in a `FakeStashApi`.
+final playbackEngineFactoryProvider = Provider<PlaybackEngine Function()>(
+  (ref) => MediaKitPlaybackEngine.new,
 );
+
+/// Builds the [PlaybackEngine] [playbackControllerProvider] uses, via
+/// [playbackEngineFactoryProvider].
+///
+/// Watches [connectionGenerationProvider] so a settings-driven
+/// reconnection rebuilds this to a *fresh* engine, not the one the old
+/// (now-disposed) [PlaybackController] already tore down. Without this,
+/// [playbackControllerProvider] would keep handing the same cached
+/// engine instance to every new controller: the old controller's
+/// `dispose()` disposes it on generation bump regardless, so the next
+/// `loadScene` would call `open()` on an already-disposed engine, throw,
+/// land in `PlaybackPhase.failed` — and stay there forever, since every
+/// one of the disposed engine's streams is already closed and so never
+/// emits again. Dead playback until the app restarts.
+///
+/// Deliberately split from [playbackEngineFactoryProvider] rather than
+/// constructing the engine directly: a test that needs a
+/// `FakePlaybackEngine` (which it always does — never a real
+/// [MediaKitPlaybackEngine]) can override the factory alone and leave
+/// this provider's own body — the `ref.watch(connectionGenerationProvider)`
+/// call above — genuinely exercised, rather than replacing it with a
+/// test-authored reimplementation of what the fix is supposed to do.
+final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
+  ref.watch(connectionGenerationProvider);
+  final factory = ref.watch(playbackEngineFactoryProvider);
+  return factory();
+});
 
 /// [PlaybackController] provider. Rebuilt — a fresh controller, which
 /// disposes the previous one's engine — whenever
