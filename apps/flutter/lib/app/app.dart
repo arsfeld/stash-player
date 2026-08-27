@@ -33,13 +33,20 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
     // reach this listener; they stay in their own screen's state.
     ref.listen<AppNotice?>(globalNoticeProvider, (previous, next) {
       if (next == null || next.id == previous?.id) return;
+      // Resolve the theme from the ScaffoldMessenger's own context, not
+      // this State's `context` — that sits *above* the MaterialApp this
+      // same build() returns, so Theme.of(context) here would silently
+      // fall back to Flutter's default ThemeData instead of this app's
+      // brightness-aware, seeded one (see the same bug already caught and
+      // fixed in the smoke tests).
+      final messengerContext = _scaffoldMessengerKey.currentContext;
+      final color = messengerContext == null
+          ? null
+          : _colorFor(next.severity, Theme.of(messengerContext));
       _scaffoldMessengerKey.currentState
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(
-            content: Text(next.message),
-            backgroundColor: _colorFor(next.severity, Theme.of(context)),
-          ),
+          SnackBar(content: Text(next.message), backgroundColor: color),
         );
     });
 

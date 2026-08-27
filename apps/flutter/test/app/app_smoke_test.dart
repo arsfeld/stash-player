@@ -75,16 +75,47 @@ void main() {
       }
     },
   );
+  testWidgets(
+    'a bootstrap-failure notice SnackBar resolves the app theme, not the '
+    'Material fallback',
+    (tester) async {
+      await _pumpApp(
+        tester,
+        loadFuture: Future<ConnectionConfig>.delayed(
+          Duration.zero,
+          () => throw Exception('disk error'),
+        ),
+      );
+      // One pump to let bootstrap's error path run and the notice/SnackBar
+      // appear, a second to let the SnackBar's entrance animation start
+      // (short of pumpAndSettle, which would fast-forward through its
+      // auto-dismiss timer and remove it from the tree again).
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Connect to Stash'), findsOneWidget);
+      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+      final themeContext = tester.element(find.text('Connect to Stash'));
+      final expectedColor = Theme.of(themeContext).colorScheme.error;
+
+      expect(snackBar.backgroundColor, expectedColor);
+      // Sanity check this isn't just coincidentally matching: the Material
+      // fallback ThemeData's error color (unseeded, default M3 baseline)
+      // differs from this app's deepPurple-seeded one.
+      expect(snackBar.backgroundColor, isNot(ThemeData().colorScheme.error));
+    },
+  );
 }
 
 Future<void> _pumpApp(
   WidgetTester tester, {
   ConnectionConfig saved = const ConnectionConfig(),
+  Future<ConnectionConfig>? loadFuture,
 }) => tester.pumpWidget(
   ProviderScope(
     overrides: [
       connectionStoreProvider.overrideWithValue(
-        FakeConnectionStore(saved: saved),
+        FakeConnectionStore(saved: saved, loadFuture: loadFuture),
       ),
       environmentProvider.overrideWithValue(const {}),
       stashApiFactoryProvider.overrideWithValue(
