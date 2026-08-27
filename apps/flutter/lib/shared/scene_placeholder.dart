@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 
+/// Aspect ratio used for every scene thumbnail in the UI — this
+/// placeholder and the library grid's cards both render at 16:9, and
+/// share this constant rather than each hardcoding `16 / 9` separately.
+const double sceneThumbnailAspectRatio = 16 / 9;
+
 /// Fixed-aspect-ratio placeholder shown wherever a scene thumbnail
 /// couldn't be shown: no `screenshot` path, a failed fetch, or a failed
 /// decode. `ThumbnailRepository.load` resolves to `null` in exactly those
@@ -16,7 +21,7 @@ class ScenePlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return AspectRatio(
-      aspectRatio: 16 / 9,
+      aspectRatio: sceneThumbnailAspectRatio,
       child: Semantics(
         label: semanticLabel,
         image: true,

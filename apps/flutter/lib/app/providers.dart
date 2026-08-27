@@ -6,8 +6,10 @@ import 'package:http/http.dart' as http;
 import '../domain/connection.dart';
 import '../features/connection/connection_controller.dart';
 import '../services/connection_store.dart';
+import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
 import '../services/stash_api.dart';
+import '../services/thumbnail_repository.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -82,6 +84,23 @@ final stashApiProvider = FutureProvider<StashApi>((ref) async {
   final config = await ref.watch(effectiveConnectionProvider.future);
   final factory = ref.watch(stashApiFactoryProvider);
   return factory(config);
+});
+
+/// The [ThumbnailRepository] library/scene features should use. Rebuilt
+/// (via [effectiveConnectionProvider]) whenever [connectionGenerationProvider]
+/// changes, the same way [stashApiProvider] is — a settings-driven
+/// reconnection must not keep serving thumbnails fetched under the old
+/// server's URL/key.
+final thumbnailRepositoryProvider = FutureProvider<ThumbnailRepository>((
+  ref,
+) async {
+  final config = await ref.watch(effectiveConnectionProvider.future);
+  final client = ref.watch(httpClientProvider);
+  return DiskThumbnailRepository.create(
+    baseUri: Uri.parse(config.serverUrl),
+    apiKey: config.apiKey,
+    client: client,
+  );
 });
 
 /// Wires up [connectionControllerProvider] — which throws until overridden

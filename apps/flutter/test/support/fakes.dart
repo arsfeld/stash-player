@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
@@ -6,6 +7,7 @@ import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/services/connection_store.dart';
 import 'package:stash_player_flutter/services/stash_api.dart';
+import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 
 class FakeConnectionStore implements ConnectionStore {
   FakeConnectionStore({this.saved = const ConnectionConfig(), this.loadFuture});
@@ -116,4 +118,24 @@ class FakeStashApi implements StashApi {
     required double resumeTime,
     required double playDuration,
   }) => throw UnimplementedError();
+}
+
+/// A [ThumbnailRepository] that hands back a fixed result (or `null`, its
+/// default) for every [load] call and records what was asked for.
+///
+/// [ThumbnailRepository] itself never throws — see that interface's own
+/// contract — so this fake has no failure-injection knob; a `null` result
+/// (the default) already exercises the "couldn't be shown" fallback path.
+class FakeThumbnailRepository implements ThumbnailRepository {
+  FakeThumbnailRepository({this.bytes});
+
+  final Uint8List? bytes;
+
+  final List<String> requestedSources = [];
+
+  @override
+  Future<Uint8List?> load(String source, int width, int height) async {
+    requestedSources.add(source);
+    return bytes;
+  }
 }

@@ -118,6 +118,12 @@ class AppController extends Notifier<AppDestination> {
   void showLibrary() {
     state = const AppDestination.library();
   }
+
+  /// Navigates to a scene by id — from a library card, "play random", or
+  /// (eventually) prev/next inside the scene screen itself.
+  void openScene(String sceneId) {
+    state = AppDestination.scene(sceneId);
+  }
 }
 
 final appControllerProvider = NotifierProvider<AppController, AppDestination>(

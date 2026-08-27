@@ -5,6 +5,7 @@ import 'package:stash_player_flutter/app/app_controller.dart';
 import 'package:stash_player_flutter/app/app_router.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/domain/scene.dart';
 
 import '../support/fakes.dart';
 
@@ -130,7 +131,13 @@ ProviderContainer _container({
     ),
     environmentProvider.overrideWithValue(const {}),
     stashApiFactoryProvider.overrideWithValue(
-      (config) => FakeStashApi(versionValue: 'v0.31.0'),
+      // Task 7 made the library destination a real `LibraryScreen`, which
+      // fetches its first page on mount — an empty-but-resolved page
+      // keeps that fetch from staying in `loading` forever (an
+      // indeterminate `CircularProgressIndicator`, which would hang any
+      // `pumpAndSettle` in this file that lands on the library).
+      (config) => FakeStashApi(versionValue: 'v0.31.0')
+        ..pages.add(ScenePage(total: 0, scenes: const [])),
     ),
     connectionControllerOverride,
   ],

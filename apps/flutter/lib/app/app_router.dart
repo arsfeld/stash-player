@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/connection/connection_controller.dart';
 import '../features/connection/connection_screen.dart';
+import '../features/library/library_screen.dart';
 import 'app_controller.dart';
 
 /// Switches on [AppController]'s current [AppDestination] and renders it
@@ -55,7 +56,7 @@ const _scenePageName = 'scene';
 const _libraryPage = MaterialPage<void>(
   key: ValueKey('library'),
   name: _libraryPageName,
-  child: _LibraryPlaceholder(),
+  child: _LibraryRoute(),
 );
 
 /// The first-launch / no-saved-connection screen. Never seeds
@@ -74,30 +75,22 @@ class _ConnectionDestinationScreen extends ConsumerWidget {
   );
 }
 
-/// Stand-in for the library feature, which Task 5+ builds. Exists only so
-/// this task's shell/routing has something to show and a way to reach
-/// connection settings.
-class _LibraryPlaceholder extends StatelessWidget {
-  const _LibraryPlaceholder();
+/// Renders the real library feature, wiring its "open settings" intent to
+/// the router-owned modal push — [AppController] has no `openSettings` of
+/// its own (settings isn't one of its destinations; see [_SettingsRoute]),
+/// so this is the one navigation intent [LibraryScreen] can't just call
+/// through `ref` the way it does for [AppController.openScene].
+class _LibraryRoute extends StatelessWidget {
+  const _LibraryRoute();
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Library'),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.settings_outlined),
-          tooltip: 'Connection settings',
-          onPressed: () => Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              fullscreenDialog: true,
-              builder: (_) => const _SettingsRoute(),
-            ),
-          ),
-        ),
-      ],
+  Widget build(BuildContext context) => LibraryScreen(
+    onOpenSettings: () => Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => const _SettingsRoute(),
+      ),
     ),
-    body: const Center(child: Text('Library — coming soon.')),
   );
 }
 
