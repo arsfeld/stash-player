@@ -1,0 +1,296 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/domain/scene_filter.dart';
+import 'package:stash_player_flutter/services/http_stash_api.dart';
+
+void main() {
+  test('findScenes sends filters, ApiKey, and decodes typed scenes', () async {
+    final transport = RecordingClient(fixture('find_scenes_default.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: 'SECRET',
+      client: transport,
+    );
+
+    final page = await api.findScenes(
+      const SceneFilter(
+        query: 'alpha',
+        sort: SceneSort.rating,
+        direction: SortDirection.ascending,
+        minimumRating: 60,
+        organized: true,
+        hideTracked: true,
+      ),
+      page: 2,
+      perPage: 48,
+    );
+
+    expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+    expect(transport.lastVariables['filter'], containsPair('sort', 'rating'));
+    expect(transport.lastVariables['filter'], containsPair('direction', 'ASC'));
+    expect(
+      transport.lastVariables['scene_filter'],
+      containsPair('rating100', {'value': 59, 'modifier': 'GREATER_THAN'}),
+    );
+    expect(
+      transport.lastVariables['scene_filter'],
+      containsPair('o_counter', {'value': 0, 'modifier': 'EQUALS'}),
+    );
+    expect(page.scenes.singleWhere((scene) => scene.id == '1001').id, '1001');
+  });
+
+  test('omits ApiKey header when key is empty', () async {
+    final transport = RecordingClient(fixture('find_scenes_default.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    await api.findScenes(const SceneFilter(), page: 1, perPage: 24);
+
+    expect(transport.lastRequest.headers.containsKey('ApiKey'), isFalse);
+  });
+
+  test('version returns a validated version string', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(fixture('version.json')),
+    );
+
+    expect(await api.version(), 'v0.31.0');
+  });
+
+  test('version rejects a missing version value', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient('{"data":{"version":{}}}'),
+    );
+
+    expect(api.version(), throwsA(isA<FormatFailure>()));
+  });
+
+  test('uses random seed only for random sort', () async {
+    final transport = RecordingClient(fixture('find_scenes_default.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    await api.findScenes(
+      const SceneFilter(sort: SceneSort.random, randomSeed: 42),
+      page: 1,
+      perPage: 24,
+    );
+
+    expect(
+      (transport.lastVariables['filter'] as Map<String, Object?>)['sort'],
+      'random_42',
+    );
+  });
+
+  test('maps every sort to its Stash wire value', () async {
+    const cases = <(SceneSort, String)>[
+      (SceneSort.date, 'date'),
+      (SceneSort.title, 'title'),
+      (SceneSort.rating, 'rating'),
+      (SceneSort.playCount, 'play_count'),
+      (SceneSort.duration, 'duration'),
+      (SceneSort.createdAt, 'created_at'),
+      (SceneSort.updatedAt, 'updated_at'),
+      (SceneSort.random, 'random_42'),
+    ];
+    for (final entry in cases) {
+      final transport = RecordingClient(fixture('find_scenes_default.json'));
+      final api = HttpStashApi(
+        baseUri: Uri.parse('https://stash.test'),
+        apiKey: '',
+        client: transport,
+      );
+
+      await api.findScenes(
+        SceneFilter(sort: entry.$1, randomSeed: 42),
+        page: 1,
+        perPage: 24,
+      );
+
+      expect(
+        (transport.lastVariables['filter'] as Map<String, Object?>)['sort'],
+        entry.$2,
+      );
+    }
+  });
+
+  test('defaults optional scene fields when Stash omits them', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(fixture('find_scenes_partial.json')),
+    );
+
+    final scene = (await api.findScenes(
+      const SceneFilter(),
+      page: 1,
+      perPage: 24,
+    )).scenes.single;
+
+    expect(scene.details, isNull);
+    expect(scene.resumeTime, isNull);
+    expect(scene.playCount, isNull);
+    expect(scene.files.single.path, isNull);
+  });
+
+  test('rejects a scene missing its required id', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(
+        '{"data":{"findScenes":{"count":1,"scenes":[{"paths":{}}]}}}',
+      ),
+    );
+
+    expect(
+      api.findScenes(const SceneFilter(), page: 1, perPage: 24),
+      throwsA(isA<FormatFailure>()),
+    );
+  });
+
+  test('rejects malformed GraphQL data', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient('{"data":[]}'),
+    );
+
+    expect(api.version(), throwsA(isA<FormatFailure>()));
+  });
+
+  test('returns GraphQL errors without leaking credentials', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: 'SECRET',
+      client: RecordingClient(
+        '{"errors":[{"message":"SECRET apikey=SECRET"}],"data":null}',
+      ),
+    );
+
+    expect(
+      api.version(),
+      throwsA(
+        isA<GraphQlFailure>().having(
+          (failure) => failure.message,
+          'message',
+          '*** apikey=***',
+        ),
+      ),
+    );
+  });
+
+  test('rejects HTTP status failures before decoding', () async {
+    final unauthorized = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: 'SECRET',
+      client: RecordingClient('SECRET', statusCode: 401),
+    );
+    final serverError = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient('failure', statusCode: 500),
+    );
+
+    await expectLater(unauthorized.version(), throwsA(isA<HttpFailure>()));
+    await expectLater(serverError.version(), throwsA(isA<HttpFailure>()));
+  });
+
+  test('findScene returns null for a missing scene', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient('{"data":{"findScene":null}}'),
+    );
+
+    expect(await api.findScene('missing'), isNull);
+  });
+
+  test('findScene decodes a typed scene', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(fixture('find_scene.json')),
+    );
+
+    final scene = await api.findScene('1001');
+
+    expect(scene?.id, '1001');
+    expect(scene?.studio?.name, 'Studio Foo');
+  });
+
+  test('saveSceneActivity sends Stash variable names', () async {
+    final transport = RecordingClient('{"data":{"sceneSaveActivity":true}}');
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    await api.saveSceneActivity(
+      id: '1001',
+      resumeTime: 9.5,
+      playDuration: 4.25,
+    );
+
+    expect(transport.lastVariables, {
+      'id': '1001',
+      'resume_time': 9.5,
+      'playDuration': 4.25,
+    });
+  });
+
+  test('scene display title and effective resume use safe fallbacks', () {
+    const paths = ScenePaths();
+    const scene = Scene(
+      id: '1001',
+      paths: paths,
+      files: [SceneFile(path: r'C:\\library\\fallback.mkv', duration: 600)],
+      resumeTime: 595,
+    );
+    const unknownDuration = Scene(id: '1002', paths: paths, resumeTime: 15);
+
+    expect(scene.displayTitle, 'fallback');
+    expect(scene.effectiveResume, isNull);
+    expect(unknownDuration.effectiveResume, 15);
+  });
+}
+
+String fixture(String name) => File('test/fixtures/$name').readAsStringSync();
+
+class RecordingClient extends http.BaseClient {
+  RecordingClient(this.responseBody, {this.statusCode = 200});
+
+  final String responseBody;
+  final int statusCode;
+  late http.BaseRequest lastRequest;
+  late Map<String, Object?> lastVariables;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    lastRequest = request;
+    final decoded = jsonDecode(await request.finalize().bytesToString());
+    final envelope = Map<String, Object?>.from(decoded as Map);
+    lastVariables = Map<String, Object?>.from(envelope['variables'] as Map);
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(responseBody)),
+      statusCode,
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+}
