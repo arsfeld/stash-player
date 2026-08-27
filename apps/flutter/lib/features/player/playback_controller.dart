@@ -4,11 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show Key, Widget;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/notices.dart';
 import '../../app/providers.dart';
 import '../../domain/connection.dart';
 import '../../domain/scene.dart';
 import '../../services/authenticated_url.dart';
 import '../../services/media_kit_playback_engine.dart';
+import 'activity_sync.dart';
 import 'playback_engine.dart';
 import 'playback_state.dart';
 
@@ -53,6 +55,21 @@ typedef ConnectionResolver = Future<ConnectionConfig> Function();
 /// callback that throws is treated the same as a `false` result.
 typedef FullscreenRequester = Future<bool> Function(bool fullscreen);
 
+/// Builds the [ActivitySync] a [PlaybackController] uses, given a thunk for
+/// the controller's own currently-accepted position (in seconds — the
+/// value `ActivitySync.flush` sends as `resumeTime`).
+///
+/// A factory rather than a ready-built [ActivitySync] for the same
+/// "who constructs what, and when" reason [playbackEngineFactoryProvider]
+/// is a factory rather than a [PlaybackEngine] instance: [ActivitySync]
+/// needs a closure over this controller's own [PlaybackState.position],
+/// which only exists once the controller itself is under construction —
+/// so the controller builds its [ActivitySync] internally, via this
+/// factory, rather than accepting a fully-formed one from a caller that
+/// couldn't have supplied that closure yet.
+typedef ActivitySyncFactory =
+    ActivitySync Function({required double Function() resumePositionSeconds});
+
 /// Owns everything about driving a [PlaybackEngine] for one scene at a
 /// time: resolving and authenticating its stream URL, the resume-on-open
 /// seek, clamped absolute/relative seeking, volume/mute, fullscreen, and
@@ -77,28 +94,46 @@ typedef FullscreenRequester = Future<bool> Function(bool fullscreen);
 /// [state] — so a scene replaced (or this controller disposed) mid-flight
 /// can't have its stale result clobber whatever superseded it.
 ///
-/// Activity flushing (the eventual `ActivitySync.flush` Task 10 will
-/// build) is a seam, not something this controller implements: the
-/// injected [onFlushActivity] defaults to a no-op and is called at
-/// exactly two points — before the engine seek in [seekAbsolute], and
-/// during [dispose] — never anywhere else.
+/// Wall-clock activity accounting is fully delegated to an [ActivitySync]
+/// this controller owns (built via the injected [ActivitySyncFactory],
+/// defaulting to a real, if inert-by-default, instance — see
+/// [_defaultActivitySyncFactory]) and drives at exactly four boundaries:
+/// [ActivitySync.playingChanged] and `bufferingChanged` from *accepted*
+/// engine stream events (after the usual disposed/generation guard) in
+/// [_bindStreams], [ActivitySync.flush] before the engine seek in
+/// [seekAbsolute], [ActivitySync.replaceScene] in [loadScene] before the
+/// new scene's ID takes over, and [ActivitySync.dispose] awaited in
+/// [dispose] before the engine itself is disposed. [ActivitySync] is
+/// contractually guaranteed to never throw, so the `try`/`catch` around
+/// each of those calls is belt-and-braces, not the only handling — see
+/// [ActivitySync]'s own class doc for what actually happens on a sync
+/// failure (a warning, never a change to playback).
 class PlaybackController extends ChangeNotifier {
   PlaybackController({
     required PlaybackEngine engine,
     required ConnectionResolver resolveConnection,
     required FullscreenRequester setFullscreenPlatform,
-    Future<void> Function()? onFlushActivity,
+    ActivitySyncFactory? activitySyncFactory,
   }) : _engine = engine,
        _resolveConnection = resolveConnection,
-       _setFullscreenPlatform = setFullscreenPlatform,
-       _onFlushActivity = onFlushActivity ?? _defaultFlush;
+       _setFullscreenPlatform = setFullscreenPlatform {
+    final factory = activitySyncFactory ?? _defaultActivitySyncFactory;
+    _activitySync = factory(
+      resumePositionSeconds: () => _durationToSeconds(_state.position),
+    );
+  }
 
-  static Future<void> _defaultFlush() async {}
+  static ActivitySync _defaultActivitySyncFactory({
+    required double Function() resumePositionSeconds,
+  }) => ActivitySync(resumePositionSeconds: resumePositionSeconds);
+
+  static double _durationToSeconds(Duration duration) =>
+      duration.inMicroseconds / Duration.microsecondsPerSecond;
 
   final PlaybackEngine _engine;
   final ConnectionResolver _resolveConnection;
   final FullscreenRequester _setFullscreenPlatform;
-  final Future<void> Function() _onFlushActivity;
+  late final ActivitySync _activitySync;
 
   PlaybackState _state = const PlaybackState();
   PlaybackState get state => _state;
@@ -149,6 +184,12 @@ class PlaybackController extends ChangeNotifier {
       fullscreen: _state.fullscreen,
     );
     notifyListeners();
+
+    // Flush whatever the *previous* scene owes under its own ID before
+    // this controller starts driving the engine for the new one — see
+    // ActivitySync.replaceScene's own doc for why order matters here.
+    await _activitySync.replaceScene(scene.id);
+    if (_disposed || generation != _state.generation) return;
 
     await _cancelSubscriptions();
     if (_disposed || generation != _state.generation) return;
@@ -219,7 +260,7 @@ class PlaybackController extends ChangeNotifier {
   /// Seeks to [target], clamped to `[Duration.zero, duration]` once
   /// [PlaybackState.duration] is known (see that field's doc for the
   /// "unknown" sentinel) — otherwise only floored at zero. Flushes
-  /// pending activity via [onFlushActivity] *before* issuing the engine
+  /// pending activity via [ActivitySync.flush] *before* issuing the engine
   /// seek.
   Future<void> seekAbsolute(Duration target) async {
     if (_disposed) return;
@@ -227,11 +268,14 @@ class PlaybackController extends ChangeNotifier {
     final clamped = _clamp(target);
 
     try {
-      await _onFlushActivity();
+      await _activitySync.flush();
     } catch (_) {
-      // Task 10's flush will be a network call and can fail — that must
-      // never block the user's actual seek (I5): the seek below still
-      // runs regardless of whether the flush succeeded.
+      // ActivitySync.flush is contractually guaranteed not to throw (a
+      // sync failure only ever produces a warning — see its class doc),
+      // but this stays as belt-and-braces: a flush must never block the
+      // user's actual seek (I5) even if that guarantee were ever broken.
+      // The seek below still runs regardless of whether the flush
+      // succeeded.
     }
     if (_disposed || generation != _state.generation) return;
 
@@ -339,14 +383,15 @@ class PlaybackController extends ChangeNotifier {
     }
   }
 
-  /// Tears this controller down: cancels its stream subscriptions,
-  /// flushes pending activity via [onFlushActivity], and disposes the
-  /// shared [PlaybackEngine] — exactly once, safe to call more than
-  /// once. Overrides [ChangeNotifier.dispose]'s `void` signature with
-  /// `Future<void>` (permitted since the base return type is `void`) so
-  /// a caller that wants to await full teardown can, while Riverpod's
-  /// own synchronous teardown call still kicks the async work off
-  /// correctly as a fire-and-forget.
+  /// Tears this controller down: cancels its stream subscriptions, awaits
+  /// [ActivitySync.dispose] (its own last checkpoint flush plus cancelling
+  /// its periodic timer), and disposes the shared [PlaybackEngine] —
+  /// exactly once, safe to call more than once. Overrides
+  /// [ChangeNotifier.dispose]'s `void` signature with `Future<void>`
+  /// (permitted since the base return type is `void`) so a caller that
+  /// wants to await full teardown can, while Riverpod's own synchronous
+  /// teardown call still kicks the async work off correctly as a
+  /// fire-and-forget.
   @override
   Future<void> dispose() async {
     if (_disposed) return;
@@ -355,14 +400,15 @@ class PlaybackController extends ChangeNotifier {
 
     await _cancelSubscriptions();
     try {
-      await _onFlushActivity();
+      await _activitySync.dispose();
     } catch (_) {
-      // Task 10's flush will be a network call and can fail — that must
-      // never strand the engine undisposed (I5). The GTK client's own
-      // playbin3 pipeline has exactly this documented failure mode
-      // (audio kept playing in the background after teardown) when
-      // disposal is skipped, so the engine dispose below always runs
-      // regardless of whether the flush succeeded.
+      // ActivitySync.dispose is contractually guaranteed not to throw,
+      // but this stays as belt-and-braces (I5): a sync failure must never
+      // strand the engine undisposed. The GTK client's own playbin3
+      // pipeline has exactly this documented failure mode (audio kept
+      // playing in the background after teardown) when disposal is
+      // skipped, so the engine dispose below always runs regardless of
+      // whether the flush succeeded.
     }
     await _engine.dispose();
 
@@ -374,11 +420,16 @@ class PlaybackController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(playing: value);
       notifyListeners();
+      // "Accepted" per this method's own doc: only events that passed the
+      // guard above reach ActivitySync, so a superseded generation's
+      // playing events can never be recorded as this scene's activity.
+      _activitySync.playingChanged(value);
     });
     _bufferingSubscription = _engine.buffering.listen((value) {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(buffering: value);
       notifyListeners();
+      _activitySync.bufferingChanged(value);
     });
     _positionSubscription = _engine.position.listen((value) {
       if (_disposed || generation != _state.generation) return;
@@ -516,6 +567,13 @@ final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
 /// integration yet, and wiring one up is out of this task's scope — Task
 /// 11 (or later) can override [setFullscreenPlatform] with a real one
 /// once the scene screen has a window/context to call it against.
+///
+/// The [ActivitySyncFactory] wires a real [ActivitySync] to
+/// [stashApiProvider] for `saveSceneActivity` and to [globalNoticeProvider]
+/// for its non-modal warning — the same channel `library_screen.dart`
+/// already uses for "safe but not what the user asked for" notices, which
+/// is exactly what a sync failure is (see [ActivitySync]'s own doc: it
+/// never touches playback, only reports that it couldn't save).
 final playbackControllerProvider = ChangeNotifierProvider<PlaybackController>((
   ref,
 ) {
@@ -524,5 +582,22 @@ final playbackControllerProvider = ChangeNotifierProvider<PlaybackController>((
     engine: ref.watch(playbackEngineProvider),
     resolveConnection: () => ref.read(effectiveConnectionProvider.future),
     setFullscreenPlatform: (fullscreen) async => true,
+    activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
+      resumePositionSeconds: resumePositionSeconds,
+      saveActivity:
+          ({required id, required resumeTime, required playDuration}) async {
+            final api = await ref.read(stashApiProvider.future);
+            await api.saveSceneActivity(
+              id: id,
+              resumeTime: resumeTime,
+              playDuration: playDuration,
+            );
+          },
+      onWarning: (message) => ref
+          .read(globalNoticeProvider.notifier)
+          .show(
+            AppNotice(message: message, severity: AppNoticeSeverity.warning),
+          ),
+    ),
   );
 });

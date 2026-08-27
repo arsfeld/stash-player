@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
 import 'package:stash_player_flutter/services/authenticated_url.dart';
 
+import '../../support/fake_clock.dart';
 import '../../support/fake_playback_engine.dart';
 import '../../support/fakes.dart';
 
@@ -32,16 +34,32 @@ Scene _sceneWith({
   files: withFile ? [SceneFile(duration: duration)] : const [],
 );
 
+/// Builds a [PlaybackController] wired to a fully-controllable
+/// [ActivitySync] instead of a real one: [activityDelay] defaults to a
+/// fake that never actually waits (so a test exercising a failing
+/// [saveActivity]'s full 1s/2s/4s retry schedule costs nothing in real
+/// test run time — only `activity_sync_test.dart` needs to assert the
+/// schedule itself), while [saveActivity]/[activityClock]/[onActivityWarning]
+/// default to the same no-ops [ActivitySync] itself falls back to.
 PlaybackController _buildController({
   required PlaybackEngine engine,
   ConnectionConfig config = _config,
-  Future<void> Function()? onFlushActivity,
+  SaveSceneActivity? saveActivity,
+  DateTime Function()? activityClock,
+  Future<void> Function(Duration)? activityDelay,
+  void Function(String message)? onActivityWarning,
   Future<bool> Function(bool fullscreen)? setFullscreenPlatform,
 }) => PlaybackController(
   engine: engine,
   resolveConnection: () async => config,
-  onFlushActivity: onFlushActivity,
   setFullscreenPlatform: setFullscreenPlatform ?? (value) async => true,
+  activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
+    resumePositionSeconds: resumePositionSeconds,
+    saveActivity: saveActivity,
+    clock: activityClock,
+    delay: activityDelay ?? (_) async {},
+    onWarning: onActivityWarning,
+  ),
 );
 
 /// Records every `onData` callback ever registered via [listen], in
@@ -516,14 +534,15 @@ void main() {
       var flushCalls = 0;
       final controller = _buildController(
         engine: engine,
-        onFlushActivity: () async {
-          flushCalls++;
-          expect(
-            engine.commands.whereType<SeekCommand>(),
-            isEmpty,
-            reason: 'flush must run before the engine seek is issued',
-          );
-        },
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              flushCalls++;
+              expect(
+                engine.commands.whereType<SeekCommand>(),
+                isEmpty,
+                reason: 'flush must run before the engine seek is issued',
+              );
+            },
       );
       await controller.loadScene(_sceneWith(duration: 2000));
 
@@ -533,7 +552,7 @@ void main() {
       expect(engine.commands.whereType<SeekCommand>(), hasLength(1));
     });
 
-    test('omitting onFlushActivity defaults to a no-op', () async {
+    test('omitting activity-sync overrides defaults to a no-op', () async {
       final engine = FakePlaybackEngine();
       final controller = _buildController(engine: engine);
       await controller.loadScene(_sceneWith(duration: 2000));
@@ -546,23 +565,34 @@ void main() {
       );
     });
 
-    test('a throwing flush does not abort the engine seek, and does not '
-        'escape as an unhandled error (I5)', () async {
-      final engine = FakePlaybackEngine();
-      final controller = _buildController(
-        engine: engine,
-        onFlushActivity: () async => throw StateError('network down'),
-      );
-      await controller.loadScene(_sceneWith(duration: 2000));
+    test(
+      'a throwing flush does not abort the engine seek, and does not '
+      'escape as an unhandled error (I5) — it still reports a warning',
+      () async {
+        final engine = FakePlaybackEngine();
+        final warnings = <String>[];
+        final controller = _buildController(
+          engine: engine,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async => throw StateError('network down'),
+          onActivityWarning: warnings.add,
+        );
+        await controller.loadScene(_sceneWith(duration: 2000));
 
-      await controller.seekAbsolute(const Duration(seconds: 30));
+        await controller.seekAbsolute(const Duration(seconds: 30));
 
-      expect(
-        engine.commands.whereType<SeekCommand>().single.position,
-        const Duration(seconds: 30),
-      );
-      expect(controller.state.position, const Duration(seconds: 30));
-    });
+        expect(
+          engine.commands.whereType<SeekCommand>().single.position,
+          const Duration(seconds: 30),
+        );
+        expect(controller.state.position, const Duration(seconds: 30));
+        expect(warnings, [activitySyncWarningMessage]);
+      },
+    );
 
     test('a throwing engine seek surfaces as state.failure rather than an '
         'unhandled error (I6)', () async {
@@ -1060,14 +1090,19 @@ void main() {
         var flushCalls = 0;
         final controller = _buildController(
           engine: engine,
-          onFlushActivity: () async {
-            flushCalls++;
-            expect(
-              engine.isDisposed,
-              isFalse,
-              reason: 'flush must run before the engine is disposed',
-            );
-          },
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async {
+                flushCalls++;
+                expect(
+                  engine.isDisposed,
+                  isFalse,
+                  reason: 'flush must run before the engine is disposed',
+                );
+              },
         );
         await controller.loadScene(_sceneWith());
 
@@ -1086,7 +1121,7 @@ void main() {
     );
 
     test(
-      'omitting onFlushActivity defaults to a no-op that does not throw',
+      'omitting activity-sync overrides defaults to a no-op that does not throw',
       () async {
         final engine = FakePlaybackEngine();
         final controller = _buildController(engine: engine);
@@ -1098,20 +1133,31 @@ void main() {
       },
     );
 
-    test('a throwing flush does not strand the engine undisposed, and does '
-        'not escape as an unhandled error (I5)', () async {
-      final engine = FakePlaybackEngine();
-      final controller = _buildController(
-        engine: engine,
-        onFlushActivity: () async => throw StateError('network down'),
-      );
-      await controller.loadScene(_sceneWith());
+    test(
+      'a throwing flush does not strand the engine undisposed, and does '
+      'not escape as an unhandled error (I5) — it still reports a warning',
+      () async {
+        final engine = FakePlaybackEngine();
+        final warnings = <String>[];
+        final controller = _buildController(
+          engine: engine,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async => throw StateError('network down'),
+          onActivityWarning: warnings.add,
+        );
+        await controller.loadScene(_sceneWith());
 
-      await controller.dispose();
+        await controller.dispose();
 
-      expect(engine.isDisposed, isTrue);
-      expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));
-    });
+        expect(engine.isDisposed, isTrue);
+        expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));
+        expect(warnings, [activitySyncWarningMessage]);
+      },
+    );
 
     test(
       'commands issued after dispose are no-ops, never reaching the engine',
@@ -1144,6 +1190,127 @@ void main() {
     );
   });
 
+  group('activity sync wiring', () {
+    test('an accepted playing transition to false flushes activity for the '
+        'current scene', () async {
+      final engine = FakePlaybackEngine();
+      final clock = FakeClock();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final controller = _buildController(
+        engine: engine,
+        activityClock: clock.now,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              calls.add((
+                id: id,
+                resumeTime: resumeTime,
+                playDuration: playDuration,
+              ));
+            },
+      );
+      await controller.loadScene(_sceneWith(id: 'a', duration: 2000));
+      calls.clear();
+
+      engine.emitPlaying(true);
+      await pumpEventQueue();
+      clock.advance(const Duration(seconds: 5));
+      engine.emitPlaying(false);
+      await pumpEventQueue();
+
+      expect(calls, hasLength(1));
+      expect(calls.single.id, 'a');
+      expect(calls.single.playDuration, 5.0);
+    });
+
+    test("loading a new scene flushes the old scene's activity, under its own "
+        'ID, before the new scene starts tracking', () async {
+      final engine = FakePlaybackEngine();
+      final clock = FakeClock();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final controller = _buildController(
+        engine: engine,
+        activityClock: clock.now,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              calls.add((
+                id: id,
+                resumeTime: resumeTime,
+                playDuration: playDuration,
+              ));
+            },
+      );
+      await controller.loadScene(_sceneWith(id: 'a', duration: 2000));
+      calls.clear();
+      engine.emitPlaying(true);
+      await pumpEventQueue();
+      clock.advance(const Duration(seconds: 5));
+
+      await controller.loadScene(_sceneWith(id: 'b', duration: 2000));
+
+      expect(calls, hasLength(1));
+      expect(calls.single.id, 'a');
+      expect(calls.single.playDuration, 5.0);
+    });
+
+    test("a superseded generation's playing event is never recorded as "
+        'activity — the generation guard runs before ActivitySync is ever '
+        'reached', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _RecordingEngine(inner);
+      final clock = FakeClock();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final controller = _buildController(
+        engine: engine,
+        activityClock: clock.now,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              calls.add((
+                id: id,
+                resumeTime: resumeTime,
+                playDuration: playDuration,
+              ));
+            },
+      );
+
+      await controller.loadScene(_sceneWith(id: 'a', duration: 2000));
+      await controller.loadScene(_sceneWith(id: 'b', duration: 2000));
+      calls.clear();
+
+      engine.playingRecorder.callbacks[0](true);
+      clock.advance(const Duration(seconds: 5));
+      engine.playingRecorder.callbacks[0](false);
+      await pumpEventQueue();
+
+      expect(calls, isEmpty);
+    });
+
+    test('a failing activity sync reports a warning but neither marks the '
+        'controller failed nor blocks subsequent playback commands', () async {
+      final engine = FakePlaybackEngine();
+      final warnings = <String>[];
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async =>
+                throw StateError('down'),
+        onActivityWarning: warnings.add,
+      );
+      await controller.loadScene(_sceneWith());
+
+      engine.emitPlaying(true);
+      await pumpEventQueue();
+      engine.emitPlaying(false); // triggers a failing, fire-and-forget flush
+      await pumpEventQueue();
+
+      expect(warnings, [activitySyncWarningMessage]);
+      expect(controller.state.phase, isNot(PlaybackPhase.failed));
+
+      engine.commands.clear();
+      await controller.playPause();
+      expect(engine.commands.single, isA<PlayCommand>());
+    });
+  });
+
   group('playbackControllerProvider', () {
     // Overrides `playbackEngineFactoryProvider` — never
     // `playbackEngineProvider` itself. `playbackEngineProvider`'s own
@@ -1155,6 +1322,7 @@ void main() {
     ProviderContainer buildContainer({
       ConnectionConfig saved = _config,
       required List<FakePlaybackEngine> engines,
+      FakeStashApi? stashApi,
     }) {
       final container = ProviderContainer(
         overrides: [
@@ -1162,6 +1330,14 @@ void main() {
             FakeConnectionStore(saved: saved),
           ),
           environmentProvider.overrideWithValue(const {}),
+          // Real production wiring routes ActivitySync's saveActivity
+          // through stashApiProvider — without this override, disposing a
+          // controller that ever loaded a scene would attempt a real
+          // network call (and its full 1s/2s/4s retry schedule on
+          // failure) against `_config`'s fake server URL.
+          stashApiFactoryProvider.overrideWithValue(
+            (config) => stashApi ?? FakeStashApi(),
+          ),
           playbackEngineFactoryProvider.overrideWithValue(() {
             final engine = FakePlaybackEngine();
             engines.add(engine);

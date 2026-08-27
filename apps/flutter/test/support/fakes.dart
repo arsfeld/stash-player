@@ -112,12 +112,43 @@ class FakeStashApi implements StashApi {
     return call.completer.future;
   }
 
+  /// Every `saveSceneActivity` call, in the order received.
+  final List<SaveActivityCall> saveActivityCalls = [];
+
+  /// Failures consumed in call order for `saveSceneActivity`: as long as
+  /// this has an entry, the next call fails with it instead of succeeding.
+  final List<Object> saveActivityFailures = [];
+
   @override
   Future<void> saveSceneActivity({
     required String id,
     required double resumeTime,
     required double playDuration,
-  }) => throw UnimplementedError();
+  }) async {
+    saveActivityCalls.add(
+      SaveActivityCall(
+        id: id,
+        resumeTime: resumeTime,
+        playDuration: playDuration,
+      ),
+    );
+    if (saveActivityFailures.isNotEmpty) {
+      throw saveActivityFailures.removeAt(0);
+    }
+  }
+}
+
+/// One recorded `saveSceneActivity` call.
+class SaveActivityCall {
+  SaveActivityCall({
+    required this.id,
+    required this.resumeTime,
+    required this.playDuration,
+  });
+
+  final String id;
+  final double resumeTime;
+  final double playDuration;
 }
 
 /// A [ThumbnailRepository] that hands back a fixed result (or `null`, its
