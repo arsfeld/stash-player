@@ -2,14 +2,96 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app.dart';
+import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/connection.dart';
+
+import '../support/fakes.dart';
 
 void main() {
-  testWidgets('uses the experimental display name and Material 3', (
+  testWidgets('uses the app title and Material 3', (tester) async {
+    await _pumpApp(tester);
+    await tester.pump();
+
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.title, 'Stash Player Flutter');
+    // A context *inside* MaterialApp's subtree — MaterialApp's own element
+    // sits above the Theme it builds, so Theme.of there would silently
+    // fall back to Flutter's default ThemeData instead of this app's.
+    expect(
+      Theme.of(tester.element(find.text('Connect to Stash'))).useMaterial3,
+      isTrue,
+    );
+  });
+
+  testWidgets(
+    'an unconfigured connection bootstraps to the connection screen',
+    (tester) async {
+      await _pumpApp(tester);
+      await tester.pump();
+
+      expect(find.text('Connect to Stash'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a saved connection bootstraps straight to the library', (
     tester,
   ) async {
-    await tester.pumpWidget(const ProviderScope(child: StashPlayerApp()));
-    expect(find.text('Stash Player Flutter'), findsOneWidget);
-    final context = tester.element(find.byType(MaterialApp));
-    expect(Theme.of(context).useMaterial3, isTrue);
+    await _pumpApp(
+      tester,
+      saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+    );
+    await tester.pump();
+
+    expect(find.text('Library'), findsOneWidget);
   });
+
+  testWidgets(
+    'renders the same destination at 1000x700 in both light and dark',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1000, 700);
+
+      for (final brightness in [Brightness.light, Brightness.dark]) {
+        // Fully unmount before the next pump — MaterialApp otherwise
+        // updates its existing element in place and doesn't react to a
+        // brightness change that happened between two `pumpWidget` calls
+        // on the same tree.
+        await tester.pumpWidget(const SizedBox.shrink());
+        tester.platformDispatcher.platformBrightnessTestValue = brightness;
+
+        await _pumpApp(
+          tester,
+          saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+        );
+        await tester.pump();
+
+        expect(find.text('Library'), findsOneWidget);
+        final context = tester.element(find.text('Library'));
+        expect(Theme.of(context).brightness, brightness);
+        expect(MediaQuery.platformBrightnessOf(context), brightness);
+      }
+    },
+  );
 }
+
+Future<void> _pumpApp(
+  WidgetTester tester, {
+  ConnectionConfig saved = const ConnectionConfig(),
+}) => tester.pumpWidget(
+  ProviderScope(
+    overrides: [
+      connectionStoreProvider.overrideWithValue(
+        FakeConnectionStore(saved: saved),
+      ),
+      environmentProvider.overrideWithValue(const {}),
+      stashApiFactoryProvider.overrideWithValue(
+        (config) => FakeStashApi(versionValue: 'v0.31.0'),
+      ),
+      connectionControllerOverride,
+    ],
+    child: const StashPlayerApp(),
+  ),
+);
