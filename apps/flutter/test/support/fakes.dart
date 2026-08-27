@@ -64,6 +64,14 @@ class FakeStashApi implements StashApi {
   /// [pages].
   final List<Failure> pageFailures = [];
 
+  /// Non-`Failure` errors consumed in call order, consulted ahead of
+  /// [pageFailures] and [pages] — simulates the real app's
+  /// `_DeferredStashApi` resolving `stashApiProvider` (and, beneath
+  /// that, `PlatformConnectionStore`/secure storage) throwing a bare
+  /// platform exception before `HttpStashApi` ever gets a chance to
+  /// normalize it to a `Failure`.
+  final List<Object> pageRawErrors = [];
+
   /// Every `findScenes` call, in the order received.
   final List<FindScenesCall> calls = [];
 
@@ -92,7 +100,9 @@ class FakeStashApi implements StashApi {
   }) {
     final call = FindScenesCall(filter: filter, page: page, perPage: perPage);
     calls.add(call);
-    if (pageFailures.isNotEmpty) {
+    if (pageRawErrors.isNotEmpty) {
+      call.completer.completeError(pageRawErrors.removeAt(0));
+    } else if (pageFailures.isNotEmpty) {
       call.completer.completeError(pageFailures.removeAt(0));
     } else if (pages.isNotEmpty) {
       call.completer.complete(pages.removeAt(0));

@@ -38,6 +38,24 @@ class LibraryController extends ChangeNotifier {
   LibraryState _state = const LibraryState();
   LibraryState get state => _state;
 
+  /// Set by [dispose]. [ChangeNotifierProvider] disposes the notifier it
+  /// built as soon as a watched dependency (here,
+  /// [connectionGenerationProvider]) changes and it rebuilds — which can
+  /// happen while a page request from the *old* controller is still in
+  /// flight. The generation guard alone doesn't catch that case (a
+  /// disposed controller's own `state.generation` is frozen, so a
+  /// same-generation late response still looks "current" to it); this
+  /// flag is checked alongside it so a response landing after disposal
+  /// is discarded instead of calling `notifyListeners()` on a disposed
+  /// `ChangeNotifier`, which throws.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   /// Kicks off the very first page load for the default filter. A no-op
   /// once a load has already started or finished — call [retry] instead
   /// to recover from a failure, or one of the `set*` intents to change
@@ -98,11 +116,20 @@ class LibraryController extends ChangeNotifier {
   /// stalls forever when the first page never overflows the viewport in
   /// the first place — this is what lets the grid keep asking until
   /// either condition below stops being true.
+  ///
+  /// Also stops once a page has failed ([LibraryPhase.failed]) rather
+  /// than auto-retrying: `hasMore` is left untouched by a failure (the
+  /// page that failed hasn't been ruled out, so paging should resume
+  /// from it once whatever's wrong is fixed), so without this check a
+  /// widget that re-measures and calls this again after every rebuild
+  /// would re-fire the same failing request in a tight, unbounded loop.
+  /// [retry] is the explicit, user-driven way back out of `failed`.
   Future<void> ensureViewportFilled({
     required double contentExtent,
     required double viewportExtent,
   }) async {
     if (_state.isLoading) return;
+    if (_state.phase == LibraryPhase.failed) return;
     if (!_state.hasMore) return;
     if (contentExtent > viewportExtent) return;
     await _fetchNextPage();
@@ -154,8 +181,10 @@ class LibraryController extends ChangeNotifier {
       );
       // A newer filter change superseded this request while it was in
       // flight — discard the response rather than let it clobber
-      // whatever that newer generation has already accepted.
-      if (generation != _state.generation) return;
+      // whatever that newer generation has already accepted. Also bail
+      // if `dispose()` landed while this was in flight (see its doc
+      // comment) — `notifyListeners()` on a disposed notifier throws.
+      if (_disposed || generation != _state.generation) return;
 
       final merged = _dedupeAppend(_state.scenes, result.scenes);
       final shortPage = result.scenes.length < libraryPageSize;
@@ -170,8 +199,25 @@ class LibraryController extends ChangeNotifier {
       );
       notifyListeners();
     } on Failure catch (failure) {
-      if (generation != _state.generation) return; // stale — discard
+      if (_disposed || generation != _state.generation) return; // stale
       _state = _state.copyWith(phase: LibraryPhase.failed, failure: failure);
+      notifyListeners();
+    } catch (_) {
+      // `_api.findScenes` (by way of `StashApi`) always normalizes to a
+      // `Failure`, but the deferred adapter `libraryControllerProvider`
+      // wires up (`_DeferredStashApi`) resolves `stashApiProvider`
+      // *before* reaching that code — and that chain can throw a bare
+      // platform exception (e.g. secure storage/keyring access denied),
+      // which isn't a `Failure`. Without this fallback that escapes both
+      // catch clauses above, leaving `phase == loading` permanently:
+      // `_fetchNextPage` itself refuses to run again while loading,
+      // `ensureViewportFilled` blocks on the same check, and `retry`
+      // requires `phase == failed`, which would then be unreachable.
+      if (_disposed || generation != _state.generation) return; // stale
+      _state = _state.copyWith(
+        phase: LibraryPhase.failed,
+        failure: const TransportFailure(),
+      );
       notifyListeners();
     }
   }
