@@ -6,13 +6,20 @@ import 'package:stash_player_flutter/services/connection_store.dart';
 import 'package:stash_player_flutter/services/stash_api.dart';
 
 class FakeConnectionStore implements ConnectionStore {
-  FakeConnectionStore({this.saved = const ConnectionConfig()});
+  FakeConnectionStore({this.saved = const ConnectionConfig(), this.loadFuture});
 
   ConnectionConfig saved;
+
+  /// When set, `load()` returns this instead of resolving `saved`
+  /// immediately — lets tests hold a `load()` call pending (e.g. via a
+  /// `Completer`) to exercise late-resolution behavior.
+  final Future<ConnectionConfig>? loadFuture;
+
   final List<ConnectionConfig> saveCalls = <ConnectionConfig>[];
 
   @override
-  Future<ConnectionConfig> load(Map<String, String> environment) async => saved;
+  Future<ConnectionConfig> load(Map<String, String> environment) =>
+      loadFuture ?? Future.value(saved);
 
   @override
   Future<void> save(ConnectionConfig config) async {

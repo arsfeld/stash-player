@@ -7,14 +7,22 @@ import 'connection_controller.dart';
 class ConnectionScreen extends ConsumerStatefulWidget {
   const ConnectionScreen({
     required this.onConnected,
-    required this.initialConfig,
     required this.settingsMode,
+    this.initialConfig,
     this.onCancel,
     super.key,
   });
 
   final VoidCallback onConnected;
-  final ConnectionConfig initialConfig;
+
+  /// Seeds the form fields directly, bypassing the controller's `load()`.
+  ///
+  /// Pass `null` (the normal case for both first-launch and settings-mode
+  /// mounts) to have the screen call `load()` on mount and populate the
+  /// fields from the resulting effective config once it resolves. Pass an
+  /// explicit config only when the caller wants to pin the seed itself —
+  /// that value wins and the screen will not fetch or apply a loaded one.
+  final ConnectionConfig? initialConfig;
   final bool settingsMode;
   final VoidCallback? onCancel;
 
@@ -29,17 +37,38 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   late final FocusNode _apiKeyFocusNode;
   var _showApiKey = false;
 
+  /// The config the fields were last populated from programmatically —
+  /// either [ConnectionScreen.initialConfig] or a resolved `load()` result.
+  /// Used to detect whether the user has since edited a field so a late
+  /// `load()` resolution never clobbers text they already typed.
+  late ConnectionConfig _seed;
+
   @override
   void initState() {
     super.initState();
-    _urlController = TextEditingController(
-      text: widget.initialConfig.serverUrl,
-    );
-    _apiKeyController = TextEditingController(
-      text: widget.initialConfig.apiKey,
-    );
+    _seed = widget.initialConfig ?? const ConnectionConfig();
+    _urlController = TextEditingController(text: _seed.serverUrl);
+    _apiKeyController = TextEditingController(text: _seed.apiKey);
     _urlFocusNode = FocusNode();
     _apiKeyFocusNode = FocusNode();
+    if (widget.initialConfig == null) {
+      // Fire-and-forget: `load()` never touches provider state before its
+      // first `await` (the controller's loading phase is reserved for
+      // `testAndSave`, not this background fetch — see its doc comment),
+      // so calling it here never trips Riverpod's "don't modify a provider
+      // while the tree is building" guard.
+      ref.read(connectionControllerProvider).load();
+    }
+  }
+
+  void _applyLoadedConfig(ConnectionConfig config) {
+    if (_urlController.text == _seed.serverUrl) {
+      _urlController.text = config.serverUrl;
+    }
+    if (_apiKeyController.text == _seed.apiKey) {
+      _apiKeyController.text = config.apiKey;
+    }
+    _seed = config;
   }
 
   @override
@@ -59,6 +88,9 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
         if (previous?.phase != ConnectionPhase.ready &&
             next.phase == ConnectionPhase.ready) {
           widget.onConnected();
+        }
+        if (widget.initialConfig == null) {
+          _applyLoadedConfig(next.config);
         }
       },
     );

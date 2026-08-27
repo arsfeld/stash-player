@@ -68,15 +68,19 @@ class ConnectionController extends ChangeNotifier {
   ConnectionState _state = const ConnectionState();
   ConnectionState get state => _state;
 
+  /// Fetches the effective (environment-overlaid) stored config in the
+  /// background and applies it once resolved.
+  ///
+  /// Deliberately does not transition through [ConnectionPhase.loading] —
+  /// that phase disables the form fields, and this fetch must not block the
+  /// user from typing while it's in flight (they may be filling in the form
+  /// before the stored/environment values are even read).
   Future<void> load() async {
-    _setState(
-      _state.copyWith(phase: ConnectionPhase.loading, clearFailure: true),
-    );
     try {
       final stored = await _store.load(_environment);
       _setState(
         ConnectionState(
-          config: _overlayEnvironment(stored),
+          config: overlayEnvironment(stored, _environment),
           phase: ConnectionPhase.initial,
         ),
       );
@@ -132,16 +136,6 @@ class ConnectionController extends ChangeNotifier {
       );
     }
   }
-
-  ConnectionConfig _overlayEnvironment(ConnectionConfig stored) =>
-      ConnectionConfig(
-        serverUrl: _environment.containsKey('STASH_URL')
-            ? _environment['STASH_URL']!
-            : stored.serverUrl,
-        apiKey: _environment.containsKey('STASH_API_KEY')
-            ? _environment['STASH_API_KEY']!
-            : stored.apiKey,
-      );
 
   bool _validServerUrl(String value) {
     final uri = Uri.tryParse(value);

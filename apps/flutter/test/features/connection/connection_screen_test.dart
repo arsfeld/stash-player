@@ -125,6 +125,97 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('mounts without initialConfig and fills fields from the loaded '
+      'config', (tester) async {
+    final store = FakeConnectionStore(
+      saved: const ConnectionConfig(
+        serverUrl: 'https://loaded.test',
+        apiKey: 'loaded-key',
+      ),
+    );
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+
+    await _pump(tester, controller: controller, initialConfig: null);
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(_serverUrlField).controller!.text,
+      'https://loaded.test',
+    );
+    expect(
+      tester.widget<TextField>(_apiKeyField).controller!.text,
+      'loaded-key',
+    );
+  });
+
+  testWidgets('settings-mode mount pre-fills fields from the stored config', (
+    tester,
+  ) async {
+    final store = FakeConnectionStore(
+      saved: const ConnectionConfig(
+        serverUrl: 'https://settings.test',
+        apiKey: 'settings-key',
+      ),
+    );
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+
+    await _pump(
+      tester,
+      controller: controller,
+      initialConfig: null,
+      settingsMode: true,
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(_serverUrlField).controller!.text,
+      'https://settings.test',
+    );
+    expect(
+      tester.widget<TextField>(_apiKeyField).controller!.text,
+      'settings-key',
+    );
+  });
+
+  testWidgets('does not clobber text already typed once a late load '
+      'resolves', (tester) async {
+    final completer = Completer<ConnectionConfig>();
+    final store = FakeConnectionStore(loadFuture: completer.future);
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+
+    await _pump(tester, controller: controller, initialConfig: null);
+    await tester.enterText(_serverUrlField, 'https://typed-by-user.test');
+
+    completer.complete(
+      const ConnectionConfig(
+        serverUrl: 'https://loaded.test',
+        apiKey: 'loaded-key',
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(_serverUrlField).controller!.text,
+      'https://typed-by-user.test',
+    );
+    expect(
+      tester.widget<TextField>(_apiKeyField).controller!.text,
+      'loaded-key',
+    );
+  });
 }
 
 ConnectionController _controller({Failure? failure}) => ConnectionController(
@@ -142,6 +233,7 @@ Future<void> _pump(
   VoidCallback? onConnected,
   VoidCallback? onCancel,
   bool settingsMode = false,
+  ConnectionConfig? initialConfig = const ConnectionConfig(),
 }) => tester.pumpWidget(
   ProviderScope(
     key: ValueKey(controller),
@@ -149,7 +241,7 @@ Future<void> _pump(
     child: MaterialApp(
       theme: ThemeData(useMaterial3: false),
       home: ConnectionScreen(
-        initialConfig: const ConnectionConfig(),
+        initialConfig: initialConfig,
         onConnected: onConnected ?? () {},
         onCancel: onCancel,
         settingsMode: settingsMode,

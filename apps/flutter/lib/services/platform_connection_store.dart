@@ -42,14 +42,7 @@ class PlatformConnectionStore implements ConnectionStore {
     Map<String, String> environment,
   ) async {
     final stored = await loadStored();
-    return ConnectionConfig(
-      serverUrl: environment.containsKey('STASH_URL')
-          ? environment['STASH_URL']!
-          : stored.serverUrl,
-      apiKey: environment.containsKey('STASH_API_KEY')
-          ? environment['STASH_API_KEY']!
-          : stored.apiKey,
-    );
+    return overlayEnvironment(stored, environment);
   }
 
   @override
