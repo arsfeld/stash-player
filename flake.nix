@@ -84,6 +84,7 @@
 
           buildInputs = with pkgs; [
             glib
+            gtk3
             gtk4
             libadwaita
             graphene
