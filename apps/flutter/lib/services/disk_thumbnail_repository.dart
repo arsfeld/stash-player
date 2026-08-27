@@ -45,10 +45,13 @@ typedef ThumbnailResizer =
 ///   failure can never permanently shrink the pool.
 /// - A cache write goes to a temporary sibling file that is then renamed
 ///   into place; rename within the same directory is atomic, so a reader
-///   (or a crash) never observes a partially written PNG.
-/// - A failed fetch or decode is never written to disk — a transient
-///   server error is retried on the next call rather than remembered
-///   forever ("negative caching").
+///   (or a crash) never observes a partially written PNG. A write/rename
+///   failure (full or read-only filesystem) is caught, any orphaned temp
+///   file is cleaned up, and [load] resolves to `null` like every other
+///   failure mode — it never throws.
+/// - A failed fetch, decode, or cache write is never left on disk — a
+///   transient server or filesystem error is retried on the next call
+///   rather than remembered forever ("negative caching").
 /// - The cache key is `sha256("$source\n${width}x$height")`, i.e. it
 ///   covers the source URL exactly as given plus both dimensions, but
 ///   deliberately *not* the configured API key. The key's image bytes
@@ -149,8 +152,8 @@ class DiskThumbnailRepository implements ThumbnailRepository {
       return null;
     }
 
-    await _writeAtomically(file, resized);
-    return resized;
+    final cached = await _writeAtomically(file, resized);
+    return cached ? resized : null;
   }
 
   /// Writes [bytes] to a temporary sibling of [file] and renames it into
@@ -158,11 +161,32 @@ class DiskThumbnailRepository implements ThumbnailRepository {
   /// reader (or a crash mid-write) never observes a torn PNG at [file]'s
   /// final path — writing directly to that path would not have that
   /// guarantee.
-  Future<void> _writeAtomically(File file, Uint8List bytes) async {
-    await file.parent.create(recursive: true);
-    final tempFile = File('${file.path}.${_nextTempFileSuffix()}.tmp');
-    await tempFile.writeAsBytes(bytes, flush: true);
-    await tempFile.rename(file.path);
+  ///
+  /// Returns whether the write succeeded. Per [ThumbnailRepository]'s own
+  /// contract, a disk failure here (full or read-only filesystem, e.g. a
+  /// misconfigured Flatpak sandbox cache path) must not throw out of
+  /// [load] — it's handled exactly like a fetch or decode failure. Any
+  /// orphaned temporary file left behind by a failed write or rename is
+  /// cleaned up on a best-effort basis before returning.
+  Future<bool> _writeAtomically(File file, Uint8List bytes) async {
+    File? tempFile;
+    try {
+      await file.parent.create(recursive: true);
+      tempFile = File('${file.path}.${_nextTempFileSuffix()}.tmp');
+      await tempFile.writeAsBytes(bytes, flush: true);
+      await tempFile.rename(file.path);
+      return true;
+    } catch (error) {
+      _log('write', file.path, error);
+      if (tempFile != null) {
+        try {
+          if (await tempFile.exists()) await tempFile.delete();
+        } catch (cleanupError) {
+          _log('cleanup', tempFile.path, cleanupError);
+        }
+      }
+      return false;
+    }
   }
 
   File _cacheFile(String source, int width, int height) {
@@ -202,6 +226,14 @@ String _nextTempFileSuffix() =>
 /// The real thumbnail decode/encode pipeline: decode [bytes] scaled to
 /// [width]x[height] via Skia, then re-encode the first (only) frame as
 /// PNG.
+///
+/// Both the [ui.Codec] and the decoded [ui.Image] hold native (Skia-side)
+/// memory that Dart's own GC has no visibility into, so both are disposed
+/// unconditionally — on the success path and on any early exit (a `null`
+/// [ui.ImageByteFormat.png] encode) — rather than left for a GC pass that
+/// may not run promptly under native memory pressure alone. At library-grid
+/// scale (dozens of thumbnails per page, continuous scrolling) leaving
+/// these undisposed accumulates native bitmap memory quickly.
 Future<Uint8List> defaultThumbnailResizer(
   Uint8List bytes,
   int width,
@@ -212,12 +244,20 @@ Future<Uint8List> defaultThumbnailResizer(
     targetWidth: width,
     targetHeight: height,
   );
-  final frame = await codec.getNextFrame();
-  final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-  if (data == null) {
-    throw const FormatException('Failed to encode thumbnail as PNG.');
+  try {
+    final frame = await codec.getNextFrame();
+    try {
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      if (data == null) {
+        throw const FormatException('Failed to encode thumbnail as PNG.');
+      }
+      return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    } finally {
+      frame.image.dispose();
+    }
+  } finally {
+    codec.dispose();
   }
-  return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
 
 /// A FIFO permit queue: at most [_maxPermits] callers hold a permit at

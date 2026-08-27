@@ -330,6 +330,76 @@ void main() {
     );
   });
 
+  test('a filesystem failure while caching returns null, leaves no orphaned '
+      'temp file, and a later call still succeeds', () async {
+    // Force the cache write to fail without touching permissions: a
+    // plain *file* sitting where the cache's app-segment directory
+    // needs to be created makes `Directory(...).create(recursive:
+    // true)` throw (`FileSystemException`, "Not a directory") instead
+    // of silently succeeding — a reliable, portable stand-in for a
+    // full or read-only filesystem.
+    final blockedSegment = File(
+      p.join(cacheRoot.path, 'dev.arsfeld.stashplayer.flutter'),
+    );
+    await blockedSegment.create(recursive: true);
+
+    final fetcher = FakeFetcher();
+    final repo = DiskThumbnailRepository(
+      baseUri: baseUri,
+      apiKey: '',
+      cacheRoot: cacheRoot,
+      fetch: fetcher.call,
+      resize: _identityResize,
+    );
+
+    final first = repo.load('/scene/1/screenshot', 240, 135);
+    await waitForCalls(fetcher, 1);
+    fetcher.calls[0].completer.complete(
+      http.Response.bytes(utf8.encode('bytes'), 200),
+    );
+
+    expect(await first, isNull);
+
+    // No orphaned `.tmp` sibling anywhere under the cache root — the
+    // failed write must clean up after itself.
+    final leftovers = await cacheRoot
+        .list(recursive: true)
+        .where((entity) => entity.path.endsWith('.tmp'))
+        .toList();
+    expect(leftovers, isEmpty);
+
+    // Unblock the filesystem and prove both the cache path and the
+    // fetch permit pool recovered: a fresh batch reaches full
+    // concurrency and every one of them successfully caches to disk.
+    await blockedSegment.delete();
+
+    final futures = <Future<Uint8List?>>[
+      for (var i = 0; i < thumbnailConcurrencyLimit; i++)
+        repo.load('/scene/ok-$i/screenshot', 240, 135),
+    ];
+    await waitForCalls(fetcher, thumbnailConcurrencyLimit + 1);
+    expect(fetcher.maxInFlight, thumbnailConcurrencyLimit);
+
+    for (var i = 1; i < fetcher.calls.length; i++) {
+      fetcher.calls[i].completer.complete(
+        http.Response.bytes(utf8.encode('$i'), 200),
+      );
+    }
+    final results = await Future.wait(futures);
+    expect(results, everyElement(isNotNull));
+    for (var i = 0; i < thumbnailConcurrencyLimit; i++) {
+      expect(
+        cacheFilePath(
+          cacheRoot,
+          '/scene/ok-$i/screenshot',
+          240,
+          135,
+        ).existsSync(),
+        isTrue,
+      );
+    }
+  });
+
   test('a failed fetch releases its permit so the pool recovers to full '
       'concurrency afterward', () async {
     final fetcher = FakeFetcher();
@@ -392,4 +462,21 @@ void main() {
       expect(await file.readAsBytes(), result);
     },
   );
+
+  test('the default resizer disposes its codec and frame image without '
+      'disrupting repeated calls', () async {
+    // `defaultThumbnailResizer` disposes the `ui.Codec` and `ui.Image`
+    // it creates in `finally` blocks around every exit path. There's no
+    // direct way to assert native memory was freed from a unit test,
+    // but disposing the image *before* extracting its PNG bytes (a
+    // plausible ordering mistake) would corrupt or throw on the very
+    // first call, and disposing the wrong object would throw on a
+    // later call — so calling it repeatedly is a meaningful regression
+    // guard for a bad disposal order, even though it can't prove the
+    // memory was actually released.
+    for (var i = 0; i < 5; i++) {
+      final bytes = await defaultThumbnailResizer(_onePixelPng, 1, 1);
+      expect(bytes, isNotEmpty);
+    }
+  });
 }
