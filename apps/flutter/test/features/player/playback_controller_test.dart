@@ -590,6 +590,9 @@ void main() {
           const Duration(seconds: 30),
         );
         expect(controller.state.position, const Duration(seconds: 30));
+        // flush() only awaits the first attempt (C3); let the backgrounded
+        // retries run to exhaustion before checking the resulting warning.
+        await pumpEventQueue();
         expect(warnings, [activitySyncWarningMessage]);
       },
     );
@@ -607,6 +610,40 @@ void main() {
       expect(controller.state.failure, isNotNull);
       expect(controller.state.position, isNot(const Duration(seconds: 30)));
     });
+
+    test(
+      'a retrying activity sync does not stall the seek behind its backoff '
+      '(C3: the checkpoint is best-effort and must not gate a user action)',
+      () async {
+        final engine = FakePlaybackEngine();
+        // A retry delay that never resolves on its own: if seekAbsolute
+        // ever waited for the full retry chain (rather than just the
+        // first failed attempt), this would hang forever instead of
+        // completing. Completing at all is the proof.
+        final heldRetryDelay = Completer<void>();
+        final controller = _buildController(
+          engine: engine,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async => throw StateError('activity endpoint down'),
+          activityDelay: (_) => heldRetryDelay.future,
+        );
+        await controller.loadScene(_sceneWith(duration: 2000));
+
+        await controller.seekAbsolute(const Duration(seconds: 30));
+
+        expect(
+          engine.commands.whereType<SeekCommand>().single.position,
+          const Duration(seconds: 30),
+        );
+        expect(controller.state.position, const Duration(seconds: 30));
+
+        heldRetryDelay.complete(); // let the backgrounded retry settle
+      },
+    );
   });
 
   group('seekRelative', () {
@@ -898,6 +935,39 @@ void main() {
     });
 
     test(
+      'loading a new scene does not stall behind the outgoing scene\'s '
+      'retrying activity checkpoint (C3: opening a scene must not wait on '
+      'up to 7 seconds of retry backoff before the engine is even touched)',
+      () async {
+        final engine = FakePlaybackEngine();
+        // Never resolves on its own — if loadScene's call to
+        // ActivitySync.replaceScene ever waited for the full retry chain,
+        // this second loadScene would hang forever instead of completing.
+        final heldRetryDelay = Completer<void>();
+        final controller = _buildController(
+          engine: engine,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async => throw StateError('activity endpoint down'),
+          activityDelay: (_) => heldRetryDelay.future,
+        );
+        await controller.loadScene(_sceneWith(id: 'a', duration: 2000));
+        engine.emitPlaying(true);
+        await pumpEventQueue();
+
+        await controller.loadScene(_sceneWith(id: 'b', duration: 2000));
+
+        expect(controller.state.scene?.id, 'b');
+        expect(controller.state.phase, PlaybackPhase.ready);
+
+        heldRetryDelay.complete(); // let the backgrounded retry settle
+      },
+    );
+
+    test(
       'a stale loadScene continuation cannot clobber a newer scene',
       () async {
         final engine = FakePlaybackEngine();
@@ -1152,6 +1222,15 @@ void main() {
         await controller.loadScene(_sceneWith());
 
         await controller.dispose();
+        // ActivitySync.dispose races its own flush against
+        // disposeFlushTimeout using the same injected (here, instantly-
+        // resolving) delay function as the retry schedule; with both
+        // sides effectively instant, the timeout side can "win" on
+        // microtask-hop count alone even though the flush's own retries
+        // also complete immediately. Draining the microtask queue lets
+        // that backgrounded chain (and the warning it produces) settle
+        // before asserting on it.
+        await pumpEventQueue();
 
         expect(engine.isDisposed, isTrue);
         expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));
@@ -1244,12 +1323,26 @@ void main() {
       engine.emitPlaying(true);
       await pumpEventQueue();
       clock.advance(const Duration(seconds: 5));
+      // Scene a's actual last known position — must be what gets reported
+      // as its resumeTime, not scene b's zeroed starting position (C1).
+      engine.emitPosition(const Duration(seconds: 1200));
+      await pumpEventQueue();
 
       await controller.loadScene(_sceneWith(id: 'b', duration: 2000));
 
       expect(calls, hasLength(1));
       expect(calls.single.id, 'a');
       expect(calls.single.playDuration, 5.0);
+      expect(
+        calls.single.resumeTime,
+        1200.0,
+        reason:
+            'C1: loadScene builds the new scene\'s PlaybackState (position '
+            'reset to zero) before ActivitySync.replaceScene ever runs its '
+            "flush — the outgoing scene's resumeTime must be captured "
+            "before that reset, not read live from the (by-then zeroed) "
+            'state.',
+      );
     });
 
     test("a superseded generation's playing event is never recorded as "
@@ -1359,6 +1452,59 @@ void main() {
 
       expect(controller.state.phase, PlaybackPhase.ready);
       expect(engines.single.commands, isNotEmpty);
+    });
+
+    test("a superseded controller's final activity checkpoint still targets "
+        'its own generation\'s StashApi, never whatever server/key is '
+        'current by the time the flush actually runs (I1: stashApiProvider '
+        'must be captured once at construction, not re-resolved lazily '
+        'inside the saveActivity closure)', () async {
+      final engines = <FakePlaybackEngine>[];
+      final oldApi = FakeStashApi();
+      final newApi = FakeStashApi();
+      const newConfig = ConnectionConfig(
+        serverUrl: 'https://new-stash.test',
+        apiKey: 'new-key',
+      );
+      final store = FakeConnectionStore(saved: _config);
+      final container = ProviderContainer(
+        overrides: [
+          connectionStoreProvider.overrideWithValue(store),
+          environmentProvider.overrideWithValue(const {}),
+          stashApiFactoryProvider.overrideWithValue(
+            (config) => config.serverUrl == _config.serverUrl ? oldApi : newApi,
+          ),
+          playbackEngineFactoryProvider.overrideWithValue(() {
+            final engine = FakePlaybackEngine();
+            engines.add(engine);
+            return engine;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final firstController = container.read(
+        playbackControllerProvider.notifier,
+      );
+      await firstController.loadScene(_sceneWith(id: 'a'));
+      engines.single.emitPlaying(true);
+      await pumpEventQueue();
+
+      // Reconnect to a different server/key entirely.
+      store.saved = newConfig;
+      container.read(connectionGenerationProvider.notifier).state++;
+
+      // Reading the provider again rebuilds it — a fresh controller —
+      // while the *old* controller's dispose() (and so its
+      // ActivitySync's final checkpoint flush) runs as fire-and-forget
+      // teardown from Riverpod's perspective.
+      container.read(playbackControllerProvider.notifier);
+      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
+
+      expect(oldApi.saveActivityCalls, isNotEmpty);
+      expect(oldApi.saveActivityCalls.single.id, 'a');
+      expect(newApi.saveActivityCalls, isEmpty);
     });
 
     test('bumping connectionGenerationProvider yields a fresh controller AND '

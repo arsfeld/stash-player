@@ -41,6 +41,31 @@ const _checkpointThreshold = Duration(seconds: 10);
 /// due checkpoint is noticed, never whether one is.
 const _tickWakeupInterval = Duration(seconds: 1);
 
+/// Defensive cap on any *single* accumulated active span (see
+/// [ActivitySync._accumulate]). `DateTime.now` is wall-clock, not
+/// monotonic: a suspended laptop can report a multi-hour gap between two
+/// calls that, under normal operation, are only ever a checkpoint-plus-a-
+/// tick apart (~11s). Without this cap, waking from sleep while `playing`
+/// was left `true` (with no intervening buffering event) would bill the
+/// entire suspended duration as watched time on the very next accumulate.
+/// Any excess beyond this cap is simply never counted — there is no way to
+/// know whether the user was actually watching during a gap this large, so
+/// the safe assumption is that they weren't.
+const _maxSingleActiveSpan = Duration(seconds: 30);
+
+/// Upper bound on how long [ActivitySync.dispose] will wait for its final
+/// checkpoint before giving up and letting teardown proceed — the sum of
+/// [retryDelays] (the worst case for one flush's own retry schedule) is
+/// the natural, principled choice: any single flush that hasn't resolved
+/// by then is either still waiting on a slow network response or genuinely
+/// stuck, and either way `PlaybackController.dispose` must not be starved
+/// behind it (a disposed engine is a "keeps playing audio in the
+/// background" bug, which is strictly worse than an unsynced checkpoint).
+final Duration disposeFlushTimeout = retryDelays.fold(
+  Duration.zero,
+  (sum, delay) => sum + delay,
+);
+
 /// Wall-clock activity accounting for one [PlaybackController]: how many
 /// seconds of a scene the user has actually watched since the last
 /// successfully-saved checkpoint, and getting that number (plus the current
@@ -71,7 +96,9 @@ const _tickWakeupInterval = Duration(seconds: 1);
 /// flush that fires while still active re-marks `_playStartedAt` to "now"
 /// afterwards so the clock keeps running for the *next* boundary; a
 /// transition to inactive instead clears it, since there is no "next
-/// span" until playback resumes.
+/// span" until playback resumes. Any single span is capped at
+/// [_maxSingleActiveSpan] (see its own doc) to defend against a
+/// non-monotonic wall clock.
 ///
 /// ## Checkpoints and retries
 ///
@@ -87,16 +114,41 @@ const _tickWakeupInterval = Duration(seconds: 1);
 /// sync failure never throws into playback, never pauses it, and never
 /// changes its playing state.
 ///
+/// [flush] and [replaceScene] only wait for that *first* attempt to
+/// settle (success or failure), never the full retry chain — a user-facing
+/// seek or scene load must not stall for up to 7 seconds because the
+/// activity endpoint is down. The retry chain, if the first attempt
+/// failed, keeps running in the background, still fully serialized behind
+/// [_flushTail]. [dispose] is the exception: it waits for the whole chain
+/// (it's the last chance to save), bounded by [disposeFlushTimeout] so a
+/// dead endpoint can never starve `_engine.dispose()`.
+///
 /// Every flush (periodic or lifecycle) is serialized through the single
 /// [_flushTail] future, so a periodic [tick] landing while a
 /// lifecycle-triggered flush is still retrying queues behind it instead of
 /// racing it — no two checkpoint requests for this scene are ever
-/// in flight at once.
+/// in flight at once. [tick] additionally refuses to enqueue a new flush
+/// while one is already pending ([_flushPending]) — without this, a
+/// checkpoint endpoint that fails every attempt leaves [queuedActive]
+/// permanently at or above [_checkpointThreshold], and an unguarded
+/// [tick] would enqueue a fresh flush (and a fresh warning) on every
+/// wakeup forever, growing the backlog without bound.
+///
+/// The periodic timer itself only runs while playback is active: it
+/// starts on a transition to active and is cancelled on every transition
+/// to inactive (pause, buffering, [dispose]) — so a paused scene can never
+/// keep retrying (and re-warning) in the background.
 ///
 /// [dispose] cancels the periodic timer first (so it can never fire again,
-/// not even mid-teardown) and then performs one last [flush] before
-/// completing — matching `PlaybackController`'s own single-dispose-site
-/// discipline, this is safe to call more than once.
+/// not even mid-teardown) and then performs one last, time-bounded
+/// [flush] before completing — matching `PlaybackController`'s own
+/// single-dispose-site discipline, this is safe to call more than once.
+/// That last flush can still report [activitySyncWarningMessage] if it
+/// fails, the same as any other — "no callbacks after teardown" is about
+/// *new* activity being initiated post-dispose (every public method here
+/// refuses to do anything, including ever reaching a flush, once
+/// [_disposed] is `true`), not about suppressing the outcome of the one
+/// flush [dispose] itself explicitly asked for.
 class ActivitySync {
   ActivitySync({
     required double Function() resumePositionSeconds,
@@ -148,6 +200,13 @@ class ActivitySync {
   Timer? _timer;
   bool _disposed = false;
 
+  /// Whether a flush is currently enqueued or executing (including its
+  /// own retries). Consulted only by [tick] — see the class doc's
+  /// "Checkpoints and retries" section for why an unguarded periodic
+  /// tick would otherwise grow the backlog without bound whenever the
+  /// checkpoint endpoint is down.
+  bool _flushPending = false;
+
   /// One future every flush (periodic or lifecycle) chains onto, so no two
   /// ever run concurrently. [_doFlush] never completes with an error, so
   /// chaining onto it repeatedly can never leave this future permanently
@@ -191,21 +250,32 @@ class ActivitySync {
     _applyActiveTransition();
   }
 
+  /// Starts the active clock (and the periodic timer) on a transition to
+  /// active; on a transition to inactive, folds the just-ended span in and
+  /// **stops the timer**, so a paused (or buffering) scene can never keep
+  /// silently retrying a failed checkpoint — and re-warning about it — in
+  /// the background. [_ensureTimer] restarts it fresh the next time
+  /// playback becomes active again.
   void _applyActiveTransition() {
     if (_active) {
       _playStartedAt = _clock();
       _ensureTimer();
     } else {
       _accumulate(resetMarker: true);
+      _timer?.cancel();
+      _timer = null;
     }
   }
 
   /// Periodic wakeup — see [_tickWakeupInterval]. Cheaply checks whether
   /// the queued delta *plus* whatever has accrued in the current active
   /// span (without mutating anything) has reached [_checkpointThreshold],
-  /// and if so kicks off a [flush]. Below threshold, this sends nothing.
+  /// and if so kicks off a [flush] — unless one is already [_flushPending],
+  /// in which case this tick does nothing: the already-enqueued flush will
+  /// pick up wherever things stand once it's its turn. Below threshold,
+  /// this sends nothing.
   void tick() {
-    if (_disposed) return;
+    if (_disposed || _flushPending) return;
     if (_queuedActive + _pendingActiveSpan() >= _checkpointThreshold) {
       unawaited(flush());
     }
@@ -214,22 +284,26 @@ class ActivitySync {
   Duration _pendingActiveSpan() {
     final startedAt = _playStartedAt;
     if (startedAt == null) return Duration.zero;
-    final elapsed = _clock().difference(startedAt);
-    return elapsed > Duration.zero ? elapsed : Duration.zero;
+    return _clampSpan(_clock().difference(startedAt));
+  }
+
+  Duration _clampSpan(Duration elapsed) {
+    if (elapsed <= Duration.zero) return Duration.zero;
+    return elapsed > _maxSingleActiveSpan ? _maxSingleActiveSpan : elapsed;
   }
 
   /// Folds `clock() - _playStartedAt` into [_queuedActive] exactly once,
-  /// if playback is currently active (a no-op otherwise). [resetMarker]
-  /// controls what happens to the active-span marker afterwards: `true`
-  /// (a genuine transition to inactive) clears it, `false` (a flush that
-  /// doesn't itself mean playback stopped) re-marks it to "now" so the
-  /// next boundary picks up from here rather than double-counting or
-  /// losing time.
+  /// if playback is currently active (a no-op otherwise), clamped per
+  /// [_clampSpan]. [resetMarker] controls what happens to the active-span
+  /// marker afterwards: `true` (a genuine transition to inactive) clears
+  /// it, `false` (a flush that doesn't itself mean playback stopped)
+  /// re-marks it to "now" so the next boundary picks up from here rather
+  /// than double-counting or losing time.
   void _accumulate({required bool resetMarker}) {
     final startedAt = _playStartedAt;
     if (startedAt == null) return;
     final now = _clock();
-    final elapsed = now.difference(startedAt);
+    final elapsed = _clampSpan(now.difference(startedAt));
     if (elapsed > Duration.zero) _queuedActive += elapsed;
     _playStartedAt = resetMarker ? null : now;
   }
@@ -239,30 +313,58 @@ class ActivitySync {
   }
 
   /// Flushes whatever is queued for the *current* scene to
-  /// `StashApi.saveSceneActivity`, retrying on failure per [retryDelays]
-  /// and reporting [activitySyncWarningMessage] once if all four attempts
-  /// fail. Always completes normally — never throws — so a caller (a
-  /// lifecycle boundary in `PlaybackController`) never needs to guard
-  /// against a sync failure interrupting playback; see the class doc.
+  /// `StashApi.saveSceneActivity`. Resolves once the first attempt has
+  /// settled (success or failure) — never the full [retryDelays] chain,
+  /// so a caller (a user-facing seek or scene load) is never stalled
+  /// behind a checkpoint retry storm. If the first attempt failed, the
+  /// remaining retries continue in the background, still fully serialized
+  /// behind [_flushTail], reporting [activitySyncWarningMessage] once if
+  /// all four attempts ultimately fail. Always completes normally — never
+  /// throws — so a caller never needs to guard against a sync failure
+  /// interrupting playback; see the class doc.
   ///
   /// A no-op (but still serialized behind [_flushTail]) if no scene is
   /// currently tracked (before the first [replaceScene] call).
   Future<void> flush() {
     if (_disposed) return Future<void>.value();
-    return _enqueueFlush();
+    return _flushAwaitingFirstAttempt();
   }
 
-  /// The actual [_flushTail] chaining, shared by [flush] and [dispose] —
-  /// [dispose] needs its own final flush to still run even though it has
-  /// already set [_disposed], which is exactly what [flush] itself now
-  /// refuses to do.
-  Future<void> _enqueueFlush() {
-    final next = _flushTail.then((_) => _doFlush());
+  Future<void> _flushAwaitingFirstAttempt({double? resumeTimeOverride}) {
+    final firstAttempt = Completer<void>();
+    _enqueueFlush(
+      resumeTimeOverride: resumeTimeOverride,
+      firstAttemptSignal: firstAttempt,
+    );
+    return firstAttempt.future;
+  }
+
+  /// The actual [_flushTail] chaining. [firstAttemptSignal], if given, is
+  /// completed by [_doFlush] as soon as its first `saveActivity` attempt
+  /// settles — independent of this method's own returned future, which
+  /// always represents the *entire* chain (all retries), exactly as
+  /// before. [dispose] uses this returned future directly (racing it
+  /// against [disposeFlushTimeout]) since it must wait for the whole
+  /// thing, not just the first attempt.
+  Future<void> _enqueueFlush({
+    double? resumeTimeOverride,
+    Completer<void>? firstAttemptSignal,
+  }) {
+    _flushPending = true;
+    final next = _flushTail.then(
+      (_) => _doFlush(
+        resumeTimeOverride: resumeTimeOverride,
+        firstAttemptSignal: firstAttemptSignal,
+      ),
+    );
     _flushTail = next;
     return next;
   }
 
-  Future<void> _doFlush() async {
+  Future<void> _doFlush({
+    double? resumeTimeOverride,
+    Completer<void>? firstAttemptSignal,
+  }) async {
     try {
       // Accumulate before doing anything async — this is the one required
       // accumulation point for a flush that doesn't already come from a
@@ -272,13 +374,20 @@ class ActivitySync {
       _accumulate(resetMarker: false);
 
       final sceneId = _sceneId;
-      if (sceneId == null) return;
+      if (sceneId == null) {
+        _completeFirstAttempt(firstAttemptSignal);
+        return;
+      }
 
       // Snapshot now, before any await: active time that accrues while
       // this request (and its retries) are in flight must survive, so only
       // this snapshot — never the live total — is ever subtracted.
       final snapshot = _queuedActive;
-      final resumeTime = _resumePositionSeconds();
+      // `resumeTimeOverride` is set by `replaceScene`, which must report
+      // the *outgoing* scene's last known position, not whatever the live
+      // callback would return once the caller has already moved its own
+      // state on to the next scene.
+      final resumeTime = resumeTimeOverride ?? _resumePositionSeconds();
       final playDuration =
           snapshot.inMicroseconds / Duration.microsecondsPerSecond;
 
@@ -292,10 +401,15 @@ class ActivitySync {
           );
           _queuedActive -= snapshot;
           _lastSuccessfulCheckpointAt = _clock();
+          _completeFirstAttempt(firstAttemptSignal);
           return;
         } catch (_) {
+          // Unblock a caller waiting only on the first attempt regardless
+          // of outcome — a no-op on the 2nd/3rd/4th attempt, since it's
+          // already completed by then.
+          _completeFirstAttempt(firstAttemptSignal);
           if (attempt > retryDelays.length) {
-            _onWarning(activitySyncWarningMessage);
+            _reportWarning(activitySyncWarningMessage);
             return;
           }
           await _delay(retryDelays[attempt - 1]);
@@ -307,20 +421,51 @@ class ActivitySync {
       // nothing here may ever escape into the `_flushTail` chain — doing
       // so would poison every later flush for the lifetime of this
       // ActivitySync (see [_flushTail]'s doc).
+      _completeFirstAttempt(firstAttemptSignal);
+    } finally {
+      _flushPending = false;
     }
   }
 
+  void _completeFirstAttempt(Completer<void>? signal) {
+    if (signal != null && !signal.isCompleted) signal.complete();
+  }
+
+  /// Reports [message] via the injected `onWarning`. Deliberately *not*
+  /// itself guarded by [_disposed]: [dispose]'s own final flush attempt
+  /// sets [_disposed] before that attempt even starts (so it can bypass
+  /// [flush]'s own disposed-guard — see [_enqueueFlush]'s doc), and its
+  /// failure still needs to warn like any other. "No callbacks after
+  /// teardown" is instead enforced the same way every other public
+  /// method here enforces it: [playingChanged], [bufferingChanged],
+  /// [tick], [flush], and [replaceScene] each refuse to do anything —
+  /// including ever reaching [_doFlush] — once [_disposed] is `true`, so
+  /// nothing *initiated* after teardown can ever produce a warning here
+  /// regardless of what this method does.
+  void _reportWarning(String message) => _onWarning(message);
+
   /// Flushes whatever is queued for the *old* scene (using its ID, not
-  /// [sceneId]) and only then starts tracking [sceneId] from a clean
-  /// slate — any leftover delta the old scene's flush couldn't save is
-  /// discarded rather than misattributed to the new scene.
+  /// [sceneId], and [outgoingResumeSeconds] rather than the live resume
+  /// callback — see below) and only then starts tracking [sceneId] from a
+  /// clean slate — any leftover delta the old scene's flush couldn't save
+  /// is discarded rather than misattributed to the new scene.
   ///
-  /// `PlaybackController.loadScene` calls this before the new scene
-  /// otherwise starts driving the engine, so no activity for the new
-  /// scene can be recorded before this completes.
-  Future<void> replaceScene(String sceneId) async {
+  /// [outgoingResumeSeconds] must be the *outgoing* scene's last known
+  /// position, captured by the caller before it resets its own position
+  /// state for the new scene. `PlaybackController.loadScene` resets
+  /// `PlaybackState.position` to zero as part of building the new scene's
+  /// state *before* this method's flush ever runs — if this flush read
+  /// the live `resumePositionSeconds` callback instead, it would send
+  /// `resumeTime: 0.0` for the scene the user just left, wiping its real
+  /// resume point on the server. `PlaybackController.loadScene` calls
+  /// this before the new scene otherwise starts driving the engine, so no
+  /// activity for the new scene can be recorded before this completes.
+  Future<void> replaceScene(
+    String sceneId, {
+    required double outgoingResumeSeconds,
+  }) async {
     if (_disposed) return;
-    await flush();
+    await _flushAwaitingFirstAttempt(resumeTimeOverride: outgoingResumeSeconds);
     _sceneId = sceneId;
     _queuedActive = Duration.zero;
     _playStartedAt = null;
@@ -329,18 +474,23 @@ class ActivitySync {
   }
 
   /// Cancels the periodic timer (so it can never fire — and so never call
-  /// `saveSceneActivity` — again) and performs one last [flush]. Safe to
-  /// call more than once.
+  /// `saveSceneActivity` — again) and performs one last flush, waiting for
+  /// its *entire* retry chain (unlike [flush]/[replaceScene]) since this
+  /// is the last chance to save — but bounded by [disposeFlushTimeout] so
+  /// a dead checkpoint endpoint can never starve
+  /// `PlaybackController.dispose`'s own `_engine.dispose()` call behind
+  /// it. Safe to call more than once.
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
     _timer?.cancel();
     _timer = null;
     try {
-      await _enqueueFlush();
+      await Future.any([_enqueueFlush(), _delay(disposeFlushTimeout)]);
     } catch (_) {
-      // flush() is contractually guaranteed not to throw; this is
-      // belt-and-braces so a bug there can never strand this dispose call.
+      // Neither branch of the race above is expected to throw, but this
+      // is belt-and-braces so a bug there can never strand this dispose
+      // call.
     }
   }
 }

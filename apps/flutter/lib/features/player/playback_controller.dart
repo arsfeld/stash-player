@@ -169,6 +169,15 @@ class PlaybackController extends ChangeNotifier {
     if (_disposed) return;
     final generation = _state.generation + 1;
 
+    // Captured *before* `_state` is replaced below — `replaceScene` needs
+    // the *outgoing* scene's last known position, and `_state.position`
+    // is about to be reset to zero for the incoming scene. Reading it
+    // after that reset (e.g. from inside ActivitySync's own live
+    // resume-position callback) would report the new scene's zeroed
+    // position as the old scene's resume point, silently wiping its real
+    // one on the server on every single scene navigation.
+    final outgoingPositionSeconds = _durationToSeconds(_state.position);
+
     // Claim this generation synchronously, before any `await` — including
     // the subscription cancellation below. Two `loadScene` calls issued
     // back-to-back (before either reaches its first suspension point)
@@ -185,10 +194,14 @@ class PlaybackController extends ChangeNotifier {
     );
     notifyListeners();
 
-    // Flush whatever the *previous* scene owes under its own ID before
-    // this controller starts driving the engine for the new one — see
-    // ActivitySync.replaceScene's own doc for why order matters here.
-    await _activitySync.replaceScene(scene.id);
+    // Flush whatever the *previous* scene owes under its own ID (and its
+    // own captured position) before this controller starts driving the
+    // engine for the new one — see ActivitySync.replaceScene's own doc
+    // for why order and the explicit position matter here.
+    await _activitySync.replaceScene(
+      scene.id,
+      outgoingResumeSeconds: outgoingPositionSeconds,
+    );
     if (_disposed || generation != _state.generation) return;
 
     await _cancelSubscriptions();
@@ -574,10 +587,30 @@ final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
 /// already uses for "safe but not what the user asked for" notices, which
 /// is exactly what a sync failure is (see [ActivitySync]'s own doc: it
 /// never touches playback, only reports that it couldn't save).
+///
+/// Both `stashApiProvider.future` and `globalNoticeProvider.notifier` are
+/// captured **once**, synchronously, right here — not re-resolved via
+/// `ref` lazily inside the `saveActivity`/`onWarning` closures. A
+/// `connectionGenerationProvider` bump rebuilds this provider (a fresh
+/// controller, a fresh `ActivitySync`) while the *old* controller's
+/// `dispose()` — and so its `ActivitySync`'s own final flush — keeps
+/// running as unawaited teardown from Riverpod's perspective. If that
+/// flush resolved `ref.read(stashApiProvider.future)` lazily at call
+/// time, it would by then observe the *new* generation's `StashApi`
+/// (same `ref`, already rebuilt) and POST the outgoing scene's last
+/// checkpoint to the new server with the new API key — silently
+/// corrupting whatever scene happens to share that ID there, or hitting a
+/// disposed `ProviderContainer` and burning a full retry cycle on a call
+/// that can never succeed. Capturing the `Future`/notifier once pins them
+/// to *this* generation for the lifetime of *this* controller, exactly
+/// the way a fresh `PlaybackController`/`ActivitySync` pair is already
+/// built per generation.
 final playbackControllerProvider = ChangeNotifierProvider<PlaybackController>((
   ref,
 ) {
   ref.watch(connectionGenerationProvider);
+  final stashApiFuture = ref.read(stashApiProvider.future);
+  final noticeController = ref.read(globalNoticeProvider.notifier);
   return PlaybackController(
     engine: ref.watch(playbackEngineProvider),
     resolveConnection: () => ref.read(effectiveConnectionProvider.future),
@@ -586,18 +619,16 @@ final playbackControllerProvider = ChangeNotifierProvider<PlaybackController>((
       resumePositionSeconds: resumePositionSeconds,
       saveActivity:
           ({required id, required resumeTime, required playDuration}) async {
-            final api = await ref.read(stashApiProvider.future);
+            final api = await stashApiFuture;
             await api.saveSceneActivity(
               id: id,
               resumeTime: resumeTime,
               playDuration: playDuration,
             );
           },
-      onWarning: (message) => ref
-          .read(globalNoticeProvider.notifier)
-          .show(
-            AppNotice(message: message, severity: AppNoticeSeverity.warning),
-          ),
+      onWarning: (message) => noticeController.show(
+        AppNotice(message: message, severity: AppNoticeSeverity.warning),
+      ),
     ),
   );
 });
