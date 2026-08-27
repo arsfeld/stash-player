@@ -146,6 +146,19 @@ class PlaybackController extends ChangeNotifier {
   /// and `FakePlaybackEngine` both reject).
   bool _disposed = false;
 
+  /// Whether `_state.position` currently reflects a real, established
+  /// position for the *current* scene — `true` once the resume-seek
+  /// decision in `loadScene` has run (whether or not a seek actually
+  /// happened) or the engine's `position` stream has fired at least once;
+  /// `false` from the moment a new scene's state is built until then.
+  /// `loadScene` reads this for the *outgoing* scene before resetting it,
+  /// so a scene replaced before its own position was ever established
+  /// (e.g. superseded by a second `loadScene` before the first's resume
+  /// seek could land) reports its outgoing resume position as unknown
+  /// rather than a bogus zero (N4) — see `ActivitySync.replaceScene`'s own
+  /// doc for what it does with that.
+  bool _positionEstablished = false;
+
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
@@ -175,8 +188,15 @@ class PlaybackController extends ChangeNotifier {
     // after that reset (e.g. from inside ActivitySync's own live
     // resume-position callback) would report the new scene's zeroed
     // position as the old scene's resume point, silently wiping its real
-    // one on the server on every single scene navigation.
-    final outgoingPositionSeconds = _durationToSeconds(_state.position);
+    // one on the server on every single scene navigation. `null` when the
+    // outgoing scene's position was never established at all (N4) — e.g.
+    // this `loadScene` itself superseded one that hadn't yet reached its
+    // own resume-seek decision — so that case is reported as unknown
+    // rather than as a genuine (and wrong) zero.
+    final outgoingPositionSeconds = _positionEstablished
+        ? _durationToSeconds(_state.position)
+        : null;
+    _positionEstablished = false;
 
     // Claim this generation synchronously, before any `await` — including
     // the subscription cancellation below. Two `loadScene` calls issued
@@ -240,6 +260,10 @@ class PlaybackController extends ChangeNotifier {
         _state = _state.copyWith(position: target);
         notifyListeners();
       }
+      // Whether or not a resume seek was needed, `_state.position` now
+      // genuinely reflects this scene's starting position (zero is a real
+      // answer here, not a placeholder) — see `_positionEstablished`'s doc.
+      _positionEstablished = true;
 
       await _engine.play();
       if (_disposed || generation != _state.generation) return;
@@ -413,6 +437,22 @@ class PlaybackController extends ChangeNotifier {
 
     await _cancelSubscriptions();
     try {
+      // Pause *before* the activity flush below, which can legitimately
+      // take up to ActivitySync's own disposeFlushTimeout against a hung
+      // checkpoint endpoint (N3): without this, the engine would keep
+      // rendering audio/video for that entire window even though the user
+      // has already navigated away — exactly the "keeps playing in the
+      // background" failure the comment below already guards against for
+      // the *undisposed* case, just arriving via a slow flush instead of a
+      // throwing one. `_activitySync.dispose()`'s own final checkpoint
+      // reads `_resumePositionSeconds` (this controller's own `_state`),
+      // never the engine, so pausing first can't affect what it reports.
+      await _engine.pause();
+    } catch (_) {
+      // Best-effort: a thrown pause must never block the activity flush
+      // or the engine dispose below from still running.
+    }
+    try {
       await _activitySync.dispose();
     } catch (_) {
       // ActivitySync.dispose is contractually guaranteed not to throw,
@@ -447,6 +487,7 @@ class PlaybackController extends ChangeNotifier {
     _positionSubscription = _engine.position.listen((value) {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(position: value);
+      _positionEstablished = true;
       notifyListeners();
     });
     _durationSubscription = _engine.duration.listen((value) {

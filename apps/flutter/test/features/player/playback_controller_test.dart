@@ -206,6 +206,7 @@ class _FaultyEngine implements PlaybackEngine {
     this.seekThrows = false,
     this.volumeThrows = false,
     this.mutedThrows = false,
+    this.pauseThrows = false,
   });
 
   final FakePlaybackEngine inner;
@@ -213,6 +214,7 @@ class _FaultyEngine implements PlaybackEngine {
   final bool seekThrows;
   final bool volumeThrows;
   final bool mutedThrows;
+  final bool pauseThrows;
 
   @override
   Stream<bool> get playing => inner.playing;
@@ -243,7 +245,10 @@ class _FaultyEngine implements PlaybackEngine {
   }
 
   @override
-  Future<void> pause() => inner.pause();
+  Future<void> pause() async {
+    if (pauseThrows) throw StateError('engine pause() failed');
+    return inner.pause();
+  }
 
   @override
   Future<void> seek(Duration position) async {
@@ -967,6 +972,84 @@ void main() {
       },
     );
 
+    test("back-to-back loadScene calls do not wipe a never-watched scene's "
+        'resume point with a bogus zero (N4: loadScene(c) starting while '
+        "loadScene(b) is still parked before b's own resume-seek decision "
+        "must not report resumeTime: 0.0, playDuration: 0.0 for b)", () async {
+      final engine = FakePlaybackEngine();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final completers = <Completer<ConnectionConfig>>[];
+      final controller = PlaybackController(
+        engine: engine,
+        resolveConnection: () {
+          final completer = Completer<ConnectionConfig>();
+          completers.add(completer);
+          return completer.future;
+        },
+        setFullscreenPlatform: (value) async => true,
+        activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
+          resumePositionSeconds: resumePositionSeconds,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async {
+                calls.add((
+                  id: id,
+                  resumeTime: resumeTime,
+                  playDuration: playDuration,
+                ));
+              },
+          delay: (_) async {},
+        ),
+      );
+
+      // Scene A loads fully, establishing a real (zero, but established)
+      // position.
+      final futureA = controller.loadScene(
+        _sceneWith(id: 'a', stream: 'a.mp4', duration: 2000),
+      );
+      await pumpEventQueue();
+      expect(completers, hasLength(1));
+      completers[0].complete(_config);
+      await futureA;
+      expect(controller.state.phase, PlaybackPhase.ready);
+      calls.clear();
+
+      // Scene B starts loading but is parked before its own resume-seek
+      // decision point (still awaiting resolveConnection) — the user
+      // never watches a frame of it.
+      final futureB = controller.loadScene(
+        _sceneWith(id: 'b', stream: 'b.mp4', duration: 2000),
+      );
+      await pumpEventQueue();
+      expect(completers, hasLength(2));
+
+      // Scene C supersedes B before B ever reaches open()/its resume
+      // decision.
+      final futureC = controller.loadScene(
+        _sceneWith(id: 'c', stream: 'c.mp4', duration: 2000),
+      );
+      await pumpEventQueue();
+      expect(completers, hasLength(3));
+
+      completers[1].complete(_config); // B's (now stale) connection
+      completers[2].complete(_config); // C's
+      await Future.wait([futureB, futureC]);
+
+      expect(controller.state.scene?.id, 'c');
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(
+        calls.where((c) => c.id == 'b'),
+        isEmpty,
+        reason:
+            "b's position was never established and nothing was ever "
+            'queued for it either — there is nothing genuine to report, '
+            'so no saveSceneActivity call for b should happen at all',
+      );
+    });
+
     test(
       'a stale loadScene continuation cannot clobber a newer scene',
       () async {
@@ -1190,6 +1273,55 @@ void main() {
       },
     );
 
+    test('pauses the engine before the activity flush, so a hung checkpoint '
+        'endpoint cannot leave it rendering audio for the duration of '
+        "ActivitySync's own bounded wait (N3)", () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              // Still mid-flush when this runs — the pause must already
+              // have landed, strictly before this (potentially slow)
+              // call even started.
+              expect(engine.commands.whereType<PauseCommand>(), hasLength(1));
+              expect(engine.commands.whereType<DisposeCommand>(), isEmpty);
+            },
+      );
+      await controller.loadScene(_sceneWith());
+      engine.commands.clear();
+
+      await controller.dispose();
+
+      expect(engine.commands.whereType<PauseCommand>(), hasLength(1));
+      final pauseIndex = engine.commands.indexWhere((c) => c is PauseCommand);
+      final disposeIndex = engine.commands.indexWhere(
+        (c) => c is DisposeCommand,
+      );
+      expect(pauseIndex, greaterThanOrEqualTo(0));
+      expect(disposeIndex, greaterThan(pauseIndex));
+    });
+
+    test('a throwing pause does not block the activity flush or the engine '
+        'dispose that follow it', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _FaultyEngine(inner, pauseThrows: true);
+      var flushCalls = 0;
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              flushCalls++;
+            },
+      );
+      await controller.loadScene(_sceneWith());
+
+      await controller.dispose();
+
+      expect(flushCalls, 1);
+      expect(inner.isDisposed, isTrue);
+    });
+
     test(
       'omitting activity-sync overrides defaults to a no-op that does not throw',
       () async {
@@ -1218,19 +1350,25 @@ void main() {
                 required playDuration,
               }) async => throw StateError('network down'),
           onActivityWarning: warnings.add,
+          // Retry backoffs resolve instantly (as everywhere else in this
+          // file), but ActivitySync.dispose races its own flush against
+          // disposeFlushTimeout using this *same* injected delay function
+          // — with every delay instant, the timeout branch can "win" on
+          // raw microtask-hop count alone (fewer hops than a full
+          // 4-attempt cycle), hard-stopping the flush before it ever
+          // reaches its warning. That race has its own dedicated,
+          // deterministic tests in activity_sync_test.dart; this test is
+          // about the flush's own warning, so disposeFlushTimeout
+          // specifically never resolves here, letting dispose() wait for
+          // the flush's full (instantly-retried) cycle to genuinely
+          // finish instead.
+          activityDelay: (duration) => duration == disposeFlushTimeout
+              ? Completer<void>().future
+              : Future<void>.value(),
         );
         await controller.loadScene(_sceneWith());
 
         await controller.dispose();
-        // ActivitySync.dispose races its own flush against
-        // disposeFlushTimeout using the same injected (here, instantly-
-        // resolving) delay function as the retry schedule; with both
-        // sides effectively instant, the timeout side can "win" on
-        // microtask-hop count alone even though the flush's own retries
-        // also complete immediately. Draining the microtask queue lets
-        // that backgrounded chain (and the warning it produces) settle
-        // before asserting on it.
-        await pumpEventQueue();
 
         expect(engine.isDisposed, isTrue);
         expect(engine.commands.whereType<DisposeCommand>(), hasLength(1));

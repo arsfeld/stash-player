@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 
@@ -365,6 +366,98 @@ void main() {
       await sync.dispose();
       expect(save.calls, hasLength(1));
     });
+
+    test(
+      'replaceScene skips the flush entirely when nothing is queued and no '
+      'position was ever established (N4: sending resumeTime: 0.0 here '
+      'would wipe a never-watched scene\'s real resume point for nothing)',
+      () async {
+        final sync = buildSync();
+        addTearDown(sync.dispose);
+        await sync.replaceScene('a', outgoingResumeSeconds: position);
+        save.calls.clear();
+
+        // No playingChanged at all — 'a' was superseded before it was ever
+        // watched, and its position was never established either (passed
+        // as null, standing in for PlaybackController never having reached
+        // its resume-seek decision point for 'a').
+        await sync.replaceScene('b');
+
+        expect(save.calls, isEmpty);
+      },
+    );
+
+    test(
+      'replaceScene still flushes with a 0.0 fallback resumeTime when '
+      'something genuine is queued, even with no established position',
+      () async {
+        final sync = buildSync();
+        addTearDown(sync.dispose);
+        await sync.replaceScene('a', outgoingResumeSeconds: position);
+        save.calls.clear();
+
+        // Unusual but possible: the engine reported `playing` before ever
+        // reporting a position. There is genuine watched time to report,
+        // so the flush must still happen (falling back to 0.0 for the
+        // resumeTime it doesn't have).
+        sync.playingChanged(true);
+        clock.advance(const Duration(seconds: 5));
+        await sync.replaceScene('b');
+
+        expect(save.calls, hasLength(1));
+        expect(save.calls.single.id, 'a');
+        expect(save.calls.single.resumeTime, 0.0);
+        expect(save.calls.single.playDuration, 5.0);
+      },
+    );
+
+    test('a detached retry chain that succeeds after replaceScene has already '
+        'reset does not drive queuedActive negative (N1: the C3 first-attempt '
+        'seam left the previously-serialized subtraction on `_doFlush` able '
+        'to run after replaceScene had already zeroed queuedActive for a new '
+        'scene)', () async {
+      final sync = buildSync();
+      addTearDown(sync.dispose);
+      await sync.replaceScene('a', outgoingResumeSeconds: position);
+      save.calls.clear();
+
+      sync.playingChanged(true);
+      clock.advance(const Duration(seconds: 10));
+      save.failNext(1); // the first attempt (for 'a') fails; the retry succeeds
+
+      await sync.replaceScene('b', outgoingResumeSeconds: position);
+      // replaceScene only awaits the first (failed) attempt — by now
+      // `_sceneId` is already 'b' and queuedActive has been reset, but
+      // the detached retry for 'a' (still running in the background)
+      // hasn't succeeded yet.
+      expect(sync.queuedActive, Duration.zero);
+
+      // Let the backgrounded retry (which now succeeds, since only one
+      // failure was configured) settle.
+      await pumpEventQueue();
+
+      // The stale retry's success must not have touched queuedActive —
+      // it belongs to 'b' now, not 'a'. Without the epoch guard this
+      // would be -10s instead.
+      expect(sync.queuedActive, Duration.zero);
+      expect(
+        save.calls.where((c) => c.id == 'a'),
+        hasLength(2),
+        reason:
+            'the failed first attempt plus the successful retry, '
+            'both still correctly attributed to the outgoing scene',
+      );
+
+      // A subsequent flush for 'b' must report its own genuine delta,
+      // never a negative one inherited from 'a's stale subtraction.
+      sync.playingChanged(true);
+      clock.advance(const Duration(seconds: 2));
+      sync.playingChanged(false);
+      await pumpEventQueue();
+
+      final bCall = save.calls.firstWhere((c) => c.id == 'b');
+      expect(bCall.playDuration, 2.0);
+    });
   });
 
   group('retries', () {
@@ -511,6 +604,43 @@ void main() {
         expect(sync.queuedActive, const Duration(seconds: 10));
       },
     );
+
+    test('repeated failed flush cycles only warn once, until a checkpoint '
+        'succeeds (C2 residual: an unguarded down endpoint re-warns on every '
+        '~8-second failed cycle for the whole session, each a fresh '
+        'SnackBar)', () async {
+      final sync = buildSync();
+      addTearDown(sync.dispose);
+      await sync.replaceScene('s1', outgoingResumeSeconds: position);
+      save.calls.clear();
+      save.failNext(4);
+
+      sync.playingChanged(true);
+      clock.advance(const Duration(seconds: 10));
+      await sync.flush();
+      await pumpEventQueue();
+      expect(warnings, hasLength(1));
+
+      // A second, independent failed cycle (e.g. the next periodic
+      // tick, still down) must not warn again.
+      save.failNext(4);
+      clock.advance(const Duration(seconds: 10));
+      await sync.flush();
+      await pumpEventQueue();
+      expect(warnings, hasLength(1)); // still just the one
+
+      // Once a checkpoint actually succeeds, the suppression lifts.
+      clock.advance(const Duration(seconds: 10));
+      await sync.flush(); // no more configured failures — succeeds
+      await pumpEventQueue();
+      expect(sync.queuedActive, Duration.zero);
+
+      save.failNext(4);
+      clock.advance(const Duration(seconds: 10));
+      await sync.flush();
+      await pumpEventQueue();
+      expect(warnings, hasLength(2));
+    });
   });
 
   group('single-flight serialization', () {
@@ -581,77 +711,137 @@ void main() {
     );
   });
 
-  group('the real periodic timer (C2 legs 2/3, I3: fakeAsync is not available '
-      'in this project, so cancellation is proven with short, deliberate '
-      'real waits rather than tick() called directly)', () {
-    test('fires while active and stops for good once dispose cancels it — '
-        'not just guarded against by _disposed', () async {
-      save.alwaysFail = true; // keep queuedActive permanently over threshold
-      final sync = ActivitySync(
-        resumePositionSeconds: () => position,
-        saveActivity: save.call,
-        onWarning: warnings.add,
-        clock: clock.now,
-        delay: delay.call,
-        tickInterval: const Duration(milliseconds: 5),
-      );
+  group('hard stop after a timed-out dispose (N2)', () {
+    test('a detached chain still retrying when dispose times out never calls '
+        'saveActivity or onWarning again afterwards', () async {
+      final sync = buildSync();
       await sync.replaceScene('s1', outgoingResumeSeconds: position);
+      save.calls.clear();
 
       sync.playingChanged(true);
-      clock.advance(const Duration(seconds: 10)); // cross the threshold
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      final callsBeforeDispose = save.calls.length;
-      expect(callsBeforeDispose, greaterThan(0));
-
-      await sync.dispose();
-      // With every delay in this test instantly-resolving (including
-      // disposeFlushTimeout's own race — see disposeFlushTimeout's
-      // doc), a flush that was already mid-chain when dispose() ran
-      // can "lose" that race on hop-count alone and still be settling
-      // as a harmless background continuation (warnings are already
-      // suppressed post-dispose — see _reportWarning) even though
-      // dispose() itself has returned. Draining the microtask queue
-      // (no real time, unlike the timer waits around it) lets that
-      // settle before taking the snapshot the real assertion below
-      // depends on: no *further* calls once the real timer is gone.
+      clock.advance(const Duration(seconds: 10));
+      // Configured so the chain *would* exhaust all 4 attempts (and
+      // warn) if ever allowed to run to completion.
+      save.failNext(4);
+      final held = save.holdNext(); // hold the first attempt open
+      unawaited(sync.flush()); // e.g. a seek boundary, fire-and-forget here
       await pumpEventQueue();
-      final callsAtDispose = save.calls.length;
+      expect(save.calls, hasLength(1)); // first attempt in flight, held
 
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(save.calls.length, callsAtDispose);
+      // dispose() enqueues its own flush behind the held one. Since the
+      // held attempt never resolves on its own, and every delay in this
+      // test resolves instantly, the timeout side of dispose's race
+      // wins essentially immediately.
+      await sync.dispose();
+
+      // The network eventually "responds" — after teardown already
+      // gave up waiting on it.
+      held.completeError(StateError('still down'));
+      await pumpEventQueue();
+
+      // The hard-stop must have silenced this chain for good: no
+      // further saveActivity attempts (2nd/3rd/4th) and no warning,
+      // even though save.failNext(4) would have produced both had this
+      // chain been allowed to keep running.
+      expect(save.calls, hasLength(1));
+      expect(warnings, isEmpty);
     });
+  });
 
-    test(
-      'stops once playback goes inactive, not only on dispose (C2 leg 2: '
-      'without this, a paused scene with a down checkpoint endpoint '
-      'keeps retrying — and re-warning — in the background forever)',
-      () async {
+  group('the real periodic timer (C2 legs 2/3, I3: driven deterministically by '
+      'fake_async — no real sleeping, and periodicTimerCount inspects the '
+      'timer registry directly rather than inferring cancellation from '
+      "tick()'s own _disposed guard, which would pass unchanged even if the "
+      'underlying Timer were never actually cancelled)', () {
+    test('fires while active and stops for good once dispose cancels it — '
+        'not just guarded against by _disposed', () {
+      fakeAsync((async) {
         save.alwaysFail = true; // keep queuedActive permanently over threshold
         final sync = ActivitySync(
           resumePositionSeconds: () => position,
           saveActivity: save.call,
           onWarning: warnings.add,
           clock: clock.now,
-          delay: delay.call,
-          tickInterval: const Duration(milliseconds: 5),
+          // delay/tickInterval left at their real production
+          // defaults (Future.delayed, 1s) — fake_async's zone
+          // intercepts both Timer.periodic and Future.delayed, so
+          // this costs no real time despite using the real
+          // mechanisms rather than injected instant fakes.
         );
-        addTearDown(sync.dispose);
-        await sync.replaceScene('s1', outgoingResumeSeconds: position);
+        sync.replaceScene('s1', outgoingResumeSeconds: position);
+        async.flushMicrotasks();
+
+        sync.playingChanged(true);
+        clock.advance(const Duration(seconds: 10)); // cross the threshold
+        expect(async.periodicTimerCount, 1);
+
+        async.elapse(const Duration(seconds: 5));
+        final callsBeforeDispose = save.calls.length;
+        expect(callsBeforeDispose, greaterThan(0));
+
+        sync.dispose();
+        // The regression check this test exists for: deleting
+        // `_timer?.cancel()` from dispose() fails *this* assertion.
+        // Unlike inferring cancellation from save.calls no longer
+        // growing (which a surviving-but-`_disposed`-guarded timer
+        // would also satisfy), this inspects fake_async's own timer
+        // registry directly.
+        expect(async.periodicTimerCount, 0);
+
+        // Let dispose's own bounded wait — and any chain it's
+        // racing, hard-stopped or not — fully settle.
+        async.elapse(const Duration(seconds: 30));
+        final callsAtDispose = save.calls.length;
+
+        // If the timer weren't actually gone, more calls would land
+        // here.
+        async.elapse(const Duration(seconds: 30));
+        expect(save.calls.length, callsAtDispose);
+      });
+    });
+
+    test('stops once playback goes inactive, not only on dispose (C2 leg 2: '
+        'without this, a paused scene with a down checkpoint endpoint '
+        'keeps retrying — and re-warning — in the background forever)', () {
+      fakeAsync((async) {
+        save.alwaysFail = true; // keep queuedActive permanently over threshold
+        final sync = ActivitySync(
+          resumePositionSeconds: () => position,
+          saveActivity: save.call,
+          onWarning: warnings.add,
+          clock: clock.now,
+        );
+        sync.replaceScene('s1', outgoingResumeSeconds: position);
+        async.flushMicrotasks();
 
         sync.playingChanged(true);
         clock.advance(const Duration(seconds: 10));
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(async.periodicTimerCount, 1);
+
+        async.elapse(const Duration(seconds: 5));
         expect(save.calls, isNotEmpty);
 
         sync.playingChanged(false); // pause -> stops the real timer
-        await pumpEventQueue();
-        final callsAtPause = save.calls.length;
+        // Cancelled synchronously, inside playingChanged itself,
+        // before the pause-triggered flush this same call fires even
+        // gets a chance to run.
+        expect(async.periodicTimerCount, 0);
 
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Let the one pause-triggered flush's own retry cycle (and
+        // anything it's racing) fully settle.
+        async.elapse(const Duration(seconds: 30));
+        final callsAtPause = save.calls.length;
+        expect(callsAtPause, greaterThan(0));
+
+        // If the timer weren't truly cancelled, more calls would
+        // land here.
+        async.elapse(const Duration(seconds: 30));
         expect(save.calls.length, callsAtPause);
-      },
-    );
+
+        sync.dispose();
+        async.elapse(const Duration(seconds: 30));
+      });
+    });
   });
 
   group('teardown', () {
