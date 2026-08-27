@@ -1,5 +1,8 @@
 /target
 /result
+/apps/flutter/.dart_tool/
+/apps/flutter/.flutter-plugins-dependencies
+/apps/flutter/build/
 /docs
 /tools/dev-stash/media
 

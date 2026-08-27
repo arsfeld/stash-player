@@ -1,0 +1,50 @@
+name: Flutter
+
+on:
+  push:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Flutter Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v20
+
+      - name: Verify Flutter client
+        run: |
+          nix develop --command bash -c '
+            cd apps/flutter
+            flutter pub get
+            dart format --output=none --set-exit-if-changed .
+            flutter analyze --fatal-infos --fatal-warnings
+            flutter test
+            flutter build linux --debug
+          '
+
+  macos:
+    name: Flutter macOS
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v20
+
+      - name: Verify Flutter client
+        run: |
+          nix develop --command bash -c '
+            cd apps/flutter
+            flutter pub get
+            dart format --output=none --set-exit-if-changed .
+            flutter analyze --fatal-infos --fatal-warnings
+            flutter test
+            flutter build macos --debug
+          '

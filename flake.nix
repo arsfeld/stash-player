@@ -58,11 +58,26 @@
         let
           pkgs = pkgsFor system;
           rustToolchain = rustFor system;
+          # media_kit links libmpv dynamically. Nixpkgs' mpv.pc retains its
+          # full static link closure in Requires.private, so give CMake a
+          # dynamic-link metadata file rather than pulling every mpv build
+          # dependency into the interactive shell.
+          mpvPkgConfig = pkgs.writeTextDir "lib/pkgconfig/mpv.pc" ''
+            Name: mpv
+            Description: mpv media player client library
+            Version: ${pkgs.mpv.version}
+            Libs: -L${pkgs.mpv}/lib -lmpv
+            Cflags: -I${pkgs.lib.getDev pkgs.mpv}/include
+          '';
         in
         pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             rustToolchain
             pkg-config
+            flutter
+            cmake
+            ninja
+            clang
             flatpak-builder
             appstream
           ];
@@ -87,12 +102,17 @@
             openssl
             dbus
             libsecret
+            libglvnd
+            mpv
+            mpvPkgConfig
 
             desktop-file-utils
             shared-mime-info
           ];
 
           shellHook = ''
+            flutter --version
+            export PKG_CONFIG_PATH="${mpvPkgConfig}/lib/pkgconfig:$PKG_CONFIG_PATH"
             export GST_PLUGIN_SYSTEM_PATH_1_0="${pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
               pkgs.gst_all_1.gstreamer.out
               pkgs.gst_all_1.gst-plugins-base
@@ -123,9 +143,16 @@
         pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             rustToolchain
+            pkg-config
+            flutter
+            cmake
+            ninja
+            clang
+            cocoapods
             xcodegen
           ];
           shellHook = ''
+            flutter --version
             # Pin the Rust staticlib's deployment floor to match the Swift
             # target so the Apple linker doesn't warn on every object.
             export MACOSX_DEPLOYMENT_TARGET=14.0
