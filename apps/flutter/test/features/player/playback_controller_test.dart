@@ -51,19 +51,36 @@ PlaybackController _buildController({
 ///
 /// Exists to test [PlaybackController]'s per-generation guards on its
 /// bound stream callbacks (I4). A plain `StreamController.broadcast()`
-/// (what `FakePlaybackEngine` uses) cancels a subscription's delivery
-/// *synchronously* the moment `.cancel()` is called — verified directly:
-/// `controller.add(x); sub.cancel();` with no `await` in between still
-/// leaves the listener never invoked, even racing a `scheduleMicrotask`
-/// in between, and even when the controller's `onCancel` callback is
-/// deliberately left pending forever. That makes it impossible to get an
-/// event from a `FakePlaybackEngine` to reach a stale-generation
-/// callback from outside `PlaybackController` — the generation guard can
-/// never be exercised against it. A real engine's callback marshaling
-/// (e.g. across an FFI or platform-channel boundary) offers no such
-/// synchronous guarantee, which is exactly why the guard exists; this
-/// double lets a test invoke an old generation's captured callback
-/// directly, simulating that race deterministically.
+/// cancels a subscription's delivery *synchronously* the moment
+/// `.cancel()` is called — verified directly against the Dart SDK
+/// (`lib/async/stream_impl.dart`: `cancel()` sets `_STATE_CANCELED` and
+/// flips the pending-events state so an already-scheduled delivery
+/// microtask early-returns; `_add` also short-circuits on
+/// `_isCanceled`), and empirically (`controller.add(x); sub.cancel();`
+/// with no `await` in between still leaves the listener never invoked,
+/// even racing a `scheduleMicrotask` in between, and even when the
+/// controller's `onCancel` callback is deliberately left pending
+/// forever). That guarantee holds for *every* [PlaybackEngine]
+/// implementation that exists in this codebase today — not just
+/// `FakePlaybackEngine`, but the real `MediaKitPlaybackEngine` too: it
+/// doesn't forward `package:media_kit`'s own streams directly, it
+/// re-emits through its own five `StreamController.broadcast()`s (see
+/// `media_kit_playback_engine.dart`), so `PlaybackController` is always
+/// cancelling a subscription to a plain Dart broadcast controller,
+/// regardless of which concrete engine backs it. There is, correctly,
+/// no real race to reproduce against either one.
+///
+/// So this exists for a different reason than "simulate a race that can
+/// happen": the abstract [PlaybackEngine] *contract* doesn't require
+/// synchronous-cancel semantics — nothing stops a future implementation
+/// from delivering a queued event after a Dart-side `cancel()`, e.g. one
+/// that doesn't route through a plain `StreamController` at all. This
+/// double stands in for that hypothetical, contractually-permitted
+/// implementation so the generation guard's *closure behavior* — does it
+/// correctly ignore a stale-generation callback if one ever fires — is
+/// pinned by a real, passing/failing test, rather than left as an
+/// unverified assumption resting on every engine's cancellation being
+/// well-behaved.
 class _RecordingStream<T> extends Stream<T> {
   final List<void Function(T)> callbacks = [];
 
@@ -225,6 +242,82 @@ class _FaultyEngine implements PlaybackEngine {
   @override
   Future<void> setMuted(bool muted) async {
     if (mutedThrows) throw StateError('engine setMuted() failed');
+    return inner.setMuted(muted);
+  }
+
+  @override
+  Future<void> dispose() => inner.dispose();
+}
+
+/// Records every command *invocation* by name, independent of whether
+/// [inner] would itself throw for it.
+///
+/// This is what actually makes a missing/removed `_disposed` guard on a
+/// `PlaybackController` command method observable (fix round 2, item 1):
+/// `FakePlaybackEngine` checks its own disposed flag and throws *before*
+/// ever appending to `commands`, so a post-dispose call that reaches it
+/// leaves no trace there for a test to see — and `_runEngineCommand`'s
+/// catch swallows that thrown `StateError` just as readily as any other
+/// engine failure, so "the call didn't throw" is no longer a reliable
+/// signal either. Counting invocations directly, ahead of anything
+/// [inner] itself might do, sidesteps both.
+class _CallCountingEngine implements PlaybackEngine {
+  _CallCountingEngine(this.inner);
+
+  final FakePlaybackEngine inner;
+  final List<String> invocations = [];
+
+  @override
+  Stream<bool> get playing => inner.playing;
+
+  @override
+  Stream<bool> get buffering => inner.buffering;
+
+  @override
+  Stream<Duration> get position => inner.position;
+
+  @override
+  Stream<Duration> get duration => inner.duration;
+
+  @override
+  Stream<String> get errors => inner.errors;
+
+  @override
+  Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
+
+  @override
+  Future<void> open(Uri uri, {bool play = false}) {
+    invocations.add('open');
+    return inner.open(uri, play: play);
+  }
+
+  @override
+  Future<void> play() {
+    invocations.add('play');
+    return inner.play();
+  }
+
+  @override
+  Future<void> pause() {
+    invocations.add('pause');
+    return inner.pause();
+  }
+
+  @override
+  Future<void> seek(Duration position) {
+    invocations.add('seek');
+    return inner.seek(position);
+  }
+
+  @override
+  Future<void> setVolume(double zeroToOne) {
+    invocations.add('setVolume');
+    return inner.setVolume(zeroToOne);
+  }
+
+  @override
+  Future<void> setMuted(bool muted) {
+    invocations.add('setMuted');
     return inner.setMuted(muted);
   }
 
@@ -871,9 +964,12 @@ void main() {
       expect(engine.positionRecorder.callbacks, hasLength(2));
 
       final before = controller.state.position;
-      // Invoke generation 1's captured callback directly — this is
-      // what a real engine's callback marshaling racing Dart-side
-      // cancellation would look like.
+      // Invoke generation 1's captured callback directly — standing in
+      // for a contractually-permitted (if hypothetical) PlaybackEngine
+      // implementation whose cancellation isn't airtight the way every
+      // real StreamController-backed one in this codebase is; see
+      // _RecordingStream's own doc for why this isn't reproducing an
+      // actual race against a real engine.
       engine.positionRecorder.callbacks[0](const Duration(seconds: 999));
 
       expect(controller.state.position, before);
@@ -899,6 +995,61 @@ void main() {
         expect(controller.state.failure, isNull);
       },
     );
+
+    test('a stale generation-1 playing callback cannot update state once '
+        'generation 2 is current (I4, completing coverage: the playing '
+        'guard)', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _RecordingEngine(inner);
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith(id: 'a'));
+      await controller.loadScene(_sceneWith(id: 'b'));
+      expect(controller.state.generation, 2);
+      expect(engine.playingRecorder.callbacks, hasLength(2));
+
+      final before = controller.state.playing;
+      engine.playingRecorder.callbacks[0](true);
+
+      expect(controller.state.playing, before);
+    });
+
+    test('a stale generation-1 buffering callback cannot update state once '
+        'generation 2 is current (I4, completing coverage: the buffering '
+        'guard)', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _RecordingEngine(inner);
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith(id: 'a'));
+      await controller.loadScene(_sceneWith(id: 'b'));
+      expect(controller.state.generation, 2);
+      expect(engine.bufferingRecorder.callbacks, hasLength(2));
+
+      final before = controller.state.buffering;
+      engine.bufferingRecorder.callbacks[0](true);
+
+      expect(controller.state.buffering, before);
+    });
+
+    test('a stale generation-1 duration callback cannot update state once '
+        'generation 2 is current (I4, completing coverage: the duration '
+        'guard)', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _RecordingEngine(inner);
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith(id: 'a', duration: 2000));
+      await controller.loadScene(_sceneWith(id: 'b', duration: 2000));
+      expect(controller.state.generation, 2);
+      expect(engine.durationRecorder.callbacks, hasLength(2));
+
+      final before = controller.state.duration;
+      engine.durationRecorder.callbacks[0](const Duration(seconds: 999));
+
+      expect(controller.state.duration, before);
+      expect(controller.state.duration, isNot(const Duration(seconds: 999)));
+    });
   });
 
   group('disposal', () {
@@ -965,13 +1116,21 @@ void main() {
     test(
       'commands issued after dispose are no-ops, never reaching the engine',
       () async {
-        final engine = FakePlaybackEngine();
+        final inner = FakePlaybackEngine();
+        final engine = _CallCountingEngine(inner);
         final controller = _buildController(engine: engine);
         await controller.loadScene(_sceneWith(duration: 2000));
         await controller.dispose();
+        engine.invocations.clear();
 
-        // None of these may throw, and none may reach the (disposed) fake
-        // engine, which would itself throw a StateError if they did.
+        // None of these may throw. It is not enough that they don't
+        // throw, though: `_runEngineCommand`'s own catch would silently
+        // swallow the fake's post-dispose StateError just as readily as
+        // a real failure — and `FakePlaybackEngine` itself throws
+        // *before* recording anything to `commands`, so that log can't
+        // reveal a missed guard either. `_CallCountingEngine.invocations`
+        // is the only thing that actually proves none of these reached
+        // the engine at all.
         await controller.playPause();
         await controller.seekAbsolute(const Duration(seconds: 10));
         await controller.seekRelative(const Duration(seconds: 10));
@@ -979,6 +1138,8 @@ void main() {
         await controller.toggleMute();
         await controller.setFullscreen(true);
         await controller.loadScene(_sceneWith(id: 'late'));
+
+        expect(engine.invocations, isEmpty);
       },
     );
   });
