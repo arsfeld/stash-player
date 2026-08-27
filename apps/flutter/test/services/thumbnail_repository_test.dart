@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -463,20 +464,30 @@ void main() {
     },
   );
 
-  test('the default resizer disposes its codec and frame image without '
-      'disrupting repeated calls', () async {
-    // `defaultThumbnailResizer` disposes the `ui.Codec` and `ui.Image`
-    // it creates in `finally` blocks around every exit path. There's no
-    // direct way to assert native memory was freed from a unit test,
-    // but disposing the image *before* extracting its PNG bytes (a
-    // plausible ordering mistake) would corrupt or throw on the very
-    // first call, and disposing the wrong object would throw on a
-    // later call — so calling it repeatedly is a meaningful regression
-    // guard for a bad disposal order, even though it can't prove the
-    // memory was actually released.
-    for (var i = 0; i < 5; i++) {
-      final bytes = await defaultThumbnailResizer(_onePixelPng, 1, 1);
-      expect(bytes, isNotEmpty);
-    }
+  test('the default resizer disposes the ui.Image it decodes', () async {
+    // `ui.Image.onCreate`/`onDispose` are the same global hooks
+    // Flutter's own `MemoryAllocations` leak tracking uses to observe
+    // image lifecycle from outside — a genuine black-box assertion
+    // that `frame.image.dispose()` actually ran, with no change to
+    // `defaultThumbnailResizer`'s signature. `ui.Codec` has no
+    // equivalent hook (or `debugDisposed` getter) in this SDK, so its
+    // disposal stays verified by code inspection only.
+    final previousOnCreate = ui.Image.onCreate;
+    final previousOnDispose = ui.Image.onDispose;
+    addTearDown(() {
+      ui.Image.onCreate = previousOnCreate;
+      ui.Image.onDispose = previousOnDispose;
+    });
+
+    final created = <ui.Image>[];
+    final disposed = <ui.Image>[];
+    ui.Image.onCreate = created.add;
+    ui.Image.onDispose = disposed.add;
+
+    final bytes = await defaultThumbnailResizer(_onePixelPng, 1, 1);
+
+    expect(bytes, isNotEmpty);
+    expect(created, hasLength(1));
+    expect(disposed, contains(created.single));
   });
 }
