@@ -15,8 +15,11 @@ recorded as such in this document.**
 ## Status: MILESTONE ACCEPTANCE PENDING
 
 **No row in either table below has been executed against a real Stash
-instance with real media.** Every row is explicitly marked `UNRUN`, with
-the reason it could not be run in this environment. Per this checklist's
+instance with real media.** Every row is explicitly marked `UNRUN` —
+except four (L13/L14/M13/M14), marked `NOT IMPLEMENTED` because there is
+no fullscreen behavior yet to validate (final review C4) — with the
+reason it could not be run, or does not yet exist to run, in this
+environment. Per this checklist's
 own governing brief: an unavailable host or a failed item remains
 explicitly unchecked and **blocks milestone acceptance**, but does not
 block committing the implementation and this document. Do not treat

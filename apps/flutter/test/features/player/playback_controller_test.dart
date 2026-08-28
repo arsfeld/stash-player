@@ -752,6 +752,47 @@ void main() {
     });
   });
 
+  group('handleAction: seek magnitudes', () {
+    // Restores the coverage `player_shortcuts_test.dart`'s deleted
+    // key-dispatch loop used to provide for these six arms (final review
+    // re-review): that loop routed through the since-deleted
+    // `dispatchPlayerKeyEvent`, but the magnitudes it asserted
+    // (`playback_controller.dart`'s `handleAction`) are still live and
+    // still worth pinning independent of any key-binding layer.
+    const cases = <(PlayerAction, Duration)>[
+      (PlayerAction.seekBackward5, Duration(seconds: -5)),
+      (PlayerAction.seekForward5, Duration(seconds: 5)),
+      (PlayerAction.seekBackward10, Duration(seconds: -10)),
+      (PlayerAction.seekForward10, Duration(seconds: 10)),
+      (PlayerAction.seekBackward60, Duration(seconds: -60)),
+      (PlayerAction.seekForward60, Duration(seconds: 60)),
+    ];
+
+    for (final (action, delta) in cases) {
+      test(
+        '${action.name} seeks by exactly $delta from the current position',
+        () async {
+          final engine = FakePlaybackEngine();
+          final controller = _buildController(engine: engine);
+          await controller.loadScene(_sceneWith(duration: 1000));
+          // Start from a non-zero position: seekRelative clamps at zero,
+          // so starting there would make every backward case
+          // indistinguishable from a clamp rather than a pinned
+          // magnitude.
+          await controller.seekAbsolute(const Duration(seconds: 100));
+          engine.commands.clear();
+
+          await controller.handleAction(action);
+
+          expect(
+            engine.commands.whereType<SeekCommand>().single.position,
+            const Duration(seconds: 100) + delta,
+          );
+        },
+      );
+    }
+  });
+
   group('handleAction: Home/End', () {
     test('seekToStart seeks to zero', () async {
       final engine = FakePlaybackEngine();

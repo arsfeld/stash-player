@@ -15,13 +15,14 @@ It targets Linux and macOS desktop only — no mobile, no web.
 Flutter only exists inside the pinned Nix dev shell (`nix develop .#flutter`
 at the repository root); there is no supported "without Nix" path for this
 app, unlike the Rust clients. That shell — separate from the repository's
-`default` shell, which is Rust/GTK-only — provides the pinned Flutter SDK
-plus the native libraries `media_kit` needs for hardware-accelerated
-video (see [Troubleshooting](#troubleshooting) below). The two shells are
-split so Rust-only contributors don't pay for the multi-GB Flutter
-closure, and so `clang` (needed to build the Flutter Linux embedder)
-never shadows the released Rust clients' own `cc`/`ld` inside `nix
-develop`'s default shell.
+`default` shell, which skips the Flutter SDK but still carries the same
+shared GTK3/mpv (and `mpv.pc` shim) runtime libs — provides the pinned
+Flutter SDK plus the native libraries `media_kit` needs for
+hardware-accelerated video (see [Troubleshooting](#troubleshooting)
+below). The two shells are split so Rust-only contributors don't pay for
+the multi-GB Flutter closure, and so `clang` (needed to build the Flutter
+Linux embedder) never shadows the released Rust clients' own `cc`/`ld`
+inside `nix develop`'s default shell.
 
 ```sh
 # from the repository root

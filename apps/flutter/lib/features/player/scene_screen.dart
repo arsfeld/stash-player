@@ -466,11 +466,15 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
               // focusable, and in the accessibility tree the whole time
               // (final review I8). `ExcludeSemantics` keeps a screen
               // reader from describing a panel the user can't see, and
-              // `descendantsAreFocusable: false` (not `canRequestFocus`,
-              // which `Focus`'s own doc says "does not affect the
-              // children of this node") keeps Tab from ever landing on
-              // the drawer's Close button at its offscreen
-              // `Offset(1, 0)` while closed.
+              // `descendantsAreFocusable: false` keeps Tab from ever
+              // landing on the drawer's Close button at its offscreen
+              // `Offset(1, 0)` while closed. Not `canRequestFocus`: on a
+              // `FocusScopeNode`, `descendantsAreFocusable` is itself
+              // defined as `_canRequestFocus && super.descendantsAreFocusable`
+              // (`focus_manager.dart`), so `canRequestFocus: false` here
+              // would disable descendants too — but only as a side effect
+              // of also making the scope node itself unfocusable, which
+              // `descendantsAreFocusable` doesn't do.
               child: ExcludeSemantics(
                 key: const Key('scene-metadata-drawer-exclude-semantics'),
                 excluding: !_metadataOpen,
@@ -683,13 +687,16 @@ class _TransientPlaybackFailureBanner extends StatelessWidget {
 /// Task 9 deliberately deferred (there was no video region to attach it
 /// to yet — see that task's own carried-forward ruling). [controller]'s
 /// `handleAction` is the single place every dispatched [PlayerIntent]
-/// ends up, exactly like `dispatchPlayerKeyEvent`'s own callers.
+/// ends up — `_PlayerCallbackAction.invoke` below calls it directly for
+/// every intent this `Shortcuts`/`Actions` composition resolves; there is
+/// no other production dispatch path.
 ///
 /// The key→[PlayerIntent] map is built directly from [playerKeyBindings]
 /// — `player_shortcuts.dart`'s own doc comment names this as the required
-/// single source of truth so this table and `dispatchPlayerKeyEvent`
-/// (exercised independently by `player_shortcuts_test.dart`) can never
-/// drift apart.
+/// single source of truth, so this table can never drift from the
+/// mapping `player_shortcuts_test.dart` pins against the Step 2 spec.
+/// This class's own dispatch and gating behavior is covered separately,
+/// by `scene_screen_test.dart`.
 ///
 /// Text-entry safety (Task 9 finding I7, settled empirically by this
 /// task — see `scene_screen_test.dart`'s "text-entry propagation" group):
@@ -709,10 +716,11 @@ class _TransientPlaybackFailureBanner extends StatelessWidget {
 /// behavior (`scene_screen_test.dart`'s "space does not toggle
 /// play/pause" test passes identically either way — this is *not* the
 /// reason `space` needed adding). `space`'s membership in
-/// [playerTextEntryConflictKeys] matters to `dispatchPlayerKeyEvent`
-/// instead, which gates by literal key and has no such action-level
-/// coincidence to fall back on — see that set's own doc comment, which
-/// states this correctly.
+/// [playerTextEntryConflictKeys] is kept for the reason that set's own
+/// doc comment gives: `space` has no bound alias the way `K` does, so —
+/// independent of `togglePlayPause` already being gated here incidentally
+/// via `K` — `space` needs its own entry rather than relying on that
+/// alias.
 class PlayerActionShortcuts extends StatelessWidget {
   const PlayerActionShortcuts({
     required this.controller,

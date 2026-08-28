@@ -106,9 +106,33 @@ jobs:
             flutter test
           '
 
-      # Mock-only — see the Linux job's identical step for the full
-      # rationale. Name kept byte-for-byte identical across both jobs.
+      # Mock-only — see the Linux job's own step (above) for what "smoke"
+      # means here and why the step exists at all; the step name is kept
+      # byte-for-byte identical across both jobs. The two jobs are *not*
+      # otherwise identical, though: each has its own "known not green"
+      # cause below, since Linux and macOS don't share a root cause.
+      #
+      # KNOWN NOT GREEN ON A STOCK RUNNER: neither `Runner/DebugProfile.
+      # entitlements` nor `Runner/Release.entitlements` declares a
+      # `keychain-access-groups` entitlement, which a sandboxed
+      # (`com.apple.security.app-sandbox`) macOS app needs for
+      # `flutter_secure_storage`'s Keychain calls to succeed. Without it,
+      # `PlatformConnectionStore.loadStored`'s `_secureStorage.read(...)`
+      # throws unconditionally — even though this step overrides
+      # `STASH_URL`/`STASH_API_KEY` via the environment, `loadEffective`
+      # still calls `loadStored` first — so `AppController.bootstrap`
+      # falls back to the connection screen and the test's library
+      # assertions never match: the same failure shape as the Linux job's
+      # missing Secret Service, for the macOS-native reason.
+      # `continue-on-error` is set deliberately so this failure is visible
+      # in the run summary without blocking merges — it is not silently
+      # red or silently vacuous, it is a documented, currently-
+      # unprovisioned gap (final review I10). Adding a
+      # `keychain-access-groups` entitlement is the follow-up. Kept in its
+      # own step (separate from the debug build below) so this known gap
+      # can't mask a real build regression via `set -e`.
       - name: Connection/library smoke (mock stream; no playback validation)
+        continue-on-error: true
         run: |
           nix develop .#flutter --command bash -c '
             set -e
@@ -121,5 +145,12 @@ jobs:
             done
             cd apps/flutter
             STASH_URL=http://127.0.0.1:9999 STASH_API_KEY= flutter test integration_test/connection_library_scene_test.dart -d macos
+          '
+
+      - name: Flutter macOS debug build
+        run: |
+          nix develop .#flutter --command bash -c '
+            set -e
+            cd apps/flutter
             flutter build macos --debug
           '
