@@ -134,13 +134,21 @@ void main() {
     // Material `BackButton`) — its own back control is the transport
     // bar's tooltip-labelled icon button.
     await tester.tap(find.byTooltip('Back to library'));
-    // Not `pumpAndSettle()`: popping the scene page auto-disposes
-    // `sceneControllerProvider`, which releases the shared
-    // `PlaybackController` — its `dispose()` awaits `ActivitySync`'s own
-    // bounded final flush (`disposeFlushTimeout`, ~10s of real/virtual
-    // time), right at the edge of `pumpAndSettle`'s own default 100-step
-    // (~10s) budget. An explicit pump past that bound is deterministic;
-    // `pumpAndSettle` intermittently isn't.
+    // Not `pumpAndSettle()` — correction (fix round 1): the original
+    // comment here claimed `pumpAndSettle`'s own ~10s default budget was
+    // the problem. That's wrong; `pumpAndSettle`'s default *timeout* is
+    // 10 *minutes* of fake-clock time, not ~10s, and it only stops
+    // pumping once `hasScheduledFrame` is false. The real cause is
+    // `activity_sync.dart`'s `dispose()`: `Future.any([flushSettled.future,
+    // _delay(disposeFlushTimeout)])` resolves as soon as the (here,
+    // fast-succeeding fake) flush settles, but `Future.any` never cancels
+    // the *losing* branch — so `_delay(disposeFlushTimeout)`'s own ~10s
+    // `Future.delayed` `Timer` is left pending regardless, which trips
+    // `flutter_test`'s pending-timer invariant. That leak is a real
+    // Task 10 wart (already logged for the whole-branch review, not
+    // fixed here) rather than anything wrong with this test. An explicit
+    // pump past the leaked timer's ~10s deadline drains it deterministically
+    // before the test ends.
     await tester.pump();
     await tester.pump(const Duration(seconds: 11));
 

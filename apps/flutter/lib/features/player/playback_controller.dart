@@ -542,10 +542,26 @@ class PlaybackController extends ChangeNotifier {
   /// all throw, so an uncaught error here would otherwise surface as an
   /// unhandled `Future` error (`FlutterError.onError`: a red screen in
   /// debug, a logged crash in release) for something as ordinary as
-  /// pressing a key after playback has already failed. On failure this
-  /// marks [state] failed instead — the same redacted, generation-guarded
-  /// shape [loadScene]'s own `catch` uses — rather than letting the error
-  /// escape.
+  /// pressing a key after playback has already failed.
+  ///
+  /// On failure this records the redacted error into
+  /// [PlaybackState.controlFailure]/[PlaybackState.controlFailureSequence]
+  /// — deliberately *not* [PlaybackState.phase]/[PlaybackState.failure],
+  /// unlike [loadScene]'s own `catch`. An earlier version of this method
+  /// routed every failure here into the same terminal
+  /// [PlaybackPhase.failed] a genuinely-unplayable scene reaches, and
+  /// nothing ever moved `phase` back afterward: a single failed
+  /// `setVolume` — cosmetic, the video kept playing fine — permanently
+  /// stranded the scene in `failed`, indistinguishable from "this video
+  /// can never play," and silently absorbed every later control failure
+  /// too (a phase that's already `failed` can't become "newly" failed
+  /// again, so a UI diffing `phase` transitions sees nothing on the
+  /// second, third, ... failure). Control-command failures are a
+  /// different kind of event from "this scene stopped loading/playing
+  /// entirely" and get their own channel so they can never affect
+  /// [PlaybackState.phase], can never get "stuck", and are individually
+  /// observable (via [PlaybackState.controlFailureSequence], not string
+  /// equality on the message) no matter how many happen in a row.
   Future<bool> _runEngineCommand(
     Future<void> Function() call, {
     required int generation,
@@ -556,8 +572,8 @@ class PlaybackController extends ChangeNotifier {
     } catch (error) {
       if (_disposed || generation != _state.generation) return false;
       _state = _state.copyWith(
-        phase: PlaybackPhase.failed,
-        failure: redactSensitive('$error', apiKey: ''),
+        controlFailure: redactSensitive('$error', apiKey: ''),
+        controlFailureSequence: _state.controlFailureSequence + 1,
       );
       notifyListeners();
       return false;

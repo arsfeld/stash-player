@@ -202,7 +202,6 @@ class _RecordingEngine implements PlaybackEngine {
 class _FaultyEngine implements PlaybackEngine {
   _FaultyEngine(
     this.inner, {
-    this.playThrows = false,
     this.seekThrows = false,
     this.volumeThrows = false,
     this.mutedThrows = false,
@@ -210,7 +209,6 @@ class _FaultyEngine implements PlaybackEngine {
   });
 
   final FakePlaybackEngine inner;
-  final bool playThrows;
   final bool seekThrows;
   final bool volumeThrows;
   final bool mutedThrows;
@@ -239,10 +237,7 @@ class _FaultyEngine implements PlaybackEngine {
       inner.open(uri, play: play);
 
   @override
-  Future<void> play() async {
-    if (playThrows) throw StateError('engine play() failed');
-    return inner.play();
-  }
+  Future<void> play() => inner.play();
 
   @override
   Future<void> pause() async {
@@ -602,8 +597,10 @@ void main() {
       },
     );
 
-    test('a throwing engine seek surfaces as state.failure rather than an '
-        'unhandled error (I6)', () async {
+    test('a throwing engine seek surfaces as state.controlFailure rather '
+        'than an unhandled error (I6), without touching phase/failure '
+        '(fix round 1, item 5: a control-command failure is not the same '
+        'as an unplayable scene)', () async {
       final inner = FakePlaybackEngine();
       final engine = _FaultyEngine(inner, seekThrows: true);
       final controller = _buildController(engine: engine);
@@ -611,8 +608,10 @@ void main() {
 
       await controller.seekAbsolute(const Duration(seconds: 30));
 
-      expect(controller.state.phase, PlaybackPhase.failed);
-      expect(controller.state.failure, isNotNull);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+      expect(controller.state.controlFailure, isNotNull);
+      expect(controller.state.controlFailureSequence, 1);
       expect(controller.state.position, isNot(const Duration(seconds: 30)));
     });
 
@@ -758,17 +757,52 @@ void main() {
       expect(engine.commands.single, isA<PauseCommand>());
     });
 
-    test('a throwing engine play() surfaces as state.failure rather than an '
-        'unhandled error (I6)', () async {
+    test('a throwing engine pause() surfaces as state.controlFailure rather '
+        'than an unhandled error (I6), without touching phase/failure — the '
+        'scene is genuinely ready and playing throughout, exactly the '
+        '"otherwise fully working scene" scenario 3 is about', () async {
       final inner = FakePlaybackEngine();
-      final engine = _FaultyEngine(inner, playThrows: true);
+      final engine = _FaultyEngine(inner, pauseThrows: true);
       final controller = _buildController(engine: engine);
       await controller.loadScene(_sceneWith());
+      expect(controller.state.phase, PlaybackPhase.ready);
+      inner.emitPlaying(true);
+      await pumpEventQueue();
+      expect(controller.state.playing, isTrue);
 
       await controller.playPause();
 
-      expect(controller.state.phase, PlaybackPhase.failed);
-      expect(controller.state.failure, isNotNull);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+      expect(controller.state.controlFailure, isNotNull);
+      expect(controller.state.controlFailureSequence, 1);
+    });
+
+    test('two consecutive control-command failures each bump '
+        'controlFailureSequence — a scene is never "stuck" absorbing every '
+        'failure after the first the way a terminal phase would (fix round '
+        '1, item 5, scenario 2)', () async {
+      final inner = FakePlaybackEngine();
+      final engine = _FaultyEngine(inner, pauseThrows: true);
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith());
+      inner.emitPlaying(true);
+      await pumpEventQueue();
+
+      await controller.playPause();
+      expect(controller.state.controlFailureSequence, 1);
+      expect(controller.state.phase, PlaybackPhase.ready);
+
+      // A second, independent failure — with the old terminal-phase
+      // design this second occurrence would have been silently
+      // absorbed (phase was already `failed`, so nothing "newly"
+      // failed). The sequence counter still increments. `_state.playing`
+      // is still `true` (the failed `pause()` call never actually
+      // stopped playback), so this second attempt again resolves to
+      // `pause()`, which fails again.
+      await controller.playPause();
+      expect(controller.state.controlFailureSequence, 2);
+      expect(controller.state.phase, PlaybackPhase.ready);
     });
   });
 
@@ -807,8 +841,11 @@ void main() {
       expect(controller.state.volume, 0.0);
     });
 
-    test('a throwing engine setVolume surfaces as state.failure rather than '
-        'an unhandled error (I6)', () async {
+    test('a throwing engine setVolume surfaces as state.controlFailure '
+        'rather than an unhandled error (I6), without touching '
+        'phase/failure — the exact scenario 3 regression (fix round 1, '
+        'item 5): a cosmetic volume-nudge failure must never strand the '
+        'scene in a terminal phase', () async {
       final inner = FakePlaybackEngine();
       final engine = _FaultyEngine(inner, volumeThrows: true);
       final controller = _buildController(engine: engine);
@@ -816,8 +853,10 @@ void main() {
 
       await controller.setVolume(0.5);
 
-      expect(controller.state.phase, PlaybackPhase.failed);
-      expect(controller.state.failure, isNotNull);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+      expect(controller.state.controlFailure, isNotNull);
+      expect(controller.state.controlFailureSequence, 1);
       expect(controller.state.volume, isNot(0.5));
     });
   });
@@ -837,8 +876,9 @@ void main() {
       expect((engine.commands.last as SetMutedCommand).muted, isFalse);
     });
 
-    test('a throwing engine setMuted surfaces as state.failure rather than '
-        'an unhandled error (I6)', () async {
+    test('a throwing engine setMuted surfaces as state.controlFailure '
+        'rather than an unhandled error (I6), without touching '
+        'phase/failure', () async {
       final inner = FakePlaybackEngine();
       final engine = _FaultyEngine(inner, mutedThrows: true);
       final controller = _buildController(engine: engine);
@@ -846,8 +886,10 @@ void main() {
 
       await controller.toggleMute();
 
-      expect(controller.state.phase, PlaybackPhase.failed);
-      expect(controller.state.failure, isNotNull);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+      expect(controller.state.controlFailure, isNotNull);
+      expect(controller.state.controlFailureSequence, 1);
       expect(controller.state.muted, isFalse);
     });
   });

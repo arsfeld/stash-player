@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -65,6 +66,15 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
   bool? _lastPlaying;
   bool? _lastBuffering;
   PlaybackPhase? _lastPhase;
+
+  /// Same technique as [_lastPhase], applied to
+  /// `PlaybackState.controlFailureSequence` (fix round 1, item 5): a
+  /// control-command failure (play/pause/seek/volume/mute) no longer
+  /// touches `phase`/`failure` at all, so it can only ever be *noticed*
+  /// here by diffing this monotonically-increasing counter — comparing
+  /// `PlaybackState.controlFailure` by string value would miss two
+  /// consecutive failures with the identical message.
+  int _lastControlFailureSequence = 0;
 
   @override
   void initState() {
@@ -201,13 +211,21 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
     final sceneState = sceneController.state;
     final scene = sceneState.scene;
 
-    // `playbackControllerProvider` is deliberately *not* touched at all
-    // until a scene has actually loaded: watching it unconditionally
-    // would build (and, in production, start) a real `PlaybackEngine`
-    // the moment this screen mounts, even for a scene that never gets
-    // past `ScenePhase.loading`/`notFound`/`failed` — e.g. every test
-    // that mounts this screen without a scene ever resolving, and every
-    // real visit to a scene whose metadata fetch itself fails.
+    // Correction (fix round 1, item 6): this used to claim
+    // `playbackControllerProvider` "is not touched until a scene has
+    // loaded" — that's false and was never true. `sceneControllerProvider`
+    // is watched unconditionally just above, and its own builder
+    // (`scene_controller.dart`) reads `playbackControllerProvider`
+    // synchronously as part of constructing `SceneController` — so the
+    // shared `PlaybackEngine` is already built the instant this screen
+    // mounts, before any scene metadata has resolved. `app_router_test.dart`
+    // documents this correctly. What *is* deferred by the `scene == null`
+    // early return below is only this widget's own `ref.watch`/`ref.listen`
+    // subscription to `playbackControllerProvider` — avoiding a rebuild
+    // (and a `ref.listen` registration) on every position/duration tick
+    // while there's no scene to render a video-first stack for yet, not
+    // avoiding engine construction, which has already happened by the
+    // time this line runs.
     if (scene == null) {
       return Scaffold(
         backgroundColor: Colors.black,
@@ -233,27 +251,54 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
       final playingOrBufferingChanged =
           _lastPlaying != nextState.playing ||
           _lastBuffering != nextState.buffering;
-      final justFailed =
+      final justFailedToLoad =
           nextState.phase == PlaybackPhase.failed &&
           _lastPhase != PlaybackPhase.failed;
+      final controlFailureChanged =
+          nextState.controlFailureSequence != _lastControlFailureSequence &&
+          nextState.controlFailureSequence > 0;
       _lastPlaying = nextState.playing;
       _lastBuffering = nextState.buffering;
       _lastPhase = nextState.phase;
+      _lastControlFailureSequence = nextState.controlFailureSequence;
 
       if (playingOrBufferingChanged) {
         _registerActivity(nextState);
       }
 
-      if (justFailed && nextState.duration > Duration.zero) {
-        // Transient control failure after the video already played — see
-        // `_shouldShowBlockingPlaybackFailure`'s own doc. Surfaced
-        // non-modally rather than as a full error state.
+      if (justFailedToLoad && nextState.duration > Duration.zero) {
+        // A genuine stream/load failure (from `loadScene`'s own catch or
+        // the engine's `errors` stream) reached mid-scene, after the
+        // video had already played — see `_shouldShowBlockingPlaybackFailure`'s
+        // own doc for why this is surfaced non-modally (a one-shot
+        // notice) rather than as a full error state. The persistent
+        // `_TransientPlaybackFailureBanner` in `_buildSceneStack` (fix
+        // round 1, item 5) is what actually gives the user a lasting way
+        // out — this notice is just the attention-getter.
+        ref
+            .read(globalNoticeProvider.notifier)
+            .show(
+              AppNotice(
+                message: nextState.failure ?? 'Playback ran into a problem.',
+                severity: AppNoticeSeverity.warning,
+              ),
+            );
+      }
+
+      if (controlFailureChanged) {
+        // A control command (play/pause/seek/volume/mute) failed — fix
+        // round 1, item 5, scenario 2: this fires on *every* such
+        // failure (via the sequence counter, not a phase transition or a
+        // string comparison), so a second failure right after the first
+        // is never silently swallowed the way it was when both routed
+        // through the same terminal `phase`.
         ref
             .read(globalNoticeProvider.notifier)
             .show(
               AppNotice(
                 message:
-                    nextState.failure ?? 'A playback control action failed.',
+                    nextState.controlFailure ??
+                    'A playback control action failed.',
                 severity: AppNoticeSeverity.warning,
               ),
             );
@@ -272,90 +317,162 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
     PlaybackController playbackController,
   ) {
     final showBlockingFailure = _shouldShowBlockingPlaybackFailure(playback);
+    // Fix round 1, item 5 (scenario 1): a `phase == failed` that isn't
+    // blocking (the video already played — see
+    // `_shouldShowBlockingPlaybackFailure`'s own doc) used to leave the
+    // user with nothing but a one-shot, auto-dismissing `SnackBar` and no
+    // lasting way to recover. This banner is the persistent affordance:
+    // shown for as long as `phase` stays `failed` in the non-blocking
+    // case, regardless of `_controlsVisible`'s own auto-hide state (an
+    // error condition must not be able to fade away on its own).
+    final showTransientFailureBanner =
+        playback.phase == PlaybackPhase.failed && !showBlockingFailure;
     final effectiveVisible = _controlsVisible;
 
     return PlayerActionShortcuts(
       controller: playbackController,
       onActivity: () => _registerActivity(playback),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 1. Black, full-size video surface.
-          Positioned.fill(
-            child: MouseRegion(
-              onHover: (_) => _registerActivity(playback),
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () => _registerActivity(playback),
-                child: VideoSurface(controller: playbackController),
+      // `LayoutBuilder` around the whole `Stack` — not just around the
+      // drawer's own `Positioned` — so the drawer's max-width clamp (fix
+      // round 1, item 2) has the *stack's* actual available width to
+      // work with. A `Positioned(right: 0)` with no `left` and no
+      // explicit `width` gives its child a genuinely *unconstrained*
+      // (infinite) width per `RenderStack`'s own
+      // `positionedChildConstraints` — measured empirically after an
+      // earlier version of this fix tried exactly that and the drawer
+      // came back 420px wide even in a 300px-wide test window. Capturing
+      // `constraints.maxWidth` up here and passing an explicit,
+      // pre-clamped `width:` into `Positioned` below is what actually
+      // constrains it.
+      child: LayoutBuilder(
+        builder: (context, constraints) => Stack(
+          fit: StackFit.expand,
+          children: [
+            // 1. Black, full-size video surface.
+            Positioned.fill(
+              child: MouseRegion(
+                onHover: (_) => _registerActivity(playback),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () => _registerActivity(playback),
+                  child: VideoSurface(controller: playbackController),
+                ),
               ),
             ),
-          ),
-          if (showBlockingFailure)
-            _PlaybackFailureOverlay(
-              title: scene.displayTitle,
-              message: playback.failure ?? 'This video could not be played.',
-              onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
-              onOpenInStash: () => _openInStash(scene.id),
-            ),
-          // 2. Controls overlay, docked to the bottom, auto-hiding.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: IgnorePointer(
-              ignoring: !effectiveVisible,
-              child: AnimatedOpacity(
-                key: const Key('scene-controls-overlay'),
-                duration: _fadeDuration,
-                opacity: effectiveVisible ? 1 : 0,
-                child: MouseRegion(
-                  onEnter: (_) => _setHovering(true, playback),
-                  onExit: (_) => _setHovering(false, playback),
-                  child: FocusScope(
-                    onFocusChange: (value) =>
-                        _setControlsFocused(value, playback),
-                    child: TransportControls(
-                      playback: playback,
-                      title: scene.displayTitle,
-                      metadataOpen: _metadataOpen,
-                      onBack: () => Navigator.of(context).maybePop(),
-                      onTogglePlayPause: playbackController.playPause,
-                      onSeek: playbackController.seekAbsolute,
-                      onVolumeChanged: playbackController.setVolume,
-                      onToggleMute: playbackController.toggleMute,
-                      onToggleFullscreen: () => playbackController
-                          .setFullscreen(!playback.fullscreen),
-                      onToggleMetadata: () => _toggleMetadata(playback),
+            if (showBlockingFailure)
+              _PlaybackFailureOverlay(
+                title: scene.displayTitle,
+                message: playback.failure ?? 'This video could not be played.',
+                onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
+                onOpenInStash: () => _openInStash(scene.id),
+              ),
+            if (showTransientFailureBanner)
+              _TransientPlaybackFailureBanner(
+                key: const Key('scene-transient-failure-banner'),
+                message: playback.failure ?? 'Playback ran into a problem.',
+                onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
+              ),
+            // 2. Controls overlay, docked to the bottom, auto-hiding.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                ignoring: !effectiveVisible,
+                child: AnimatedOpacity(
+                  key: const Key('scene-controls-overlay'),
+                  duration: _fadeDuration,
+                  opacity: effectiveVisible ? 1 : 0,
+                  child: MouseRegion(
+                    onEnter: (_) => _setHovering(true, playback),
+                    onExit: (_) => _setHovering(false, playback),
+                    child: FocusScope(
+                      onFocusChange: (value) =>
+                          _setControlsFocused(value, playback),
+                      child: TransportControls(
+                        playback: playback,
+                        title: scene.displayTitle,
+                        metadataOpen: _metadataOpen,
+                        onBack: () => Navigator.of(context).maybePop(),
+                        onTogglePlayPause: playbackController.playPause,
+                        onSeek: playbackController.seekAbsolute,
+                        onVolumeChanged: playbackController.setVolume,
+                        onToggleMute: playbackController.toggleMute,
+                        onToggleFullscreen: () => playbackController
+                            .setFullscreen(!playback.fullscreen),
+                        onToggleMetadata: () => _toggleMetadata(playback),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-          // 3. Metadata drawer, aligned right, capped at 420 logical
-          // pixels, sliding over the video rather than reflowing it. A
-          // `Positioned` (top/right/bottom pinned, explicit width) rather
-          // than `Align` — `Align` only gives loose constraints, which
-          // would shrink-wrap the drawer's height to its content instead
-          // of spanning the full screen.
-          Positioned(
-            top: 0,
-            right: 0,
-            bottom: 0,
-            width: SceneMetadataDrawer.maxWidth,
-            child: ClipRect(
-              child: AnimatedSlide(
-                duration: _fadeDuration,
-                offset: _metadataOpen ? Offset.zero : const Offset(1, 0),
-                child: SceneMetadataDrawer(
-                  scene: scene,
-                  onClose: () => _toggleMetadata(playback),
+            // 3. Metadata drawer, aligned right, capped at 420 logical
+            // pixels, sliding over the video rather than reflowing it. A
+            // `Positioned` (top/right/bottom pinned, explicit width) rather
+            // than `Align` — `Align` only gives loose constraints, which
+            // would shrink-wrap the drawer's height to its content instead
+            // of spanning the full screen. Deliberate deviation from a
+            // literal `Align(right)` (fix round 1, item 2's own review
+            // note): the load-bearing property — the video surface's
+            // measured size never changes when the drawer opens — is
+            // genuinely measured by `scene_screen_test.dart`'s own "does
+            // not resize the video" group at two window sizes.
+            //
+            // 3a. Scrim: dims everything behind the drawer while it's open
+            // and closes it on tap-outside (fix round 1, item 1 — the
+            // brief's Step 4 explicitly requires a scrim, which this
+            // Stack's very first version omitted entirely). `IgnorePointer`
+            // keeps it out of the hit-test tree — and so out of the way of
+            // every other tap/hover in this Stack — whenever the drawer is
+            // closed.
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !_metadataOpen,
+                child: GestureDetector(
+                  onTap: () => _toggleMetadata(playback),
+                  child: AnimatedOpacity(
+                    key: const Key('scene-metadata-scrim'),
+                    duration: _fadeDuration,
+                    opacity: _metadataOpen ? 1 : 0,
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.5),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+            // 3b. The drawer itself, capped at [SceneMetadataDrawer.maxWidth]
+            // logical pixels — a *maximum*, not a fixed width (fix round 1,
+            // item 2: the original `width: SceneMetadataDrawer.maxWidth`
+            // was unconditional, so a window narrower than 420px pushed the
+            // drawer's left edge negative and clipped its content). Passing
+            // an explicit, pre-clamped `width:` (from the outer
+            // `LayoutBuilder`'s own `constraints.maxWidth` — the *stack's*
+            // real available width) gives `Positioned` a tight constraint;
+            // see this method's own top-level comment for why leaving
+            // `width` unset here does not.
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: math.min(
+                SceneMetadataDrawer.maxWidth,
+                constraints.maxWidth,
+              ),
+              child: ClipRect(
+                child: AnimatedSlide(
+                  duration: _fadeDuration,
+                  offset: _metadataOpen ? Offset.zero : const Offset(1, 0),
+                  child: SceneMetadataDrawer(
+                    scene: scene,
+                    onClose: () => _toggleMetadata(playback),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -489,6 +606,60 @@ class _PlaybackFailureOverlay extends StatelessWidget {
   );
 }
 
+/// Persistent, non-blocking "playback ran into a problem" affordance —
+/// fix round 1, item 5 — shown at the top of the stack for as long as
+/// `PlaybackPhase.failed` holds in the *non-blocking* case (the video
+/// already played once — see `_shouldShowBlockingPlaybackFailure`'s own
+/// doc). Unlike the one-shot `SnackBar` this class's own caller also
+/// fires, this stays on screen until the user acts (or the scene
+/// recovers on its own), so a mid-stream failure is never a dead end
+/// with nothing left to press.
+class _TransientPlaybackFailureBanner extends StatelessWidget {
+  const _TransientPlaybackFailureBanner({
+    required this.message,
+    required this.onRetry,
+    super.key,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Material(
+          color: theme.colorScheme.errorContainer,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  color: theme.colorScheme.onErrorContainer,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
+                  ),
+                ),
+                TextButton(onPressed: onRetry, child: const Text('Retry')),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Builds the `Shortcuts`/`Actions` composition around `PlayerIntent` that
 /// Task 9 deliberately deferred (there was no video region to attach it
 /// to yet — see that task's own carried-forward ruling). [controller]'s
@@ -512,12 +683,17 @@ class _PlaybackFailureOverlay extends StatelessWidget {
 /// `DefaultTextEditingShortcuts` (mounted by `WidgetsApp`, above every
 /// screen) — exactly the fallback needed for normal typing/cursor
 /// movement in a nested text field to keep working. Gating by *action*
-/// rather than by literal key is deliberate: [PlayerAction.togglePlayPause]
-/// is bound to both `space` and `K`, and a text field must swallow neither
-/// (space should insert a space character, not toggle playback) — see
-/// `scene_screen_test.dart` for the empirical proof this covers `space`
-/// correctly too, which is why [playerTextEntryConflictKeys] needed
-/// widening (see that set's own updated doc comment).
+/// rather than by literal key here means [PlayerAction.togglePlayPause]
+/// — bound to both `space` and `K` — is already disabled while a text
+/// field has focus purely because `K` is in [playerTextEntryConflictKeys];
+/// `space` being *also* listed there doesn't change this class's own
+/// behavior (`scene_screen_test.dart`'s "space does not toggle
+/// play/pause" test passes identically either way — this is *not* the
+/// reason `space` needed adding). `space`'s membership in
+/// [playerTextEntryConflictKeys] matters to `dispatchPlayerKeyEvent`
+/// instead, which gates by literal key and has no such action-level
+/// coincidence to fall back on — see that set's own doc comment, which
+/// states this correctly.
 class PlayerActionShortcuts extends StatelessWidget {
   const PlayerActionShortcuts({
     required this.controller,

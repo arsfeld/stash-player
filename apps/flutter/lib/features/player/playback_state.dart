@@ -14,13 +14,33 @@ enum PlaybackPhase { initial, loading, ready, failed, disposed }
 /// [playing]/[buffering]/[duration]/[position], the user-level
 /// [volume]/[muted]/[fullscreen]/[controlsVisible] preferences (which
 /// persist across scene changes, unlike the engine-reported fields
-/// above), any [failure] message, and [generation].
+/// above), any [failure] message, [generation], and any
+/// [controlFailure]/[controlFailureSequence].
 ///
 /// [generation] is bumped by every `PlaybackController.loadScene` call
 /// and captured by every async operation it or a seek/volume/fullscreen
 /// command starts; a result or stream event is only applied if its
 /// captured generation still matches [generation] when it resolves —
 /// see `PlaybackController`'s own class doc for why.
+///
+/// [failure] and [controlFailure] are deliberately two different fields,
+/// not one. [failure] means "this scene could not be (or is no longer
+/// being) loaded" — set only by `loadScene`'s own catch and by an
+/// engine-reported stream error, both of which also drive [phase] to
+/// [PlaybackPhase.failed]. [controlFailure] means "a control command
+/// (play/pause/seek/volume/mute) failed" — set only by
+/// `PlaybackController._runEngineCommand`, which deliberately does *not*
+/// touch [phase] or [failure] at all (see that method's own doc for why
+/// conflating the two was a real, reported defect: a merely-cosmetic
+/// failed volume nudge used to permanently strand a scene in a terminal
+/// `failed` phase it could never leave). [controlFailureSequence]
+/// increments on every such command failure — a UI layer comparing it
+/// against its own last-seen value (the same technique already used for
+/// [phase]/`playing`/`buffering`, since a `ChangeNotifierProvider`-backed
+/// controller's "previous" and "next" are the same mutable object and can
+/// never be diffed by value) can detect *every* occurrence, including two
+/// in a row with the identical message, which comparing [controlFailure]
+/// by string value alone could not.
 class PlaybackState {
   const PlaybackState({
     this.scene,
@@ -35,6 +55,8 @@ class PlaybackState {
     this.controlsVisible = true,
     this.failure,
     this.generation = 0,
+    this.controlFailure,
+    this.controlFailureSequence = 0,
   });
 
   final Scene? scene;
@@ -56,6 +78,16 @@ class PlaybackState {
   final String? failure;
   final int generation;
 
+  /// Redacted message from the most recent failed control command
+  /// (play/pause/seek/volume/mute) — see this class's own doc for why
+  /// this is separate from [failure]. `null` until the first such
+  /// failure for the current scene.
+  final String? controlFailure;
+
+  /// Bumped by every control-command failure, independent of [phase] and
+  /// [failure] — see this class's own doc.
+  final int controlFailureSequence;
+
   PlaybackState copyWith({
     Scene? scene,
     PlaybackPhase? phase,
@@ -70,6 +102,8 @@ class PlaybackState {
     String? failure,
     int? generation,
     bool clearFailure = false,
+    String? controlFailure,
+    int? controlFailureSequence,
   }) => PlaybackState(
     scene: scene ?? this.scene,
     phase: phase ?? this.phase,
@@ -83,5 +117,8 @@ class PlaybackState {
     controlsVisible: controlsVisible ?? this.controlsVisible,
     failure: clearFailure ? null : (failure ?? this.failure),
     generation: generation ?? this.generation,
+    controlFailure: controlFailure ?? this.controlFailure,
+    controlFailureSequence:
+        controlFailureSequence ?? this.controlFailureSequence,
   );
 }

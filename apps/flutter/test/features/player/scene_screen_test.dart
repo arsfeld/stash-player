@@ -12,7 +12,9 @@ import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/features/player/playback_engine.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
+import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/services/external_url_launcher.dart';
 import 'package:stash_player_flutter/services/stash_api.dart';
@@ -126,7 +128,50 @@ class _TestHarness {
   FakePlaybackEngine get engine => engines.single;
 }
 
-_TestHarness _harness({ConnectionConfig connection = _connection}) {
+/// Wraps a [FakePlaybackEngine] but always throws from `setVolume` —
+/// fix round 1, item 5's mutation check that a control-command failure
+/// genuinely goes through `_runEngineCommand`'s new `controlFailure`
+/// channel end-to-end (through the real provider graph, not just
+/// `PlaybackController` in isolation, which `playback_controller_test.dart`
+/// already covers directly).
+class _ThrowingSetVolumeEngine implements PlaybackEngine {
+  _ThrowingSetVolumeEngine(this._inner);
+  final FakePlaybackEngine _inner;
+
+  @override
+  Stream<bool> get playing => _inner.playing;
+  @override
+  Stream<bool> get buffering => _inner.buffering;
+  @override
+  Stream<Duration> get position => _inner.position;
+  @override
+  Stream<Duration> get duration => _inner.duration;
+  @override
+  Stream<String> get errors => _inner.errors;
+  @override
+  Widget buildVideoSurface({Key? key}) => _inner.buildVideoSurface(key: key);
+  @override
+  Future<void> open(Uri uri, {bool play = false}) =>
+      _inner.open(uri, play: play);
+  @override
+  Future<void> play() => _inner.play();
+  @override
+  Future<void> pause() => _inner.pause();
+  @override
+  Future<void> seek(Duration position) => _inner.seek(position);
+  @override
+  Future<void> setVolume(double zeroToOne) async =>
+      throw StateError('setVolume failed');
+  @override
+  Future<void> setMuted(bool muted) => _inner.setMuted(muted);
+  @override
+  Future<void> dispose() => _inner.dispose();
+}
+
+_TestHarness _harness({
+  ConnectionConfig connection = _connection,
+  PlaybackEngine Function(FakePlaybackEngine inner)? wrapEngine,
+}) {
   final engines = <FakePlaybackEngine>[];
   final api = _TestStashApi();
   final launcher = _RecordingUrlLauncher();
@@ -140,7 +185,7 @@ _TestHarness _harness({ConnectionConfig connection = _connection}) {
       playbackEngineFactoryProvider.overrideWithValue(() {
         final engine = FakePlaybackEngine();
         engines.add(engine);
-        return engine;
+        return wrapEngine == null ? engine : wrapEngine(engine);
       }),
       externalUrlLauncherProvider.overrideWithValue(launcher),
     ],
@@ -456,6 +501,183 @@ void main() {
     }
   });
 
+  group('SceneScreen: metadata drawer scrim (fix round 1, item 1)', () {
+    testWidgets(
+      'shows a scrim behind the drawer when open, and tapping it closes '
+      'the drawer — the brief\'s Step 4 explicitly requires a scrim, '
+      'which the original three-layer Stack omitted entirely',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene, play: false);
+
+        double scrimOpacity() => tester
+            .widget<AnimatedOpacity>(
+              find.byKey(const Key('scene-metadata-scrim')),
+            )
+            .opacity;
+
+        expect(scrimOpacity(), 0.0);
+
+        await tester.tap(find.byTooltip('Show details'));
+        await tester.pumpAndSettle();
+        expect(scrimOpacity(), 1.0);
+
+        // Tapped well away from the drawer itself (pinned to the right
+        // edge of the default 800-wide test viewport) — this is a
+        // genuine tap-*outside*-closes, not an accidental hit on the
+        // drawer's own content.
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pumpAndSettle();
+
+        expect(scrimOpacity(), 0.0);
+        expect(find.byTooltip('Show details'), findsOneWidget);
+      },
+    );
+  });
+
+  group('SceneScreen: metadata drawer max width (fix round 1, item 2)', () {
+    testWidgets('the drawer is capped at 420 logical pixels on a wide window', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final scene = _scene();
+      await _pumpReadyScene(tester, harness, scene, play: false);
+
+      await tester.tap(find.byTooltip('Show details'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getSize(find.byType(SceneMetadataDrawer)).width,
+        SceneMetadataDrawer.maxWidth,
+      );
+    });
+
+    testWidgets(
+      'below 420 logical pixels of window width, the drawer fills the '
+      'available width instead of overflowing off-screen — the original '
+      'fixed `width: SceneMetadataDrawer.maxWidth` pushed the drawer\'s '
+      'left edge negative and clipped its content here',
+      (tester) async {
+        tester.view.physicalSize = const Size(300, 700);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene, play: false);
+
+        await tester.tap(find.byTooltip('Show details'));
+        await tester.pumpAndSettle();
+
+        final drawerWidth = tester
+            .getSize(find.byType(SceneMetadataDrawer))
+            .width;
+        expect(drawerWidth, 300.0);
+        expect(drawerWidth, lessThan(SceneMetadataDrawer.maxWidth));
+      },
+    );
+  });
+
+  group('SceneScreen: engine lifecycle across mount/unmount (fix round 1, '
+      'item 3)', () {
+    // A plain `test()`, not `testWidgets()` — deliberately. Empirically
+    // verified (a minimal repro, debug-traced step by step) that driving
+    // `.autoDispose`'s teardown via `tester.pumpWidget` swapping the
+    // widget tree leaves `PlaybackController.dispose()`'s async
+    // continuation permanently stuck partway through (specifically at
+    // `await _engine.pause()`, which has no internal `await` of its own
+    // and cannot legitimately hang) — no number of `tester.pump()` calls,
+    // including a 5-second poll loop, ever unstuck it. This matches the
+    // exact class of zone-crossing issue this task already found once
+    // before (`setUp()` vs. `testWidgets`'s own `FakeAsync` zone — see
+    // the "text-entry propagation" group's own doc comment) and the
+    // brief's own documented Task 10 limitation: "wrapping a full
+    // PlaybackController.dispose() in fakeAsync hangs... use real
+    // (non-fakeAsync) tests for controller-lifecycle work." `.autoDispose`
+    // teardown triggered through a widget unmount is exactly that case.
+    // `ProviderContainer.listen`/`.close()` exercises the *same*
+    // `.autoDispose` mechanism `SceneScreen`'s own `ref.watch` relies on
+    // (a subscription appearing and disappearing) without ever touching a
+    // widget tree or `FakeAsync`, sidestepping the issue entirely.
+    test('unmounting the scene screen disposes the engine, and a second '
+        'scene visit gets a fresh, non-disposed one — the exact '
+        '.autoDispose -> releasePlayback -> double-invalidate chain this '
+        'task added, previously asserted nowhere', () async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+
+      // `container.listen` (not `container.read`) is what registers a
+      // subscription `.autoDispose` actually tracks — mirroring what
+      // `SceneScreen`'s own `ref.watch(sceneControllerProvider)` does.
+      var subscription = harness.container.listen<SceneController>(
+        sceneControllerProvider,
+        (_, _) {},
+      );
+      final firstController = subscription.read();
+      final firstLoad = firstController.load('a');
+      // `load` resolves `stashApiProvider` (itself deferred) before it
+      // ever reaches `_TestStashApi.findScene` — let that chain run
+      // before assuming a call has landed in `harness.api.calls`.
+      await pumpEventQueue();
+      harness.api.calls.single.completer.complete(_scene(id: 'a'));
+      await firstLoad;
+      await pumpEventQueue();
+
+      final firstEngine = harness.engines.single;
+      expect(firstEngine.isDisposed, isFalse);
+
+      // Unmount: closing the subscription is what `SceneScreen`'s own
+      // watch going away (the route popping) corresponds to.
+      subscription.close();
+      // Bounded polling with real (not fake) short delays — safe here
+      // since this is a plain, real-event-loop test: the dispose chain
+      // resolves in a handful of milliseconds once the fake
+      // `saveSceneActivity` succeeds, but the exact number of event
+      // loop turns Riverpod's own `.autoDispose` scheduling needs isn't
+      // this test's business to hard-code.
+      for (var i = 0; i < 50 && !firstEngine.isDisposed; i++) {
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(
+        firstEngine.isDisposed,
+        isTrue,
+        reason:
+            'the engine must not keep playing in the background once '
+            'the scene screen is gone',
+      );
+
+      // Mount a second scene under the same container.
+      subscription = harness.container.listen<SceneController>(
+        sceneControllerProvider,
+        (_, _) {},
+      );
+      final secondController = subscription.read();
+      final secondLoad = secondController.load('b');
+      await pumpEventQueue();
+      harness.api.calls.last.completer.complete(_scene(id: 'b'));
+      await secondLoad;
+      await pumpEventQueue();
+
+      expect(
+        harness.engines,
+        hasLength(2),
+        reason:
+            'the next scene visit must build a fresh PlaybackEngine, '
+            'not silently inherit the disposed one (the exact '
+            'PlaybackPhase.failed-forever regression '
+            "playbackEngineProvider's own doc warns about)",
+      );
+      expect(harness.engines[1].isDisposed, isFalse);
+    });
+  });
+
   group('SceneScreen: metadata fallbacks', () {
     testWidgets('safe fallbacks render when every optional field is absent', (
       tester,
@@ -648,6 +870,100 @@ void main() {
       expect(_controlsOpacity(tester), 1.0);
       await _stopPlayback(tester, harness);
     });
+
+    testWidgets(
+      'hovering the controls suppresses auto-hide (fix round 1, item 4: '
+      'previously untested — MouseRegion.onEnter/onExit could silently '
+      'never fire and nothing would notice)',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
+
+        final gesture = await tester.createGesture(
+          kind: PointerDeviceKind.mouse,
+        );
+        await gesture.addPointer(location: Offset.zero);
+        await tester.pump();
+        await gesture.moveTo(tester.getCenter(find.byTooltip('Pause')));
+        await tester.pump();
+
+        // Still hovering the controls well past the normal 3s hide delay.
+        await tester.pump(const Duration(seconds: 4));
+        expect(_controlsOpacity(tester), 1.0);
+
+        // Move off the controls onto the video — hover leaves the
+        // controls, and (as a fresh activity signal from the video's own
+        // `onHover`) a new 3s countdown starts from this moment.
+        await gesture.moveTo(
+          tester.getCenter(find.byKey(const Key('player-video'))),
+        );
+        await tester.pump();
+        await gesture.removePointer();
+        await tester.pump();
+
+        await tester.pump(const Duration(seconds: 4));
+        expect(_controlsOpacity(tester), 0.0);
+
+        await _stopPlayback(tester, harness);
+      },
+    );
+
+    testWidgets('focusing a control suppresses auto-hide (fix round 1, item 4: '
+        'previously untested — the fragile one, since FocusScope.onFocusChange '
+        'depends on the implicit scope node actually reporting focus for a '
+        'descendant IconButton)', (tester) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final scene = _scene();
+      await _pumpReadyScene(tester, harness, scene);
+
+      // `find.byTooltip` locates the `Tooltip` wrapping the `IconButton`,
+      // and the `IconButton` element itself sits *above* the `Focus`
+      // node its own build method creates (via `InkResponse`) — so
+      // `Focus.of` on the tooltip or the button's own context finds no
+      // ancestor `Focus` at all and throws. The button's `icon` child
+      // ends up nested *inside* that internal `InkResponse`/`Focus`, so
+      // it's the shallowest context that actually has one as an
+      // ancestor. Find that instead.
+      final muteButtonContext = tester.element(
+        find.descendant(
+          of: find.byTooltip('Mute'),
+          matching: find.byType(Icon),
+        ),
+      );
+      Focus.of(muteButtonContext).requestFocus();
+      await tester.pump();
+
+      await tester.pump(const Duration(seconds: 4));
+      expect(
+        _controlsOpacity(tester),
+        1.0,
+        reason:
+            'a keyboard user mid-interaction with a focused control must '
+            'not have it fade out from under them',
+      );
+
+      // `FocusNode.unfocus()`'s default `UnfocusDisposition.scope` only
+      // moves the primary focus up to the *nearest enclosing scope* —
+      // which here is the controls' own `FocusScope`, so that scope's
+      // own `hasFocus` (true whenever it or a descendant holds primary
+      // focus) stays true and `onFocusChange` never fires false.
+      // Plain `FocusScopeNode.requestFocus()` on the root scope doesn't
+      // help either — it re-descends via `findFirstFocus` into whatever
+      // child each scope remembers as last-focused, walking right back
+      // down to this same mute button. `requestScopeFocus()` parks the
+      // primary focus on the root scope itself with no such descent,
+      // which is the only way to genuinely leave the controls scope.
+      FocusManager.instance.rootScope.requestScopeFocus();
+      await tester.pump();
+
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsOpacity(tester), 0.0);
+
+      await _stopPlayback(tester, harness);
+    });
   });
 
   group('SceneScreen: playback failure recovery', () {
@@ -725,8 +1041,10 @@ void main() {
     );
 
     testWidgets(
-      'a transient failure after the video already played does not cover '
-      'the video with a full error state',
+      'a stream failure after the video already played does not cover '
+      'the video with a full error state, but does show a persistent '
+      'Retry banner (fix round 1, item 5, scenario 1: a way out of a '
+      'mid-stream failure)',
       (tester) async {
         final harness = _harness();
         addTearDown(harness.container.dispose);
@@ -735,9 +1053,10 @@ void main() {
         harness.engine.emitDuration(const Duration(seconds: 120));
         await tester.pump();
 
-        // Simulate a failed volume nudge: the engine reports an error while
-        // duration (and thus a once-successful open) is already known.
-        harness.engine.emitError('setVolume failed');
+        // A genuine stream-level failure (e.g. a network drop mid-scene)
+        // reported by the engine's own `errors` stream, after duration
+        // (and thus a once-successful open) is already known.
+        harness.engine.emitError('stream broke');
         await tester.pump();
         await tester.pump();
 
@@ -745,11 +1064,75 @@ void main() {
         // full-screen failure overlay took over.
         expect(find.byKey(const Key('player-video')), findsOneWidget);
         expect(find.byTooltip('Pause'), findsOneWidget);
-        expect(find.text('Retry'), findsNothing);
-        // The failure is still surfaced, just non-modally.
+        expect(find.text('This video could not be played.'), findsNothing);
+        // But a *persistent* Retry banner is now reachable — not just a
+        // one-shot, auto-dismissing notice — closing the dead end the
+        // review flagged: previously nothing anywhere offered a way to
+        // recover from this state.
+        expect(
+          find.byKey(const Key('scene-transient-failure-banner')),
+          findsOneWidget,
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        // The failure is still surfaced non-modally too.
         final notice = harness.container.read(globalNoticeProvider);
         expect(notice, isNotNull);
         expect(notice!.severity, AppNoticeSeverity.warning);
+
+        // Tapping the banner's Retry re-issues `findScene` (the same
+        // recovery path the blocking overlay's own Retry uses).
+        final callsBefore = harness.api.calls.length;
+        await tester.tap(find.text('Retry'));
+        await tester.pump();
+        expect(harness.api.calls, hasLength(callsBefore + 1));
+
+        await _stopPlayback(tester, harness);
+      },
+    );
+  });
+
+  group('SceneScreen: control-command failures (fix round 1, item 5)', () {
+    testWidgets(
+      'a failed setVolume never shows a failure overlay or the transient '
+      'banner (scenario 3: it must not touch phase at all), and a second '
+      'independent failure still produces its own fresh notice (scenario '
+      '2: repeated failures are never silently absorbed)',
+      (tester) async {
+        final harness = _harness(
+          wrapEngine: (inner) => _ThrowingSetVolumeEngine(inner),
+        );
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
+        harness.engine.emitDuration(const Duration(seconds: 120));
+        await tester.pump();
+
+        final controller = harness.container.read(playbackControllerProvider);
+
+        await controller.setVolume(0.2);
+        await tester.pump();
+
+        expect(find.text('Retry'), findsNothing);
+        expect(
+          find.byKey(const Key('scene-transient-failure-banner')),
+          findsNothing,
+        );
+        expect(find.byTooltip('Pause'), findsOneWidget);
+        final firstNotice = harness.container.read(globalNoticeProvider);
+        expect(firstNotice, isNotNull);
+        expect(firstNotice!.severity, AppNoticeSeverity.warning);
+
+        await controller.setVolume(0.3);
+        await tester.pump();
+
+        final secondNotice = harness.container.read(globalNoticeProvider);
+        expect(secondNotice, isNotNull);
+        expect(secondNotice!.id, isNot(firstNotice.id));
+        // Still no failure surface of any kind — the scene is genuinely
+        // fine, only the volume command failed, twice.
+        expect(find.text('Retry'), findsNothing);
+        expect(find.byTooltip('Pause'), findsOneWidget);
+
         await _stopPlayback(tester, harness);
       },
     );
