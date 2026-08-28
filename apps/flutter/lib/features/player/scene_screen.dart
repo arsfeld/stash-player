@@ -176,31 +176,34 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
 
   /// Whether the current `PlaybackPhase.failed` should take over the
   /// whole screen with a blocking Retry/Open-in-Stash overlay, versus
-  /// being treated as a transient control hiccup that leaves the video
-  /// (and transport controls) exactly as they were.
+  /// being treated as a recoverable mid-stream break that leaves the
+  /// video (and transport controls) exactly as they were.
   ///
-  /// See hazard #3 in Task 11's brief: `PlaybackController._runEngineCommand`
-  /// drives `setVolume`/`toggleMute`/`playPause`/`seekAbsolute` failures
-  /// into the *same* terminal `PlaybackPhase.failed` a genuinely-unplayable
-  /// scene reaches — and, once failed, nothing in that controller ever
-  /// moves `phase` back to `ready` on a later successful command. Since
-  /// `playback_controller.dart` is a committed interface this task
-  /// consumes rather than modifies, the fix lives here: `duration` is
-  /// only ever set once the engine's own `duration` stream has fired at
-  /// least once for the current scene (see `PlaybackState.duration`'s own
-  /// doc — "no real media has a zero duration"), which only happens after
-  /// a *successful* `open()`. So `duration > Duration.zero` is a reliable
-  /// proxy for "this scene's video already loaded" — a `failed` phase
-  /// reached *after* that point (whether from a real mid-stream break or
-  /// a merely-cosmetic failed volume nudge) is treated as non-blocking: a
-  /// one-shot warning notice (see the `ref.listen` in [build]) rather than
-  /// a full-screen takeover. This can't perfectly distinguish "a volume
-  /// nudge failed" from "the stream broke five minutes in", but a
-  /// still-rendering video is the right signal either way: the user is
-  /// still watching something, and a full error screen over it would be
-  /// wrong regardless of which of those two actually happened. Only a
-  /// `failed` phase reached *before* any duration was ever established —
-  /// the scene never became playable at all — gets the blocking overlay.
+  /// `PlaybackPhase.failed` today is reached only two ways —
+  /// `PlaybackController.loadScene`'s own `catch` (the scene never became
+  /// playable at all: no stream URL, a connection failure, or
+  /// `_engine.open`/`seek`/`play` throwing before anything ever rendered)
+  /// or an engine-reported `errors` stream event, which can fire *after*
+  /// the video already played successfully for a while (a genuine
+  /// mid-stream break, e.g. a network drop). Control-command failures
+  /// (a failed volume nudge, mute, play/pause, or seek) never reach
+  /// `phase` at all — `_runEngineCommand` routes those into the separate
+  /// `PlaybackState.controlFailure`/`controlFailureSequence` channel
+  /// instead (see that method's own doc for why conflating the two was a
+  /// real, reported defect), so this method has nothing to do with them.
+  ///
+  /// `duration` is only ever set once the engine's own `duration` stream
+  /// has fired at least once for the current scene (see
+  /// `PlaybackState.duration`'s own doc — "no real media has a zero
+  /// duration"), which only happens after a *successful* `open()`. So
+  /// `duration > Duration.zero` is a reliable proxy for "this scene's
+  /// video already loaded" — a `failed` phase reached *after* that point
+  /// is treated as non-blocking: a one-shot warning notice (see the
+  /// `ref.listen` in [build]) plus the persistent Retry banner, rather
+  /// than a full-screen takeover, since the user is still looking at a
+  /// video that did play. Only a `failed` phase reached *before* any
+  /// duration was ever established — the scene never became playable at
+  /// all — gets the blocking overlay.
   bool _shouldShowBlockingPlaybackFailure(PlaybackState playback) =>
       playback.phase == PlaybackPhase.failed &&
       playback.duration == Duration.zero;
@@ -398,8 +401,6 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                         onSeek: playbackController.seekAbsolute,
                         onVolumeChanged: playbackController.setVolume,
                         onToggleMute: playbackController.toggleMute,
-                        onToggleFullscreen: () => playbackController
-                            .setFullscreen(!playback.fullscreen),
                         onToggleMetadata: () => _toggleMetadata(playback),
                       ),
                     ),
@@ -460,13 +461,31 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                 SceneMetadataDrawer.maxWidth,
                 constraints.maxWidth,
               ),
-              child: ClipRect(
-                child: AnimatedSlide(
-                  duration: _fadeDuration,
-                  offset: _metadataOpen ? Offset.zero : const Offset(1, 0),
-                  child: SceneMetadataDrawer(
-                    scene: scene,
-                    onClose: () => _toggleMetadata(playback),
+              // `ClipRect`+`AnimatedSlide` only ever move the drawer
+              // off-screen; the subtree stays mounted, hit-testable,
+              // focusable, and in the accessibility tree the whole time
+              // (final review I8). `ExcludeSemantics` keeps a screen
+              // reader from describing a panel the user can't see, and
+              // `descendantsAreFocusable: false` (not `canRequestFocus`,
+              // which `Focus`'s own doc says "does not affect the
+              // children of this node") keeps Tab from ever landing on
+              // the drawer's Close button at its offscreen
+              // `Offset(1, 0)` while closed.
+              child: ExcludeSemantics(
+                key: const Key('scene-metadata-drawer-exclude-semantics'),
+                excluding: !_metadataOpen,
+                child: FocusScope(
+                  key: const Key('scene-metadata-drawer-focus-scope'),
+                  descendantsAreFocusable: _metadataOpen,
+                  child: ClipRect(
+                    child: AnimatedSlide(
+                      duration: _fadeDuration,
+                      offset: _metadataOpen ? Offset.zero : const Offset(1, 0),
+                      child: SceneMetadataDrawer(
+                        scene: scene,
+                        onClose: () => _toggleMetadata(playback),
+                      ),
+                    ),
                   ),
                 ),
               ),

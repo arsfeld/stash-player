@@ -65,11 +65,26 @@ class FakeStashApi implements StashApi {
   final Failure? versionFailure;
   final Future<String>? versionFuture;
 
+  /// Set `true` to opt out of the drain-safety default on both
+  /// [findScenes] and [findScene]: leave the relevant queues
+  /// ([pages]/[pageFailures]/[pageRawErrors], or
+  /// [sceneResults]/[sceneFailures]/[sceneRawErrors]) empty and
+  /// resolve/reject a specific call's `completer` from [calls]/[sceneCalls]
+  /// directly for full control over completion order and timing (e.g. a
+  /// late-response race). Defaults to `false`: a call made while its
+  /// queues are all empty completes with a [StateError] immediately
+  /// instead of leaving its `completer` open forever — a drained queue
+  /// used to hang any test that made one call too many (e.g. a stray
+  /// re-fetch a regression reintroduced) for the full `pumpAndSettle`
+  /// timeout instead of failing fast with a clear error (final review
+  /// §3b).
+  bool allowManualCompletion = false;
+
   /// `findScenes` results consumed in call order: as long as this (or
   /// [pageFailures]) has an entry, each call completes immediately with
-  /// the next one. Leave both empty and resolve/reject a specific
-  /// [FindScenesCall.completer] from [calls] directly for full control
-  /// over completion order and timing.
+  /// the next one. Leave both empty (and set [allowManualCompletion])
+  /// and resolve/reject a specific [FindScenesCall.completer] from
+  /// [calls] directly for full control over completion order and timing.
   final List<ScenePage> pages = [];
 
   /// `findScenes` failures consumed in call order, consulted ahead of
@@ -103,9 +118,10 @@ class FakeStashApi implements StashApi {
 
   /// `findScene` results consumed in call order, mirroring [pages]/
   /// [pageFailures]/[pageRawErrors] for `findScenes` below. Leave all
-  /// three empty and resolve/reject a specific [FindSceneCall.completer]
-  /// from [sceneCalls] directly for full control over completion order
-  /// and timing (e.g. a late-response race for `SceneController`).
+  /// three empty (and set [allowManualCompletion]) and resolve/reject a
+  /// specific [FindSceneCall.completer] from [sceneCalls] directly for
+  /// full control over completion order and timing (e.g. a late-response
+  /// race for `SceneController`).
   final List<Scene?> sceneResults = [];
   final List<Failure> sceneFailures = [];
   final List<Object> sceneRawErrors = [];
@@ -123,6 +139,16 @@ class FakeStashApi implements StashApi {
       call.completer.completeError(sceneFailures.removeAt(0));
     } else if (sceneResults.isNotEmpty) {
       call.completer.complete(sceneResults.removeAt(0));
+    } else if (!allowManualCompletion) {
+      call.completer.completeError(
+        StateError(
+          'FakeStashApi.findScene("$id"): no queued sceneResults/'
+          'sceneFailures/sceneRawErrors entry and allowManualCompletion '
+          'is false — this call would otherwise hang forever. Queue a '
+          'result, or set allowManualCompletion = true and resolve '
+          'sceneCalls.last.completer directly.',
+        ),
+      );
     }
     return call.completer.future;
   }
@@ -141,6 +167,16 @@ class FakeStashApi implements StashApi {
       call.completer.completeError(pageFailures.removeAt(0));
     } else if (pages.isNotEmpty) {
       call.completer.complete(pages.removeAt(0));
+    } else if (!allowManualCompletion) {
+      call.completer.completeError(
+        StateError(
+          'FakeStashApi.findScenes(page: $page): no queued pages/'
+          'pageFailures/pageRawErrors entry and allowManualCompletion is '
+          'false — this call would otherwise hang forever. Queue a '
+          'ScenePage/Failure, or set allowManualCompletion = true and '
+          'resolve calls.last.completer directly.',
+        ),
+      );
     }
     return call.completer.future;
   }

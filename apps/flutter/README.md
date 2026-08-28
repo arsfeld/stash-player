@@ -12,15 +12,20 @@ It targets Linux and macOS desktop only — no mobile, no web.
 
 ## Prerequisites
 
-Flutter only exists inside the pinned Nix dev shell (`nix develop` at
-the repository root); there is no supported "without Nix" path for this
-app, unlike the Rust clients. The shell provides the pinned Flutter SDK
+Flutter only exists inside the pinned Nix dev shell (`nix develop .#flutter`
+at the repository root); there is no supported "without Nix" path for this
+app, unlike the Rust clients. That shell — separate from the repository's
+`default` shell, which is Rust/GTK-only — provides the pinned Flutter SDK
 plus the native libraries `media_kit` needs for hardware-accelerated
-video (see [Troubleshooting](#troubleshooting) below).
+video (see [Troubleshooting](#troubleshooting) below). The two shells are
+split so Rust-only contributors don't pay for the multi-GB Flutter
+closure, and so `clang` (needed to build the Flutter Linux embedder)
+never shadows the released Rust clients' own `cc`/`ld` inside `nix
+develop`'s default shell.
 
 ```sh
 # from the repository root
-nix develop
+nix develop .#flutter
 cd apps/flutter
 flutter pub get
 ```
@@ -199,11 +204,12 @@ secret-tool clear test-attr probe-value
 **`media_kit` native libraries.** Real playback needs `media_kit`'s
 native decode/render libraries (`libmpv` and friends on Linux,
 `media_kit_libs_video`'s bundled frameworks on macOS). The pinned Nix
-dev shell (`nix develop`) provides these on Linux; running outside that
-shell (or outside the pub packages' bundled macOS frameworks) is
-unsupported and will fail to open any stream, mock or real. If
-`flutter run`/`flutter test -d linux` reports it can't find `libmpv` or
-similar, you are almost certainly outside `nix develop`.
+dev shell (`nix develop .#flutter`) provides these on Linux; running
+outside that shell (or outside the pub packages' bundled macOS
+frameworks) is unsupported and will fail to open any stream, mock or
+real. If `flutter run`/`flutter test -d linux` reports it can't find
+`libmpv` or similar, you are almost certainly outside `nix develop
+.#flutter`.
 
 **`pumpAndSettle()` hangs on the scene screen — use a bounded pump loop
 instead.** This bit Task 12 while writing the integration smoke test,
@@ -230,6 +236,19 @@ explicitly on a generous timeout instead (see that test's own
 Same mpv-style bindings as the GTK client — see the root README's
 ["Keyboard shortcuts (player)"](../../README.md#keyboard-shortcuts-player)
 section.
+
+**Fullscreen is not implemented on either platform.** `F` and `Esc` are
+wired to the same `PlayerAction`s as every other shortcut, but
+`PlaybackController`'s `FullscreenRequester` always reports failure (no
+window-manager integration exists yet on Linux or macOS for this client),
+so both bindings are harmless no-ops and the on-screen fullscreen button
+is disabled with a "not yet implemented" tooltip rather than a control
+that claims a window state the OS never actually entered (final review
+C4). See `docs/flutter-runtime-validation.md` rows L13/L14/M13/M14, which
+are marked `NOT IMPLEMENTED` rather than `UNRUN` for the same reason.
+Wiring a real platform hook (Linux: GTK `gtk_window_fullscreen`; macOS:
+`NSWindow.toggleFullScreen(_:)`, as the SwiftUI app already does) is
+follow-up work, not part of this vertical slice.
 
 ## Architecture
 

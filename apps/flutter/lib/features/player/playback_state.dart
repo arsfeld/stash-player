@@ -12,10 +12,17 @@ enum PlaybackPhase { initial, loading, ready, failed, disposed }
 /// Immutable snapshot of the playback controller: which [scene] is
 /// loaded (if any), where it stands in [phase], the engine-reported
 /// [playing]/[buffering]/[duration]/[position], the user-level
-/// [volume]/[muted]/[fullscreen]/[controlsVisible] preferences (which
-/// persist across scene changes, unlike the engine-reported fields
-/// above), any [failure] message, [generation], and any
-/// [controlFailure]/[controlFailureSequence].
+/// [volume]/[muted]/[fullscreen] preferences (which persist across scene
+/// changes, unlike the engine-reported fields above), any [failure]
+/// message, [generation], and any [controlFailure]/[controlFailureSequence].
+///
+/// Auto-hide visibility of the transport controls is *not* one of these
+/// preferences, despite an earlier plan draft mandating a
+/// `controlsVisible` field here: it is purely a widget-local UI concern
+/// (`_SceneScreenState._controlsVisible` in `scene_screen.dart`, reset
+/// per mount) with no reason to survive a scene change or be observable
+/// outside the widget that owns the auto-hide timer — see that field's
+/// own doc.
 ///
 /// [generation] is bumped by every `PlaybackController.loadScene` call
 /// and captured by every async operation it or a seek/volume/fullscreen
@@ -52,7 +59,6 @@ class PlaybackState {
     this.volume = 1.0,
     this.muted = false,
     this.fullscreen = false,
-    this.controlsVisible = true,
     this.failure,
     this.generation = 0,
     this.controlFailure,
@@ -74,7 +80,6 @@ class PlaybackState {
   final double volume;
   final bool muted;
   final bool fullscreen;
-  final bool controlsVisible;
   final String? failure;
   final int generation;
 
@@ -98,7 +103,6 @@ class PlaybackState {
     double? volume,
     bool? muted,
     bool? fullscreen,
-    bool? controlsVisible,
     String? failure,
     int? generation,
     bool clearFailure = false,
@@ -114,7 +118,6 @@ class PlaybackState {
     volume: volume ?? this.volume,
     muted: muted ?? this.muted,
     fullscreen: fullscreen ?? this.fullscreen,
-    controlsVisible: controlsVisible ?? this.controlsVisible,
     failure: clearFailure ? null : (failure ?? this.failure),
     generation: generation ?? this.generation,
     controlFailure: controlFailure ?? this.controlFailure,

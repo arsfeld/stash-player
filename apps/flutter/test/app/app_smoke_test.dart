@@ -119,7 +119,14 @@ Future<void> _pumpApp(
       ),
       environmentProvider.overrideWithValue(const {}),
       stashApiFactoryProvider.overrideWithValue(
-        (config) => FakeStashApi(versionValue: 'v0.31.0'),
+        // No `pages` ever queued: the library's `loadInitial()` is meant
+        // to park forever on an unresolved `findScenes` here (see this
+        // file's own tests, which only pump a bounded number of frames
+        // rather than `pumpAndSettle`) — `allowManualCompletion` opts out
+        // of `FakeStashApi`'s drain-safety default so that's still a
+        // deliberate hang, not a `StateError`.
+        (config) =>
+            FakeStashApi(versionValue: 'v0.31.0')..allowManualCompletion = true,
       ),
       connectionControllerOverride,
     ],

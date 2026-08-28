@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -7,6 +8,18 @@ import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
 import 'authenticated_url.dart';
 import 'stash_api.dart';
+
+/// Deadline for a single GraphQL POST. `package:http`'s `IOClient` sets no
+/// request deadline of its own — a server that accepts the TCP connection
+/// and then never responds (a firewall drop, a misrouted VPN, the right
+/// host on the wrong port) would otherwise hang the awaiting call forever.
+/// 15s is generous enough for a slow-but-working Stash instance (a cold
+/// `findScenes` against a large library over a slow link) while still
+/// bounding first-launch "Test connection", the library spinner, and
+/// activity checkpoints to a duration a user will actually wait out rather
+/// than kill the app. `TimeoutException` falls through `_post`'s existing
+/// catch-all into a `TransportFailure`, same as any other transport error.
+const _requestTimeout = Duration(seconds: 15);
 
 const String findScenesDocument = r'''
 query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
@@ -106,14 +119,16 @@ class HttpStashApi implements StashApi {
     T Function(Map<String, Object?> data) decode,
   ) async {
     try {
-      final response = await client.post(
-        baseUri.resolve('graphql'),
-        headers: {
-          'content-type': 'application/json',
-          if (apiKey.isNotEmpty) 'ApiKey': apiKey,
-        },
-        body: jsonEncode({'query': document, 'variables': variables}),
-      );
+      final response = await client
+          .post(
+            baseUri.resolve('graphql'),
+            headers: {
+              'content-type': 'application/json',
+              if (apiKey.isNotEmpty) 'ApiKey': apiKey,
+            },
+            body: jsonEncode({'query': document, 'variables': variables}),
+          )
+          .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpFailure(
           response.statusCode,

@@ -71,6 +71,16 @@ class _TestStashApi implements StashApi {
   final List<Failure> findSceneFailures = [];
   final List<Object> findSceneRawErrors = [];
 
+  /// Deliberately always manual, unlike `FakeStashApi.findScenes`
+  /// (`test/support/fakes.dart`), which defaults to failing loudly on a
+  /// drained queue: **every** success in this file resolves a specific
+  /// `_FindSceneCall.completer` from [calls] directly (e.g.
+  /// `_pumpReadyScene`'s `harness.api.calls.single.completer.complete
+  /// (scene)`), so there is no "queue" mode here to accidentally drain —
+  /// [findSceneFailures]/[findSceneRawErrors] only cover the failure
+  /// path. A call made with neither queued intentionally returns a never
+  /// -settling future for the caller to complete; that is this class's
+  /// only mode, not a landmine (final review §3b).
   @override
   Future<Scene?> findScene(String id) {
     final call = _FindSceneCall(id);
@@ -225,20 +235,67 @@ Future<void> _pumpReadyScene(
   }
 }
 
-/// Stops the engine's own `playing` stream at the *end* of a test that
-/// left it active — `addTearDown` runs too late for this: Flutter's own
-/// end-of-test `!timersPending` invariant check happens before any
-/// `addTearDown` callback, so `harness.container.dispose()` alone can
-/// never stop `ActivitySync`'s periodic timer (started by
-/// `PlaybackController` while `playing && !buffering`) in time. Disposing
-/// the whole `PlaybackController` would cancel it too, but that disposal
-/// chain is itself documented (Task 10) as unable to complete inside a
-/// widget test's implicit `fakeAsync` zone — cancelling activity the
-/// *ordinary* way (a genuine pause, exactly like a real user's) is both
-/// simpler and closer to what a real app does before a scene closes.
-Future<void> _stopPlayback(WidgetTester tester, _TestHarness harness) async {
-  harness.engine.emitPlaying(false);
+/// Genuinely tears the scene down at the end of a test that left playback
+/// active, instead of the former `_stopPlayback` workaround (a bare
+/// `engine.emitPlaying(false)` that stopped the periodic activity timer
+/// but never exercised real disposal at all).
+///
+/// Unmounting `SceneScreen` — replacing it with a plain `SizedBox` inside
+/// the *same* `UncontrolledProviderScope`/`harness.container` — is the
+/// real production trigger for `sceneControllerProvider`'s `.autoDispose`:
+/// the last watcher (`SceneScreen`'s own `ref.watch`) goes away, so
+/// Riverpod tears the controller down exactly as it does on a real route
+/// pop, driving the full chain end to end: `SceneController.dispose` ->
+/// `releasePlayback` -> invalidating `playbackControllerProvider` ->
+/// `PlaybackController.dispose` -> pause -> `ActivitySync.dispose` (its
+/// own last flush) -> engine dispose. (Disposing `harness.container`
+/// itself, tried first, is the wrong simulation — it also tears down the
+/// container's own scheduler, which makes `ref.invalidate` calls
+/// triggered mid-teardown silently no-op instead of behaving as they do
+/// in the real single-provider-at-a-time autoDispose path.)
+///
+/// `_stopPlayback` existed because `ActivitySync.dispose`'s old
+/// `Future.any([flushSettled.future, _delay(disposeFlushTimeout)])` never
+/// cancelled its losing branch: letting a real disposal run to completion
+/// inside a widget test left a genuine ~10s `Timer` pending, and Flutter's
+/// own end-of-test "a Timer is still pending" check runs *before* any
+/// `addTearDown` callback — so relying only on `addTearDown` could never
+/// clean that up in time. That is exactly why the real pause -> flush ->
+/// engine-dispose path had almost no widget-level coverage (final review
+/// I5). Now that `ActivitySync.dispose` cancels its own timeout `Timer`
+/// the moment its flush settles (see `activity_sync.dart`), real
+/// disposal is safe to exercise here.
+///
+/// The `tester.runAsync` call is load-bearing, not decoration:
+/// `PlaybackController.dispose()` starts as fire-and-forget (Riverpod
+/// calls a `ChangeNotifier`'s plain `void dispose()`; this override just
+/// happens to return a `Future` a caller *can* await — see that method's
+/// own doc), and empirically its `Future.wait([...cancel()...])` and
+/// later awaits never resume under `AutomatedTestWidgetsFlutterBinding`'s
+/// fake time from `tester.pump()` alone, no matter how many times it's
+/// called — `pump()` only drives microtasks tied to the widget frame
+/// lifecycle, not an unrelated detached Future chain. Stepping into the
+/// *real* zone via `runAsync` (even for a `Duration.zero` delay) lets the
+/// chain's own microtasks actually run to completion; the `pump()` calls
+/// around it then let the widget tree observe the resulting state.
+Future<void> _tearDownScene(WidgetTester tester, _TestHarness harness) async {
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: harness.container,
+      child: const SizedBox.shrink(),
+    ),
+  );
   await tester.pump();
+  await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  await tester.pump();
+  expect(
+    harness.engine.isDisposed,
+    isTrue,
+    reason:
+        'a real scene teardown must reach PlaybackController.dispose -> '
+        'ActivitySync.dispose -> engine.dispose, not just stop the engine '
+        'from playing (final review I5)',
+  );
 }
 
 /// The controls overlay's current opacity — `1.0` fully visible, `0.0`
@@ -277,6 +334,15 @@ void main() {
     test('preserves a base URL with an existing path prefix', () {
       final uri = resolveStashSceneUrl('https://stash.test/app', '123');
       expect(uri.pathSegments, ['app', 'scenes', '123']);
+    });
+
+    test('strips HTTP basic-auth credentials embedded in the base URL '
+        '(final review I4)', () {
+      final uri = resolveStashSceneUrl('https://user:pass@stash.test', '123');
+      expect(uri.userInfo, isEmpty);
+      expect(uri.toString(), isNot(contains('user')));
+      expect(uri.toString(), isNot(contains('pass')));
+      expect(uri.toString(), 'https://stash.test/scenes/123');
     });
   });
 
@@ -496,7 +562,7 @@ void main() {
         final afterSize = tester.getSize(find.byKey(const Key('player-video')));
 
         expect(afterSize, beforeSize);
-        await _stopPlayback(tester, harness);
+        await _tearDownScene(tester, harness);
       });
     }
   });
@@ -536,6 +602,48 @@ void main() {
       },
     );
   });
+
+  group(
+    'SceneScreen: closed metadata drawer accessibility (final review I8)',
+    () {
+      testWidgets(
+        'the closed drawer is excluded from semantics and cannot receive '
+        'focus; both flip once opened',
+        (tester) async {
+          final harness = _harness();
+          addTearDown(harness.container.dispose);
+          final scene = _scene();
+          await _pumpReadyScene(tester, harness, scene, play: false);
+
+          bool excludingSemantics() => tester
+              .widget<ExcludeSemantics>(
+                find.byKey(
+                  const Key('scene-metadata-drawer-exclude-semantics'),
+                ),
+              )
+              .excluding;
+          bool descendantsFocusable() => tester
+              .widget<FocusScope>(
+                find.byKey(const Key('scene-metadata-drawer-focus-scope')),
+              )
+              .descendantsAreFocusable;
+
+          // Closed by default (`_pumpReadyScene` never opens it): the panel
+          // must be out of both the accessibility tree and the focus/tab
+          // order, even though `ClipRect`+`AnimatedSlide` keep it mounted
+          // just off-screen.
+          expect(excludingSemantics(), isTrue);
+          expect(descendantsFocusable(), isFalse);
+
+          await tester.tap(find.byTooltip('Show details'));
+          await tester.pumpAndSettle();
+
+          expect(excludingSemantics(), isFalse);
+          expect(descendantsFocusable(), isTrue);
+        },
+      );
+    },
+  );
 
   group('SceneScreen: metadata drawer max width (fix round 1, item 2)', () {
     testWidgets('the drawer is capped at 420 logical pixels on a wide window', (
@@ -693,7 +801,7 @@ void main() {
       expect(find.text('No description available.'), findsOneWidget);
       expect(find.text('Unknown date'), findsOneWidget);
       expect(find.textContaining('Unknown'), findsWidgets);
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
 
     testWidgets('populated fields render their real values', (tester) async {
@@ -728,7 +836,7 @@ void main() {
       expect(find.textContaining('1920'), findsOneWidget);
       expect(find.textContaining('h264'), findsOneWidget);
       expect(find.textContaining('30'), findsOneWidget);
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
   });
 
@@ -744,7 +852,12 @@ void main() {
       expect(find.byKey(const Key('scene-seek-bar')), findsOneWidget);
       expect(find.byKey(const Key('scene-volume-slider')), findsOneWidget);
       expect(find.byTooltip('Mute'), findsOneWidget);
-      expect(find.byTooltip('Fullscreen'), findsOneWidget);
+      // Not "Fullscreen" — see the C4 fix: the control is disabled and
+      // says so until a real platform hook exists.
+      expect(
+        find.byTooltip('Fullscreen (not yet implemented)'),
+        findsOneWidget,
+      );
       expect(find.byTooltip('Show details'), findsOneWidget);
     });
 
@@ -756,11 +869,43 @@ void main() {
       final scene = _scene();
       await _pumpReadyScene(tester, harness, scene, play: false);
 
+      // `loadScene` (inside `_pumpReadyScene`) already issued its own
+      // unconditional `PlayCommand` — clear it so the assertion below can
+      // only pass if *this* tap is what issues the next one (final review
+      // I3: without this, the assertion was true before the tap ever ran).
+      harness.engine.commands.clear();
       await tester.tap(find.byTooltip('Play'));
       await tester.pump();
 
       expect(harness.engine.commands.whereType<PlayCommand>(), isNotEmpty);
     });
+
+    testWidgets(
+      'dragging the seek bar commits exactly one seek, on release — not '
+      'one per pointer sample (final review I2)',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene, play: false);
+        harness.engine.emitDuration(const Duration(seconds: 120));
+        // Two pumps — see `_pumpReadyScene`'s own doc: one to flush the
+        // duration stream's microtask delivery into `PlaybackController`'s
+        // state, one more for the rebuild that actually enables the
+        // slider's `onChanged`/`onChangeEnd` (disabled while duration is
+        // unknown).
+        await tester.pump();
+        await tester.pump();
+
+        await tester.drag(
+          find.byKey(const Key('scene-seek-bar')),
+          const Offset(80, 0),
+        );
+        await tester.pump();
+
+        expect(harness.engine.commands.whereType<SeekCommand>(), hasLength(1));
+      },
+    );
   });
 
   group('SceneScreen: auto-hide', () {
@@ -801,7 +946,7 @@ void main() {
         await tester.pump(const Duration(seconds: 4));
 
         expect(_controlsOpacity(tester), 0.0);
-        await _stopPlayback(tester, harness);
+        await _tearDownScene(tester, harness);
       },
     );
 
@@ -834,7 +979,7 @@ void main() {
 
       await tester.pump(const Duration(seconds: 2));
       expect(_controlsOpacity(tester), 0.0);
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
 
     testWidgets('a keyboard action reveals controls and resets the timer', (
@@ -853,7 +998,7 @@ void main() {
 
       expect(_controlsOpacity(tester), 1.0);
       expect(find.byTooltip('Unmute'), findsOneWidget);
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
 
     testWidgets('metadata being open suppresses auto-hide', (tester) async {
@@ -868,7 +1013,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
 
       expect(_controlsOpacity(tester), 1.0);
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
 
     testWidgets(
@@ -906,7 +1051,7 @@ void main() {
         await tester.pump(const Duration(seconds: 4));
         expect(_controlsOpacity(tester), 0.0);
 
-        await _stopPlayback(tester, harness);
+        await _tearDownScene(tester, harness);
       },
     );
 
@@ -962,7 +1107,7 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       expect(_controlsOpacity(tester), 0.0);
 
-      await _stopPlayback(tester, harness);
+      await _tearDownScene(tester, harness);
     });
   });
 
@@ -1086,7 +1231,7 @@ void main() {
         await tester.pump();
         expect(harness.api.calls, hasLength(callsBefore + 1));
 
-        await _stopPlayback(tester, harness);
+        await _tearDownScene(tester, harness);
       },
     );
   });
@@ -1133,28 +1278,47 @@ void main() {
         expect(find.text('Retry'), findsNothing);
         expect(find.byTooltip('Pause'), findsOneWidget);
 
-        await _stopPlayback(tester, harness);
+        await _tearDownScene(tester, harness);
       },
     );
   });
 
-  group('SceneScreen: fullscreen shortcut', () {
-    testWidgets('Escape exits fullscreen', (tester) async {
-      final harness = _harness();
-      addTearDown(harness.container.dispose);
-      final scene = _scene();
-      await _pumpReadyScene(tester, harness, scene);
+  group('SceneScreen: fullscreen (not yet implemented, final review C4)', () {
+    testWidgets(
+      'the fullscreen control is disabled and Escape is a harmless no-op',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
 
-      await tester.tap(find.byTooltip('Fullscreen'));
-      await tester.pump();
-      expect(find.byTooltip('Exit fullscreen'), findsOneWidget);
+        // No real platform fullscreen hook exists on any target yet, so
+        // the control must not claim it can do anything: disabled, with a
+        // tooltip that says so, rather than an icon that flips and lies.
+        final fullscreenButton = tester.widget<IconButton>(
+          find.descendant(
+            of: find.byTooltip('Fullscreen (not yet implemented)'),
+            matching: find.byType(IconButton),
+          ),
+        );
+        expect(fullscreenButton.onPressed, isNull);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
+        // Escape still routes through `PlayerActionShortcuts` to
+        // `PlaybackController.handleAction(PlayerAction.exitFullscreen)`,
+        // which is already a no-op when not fullscreen — confirm the key
+        // binding stays wired (per the C4 ruling) without crashing and
+        // without the tooltip ever claiming fullscreen was entered.
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
 
-      expect(find.byTooltip('Fullscreen'), findsOneWidget);
-      await _stopPlayback(tester, harness);
-    });
+        expect(
+          find.byTooltip('Fullscreen (not yet implemented)'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await _tearDownScene(tester, harness);
+      },
+    );
 
     testWidgets('space toggles play/pause the same as the button', (
       tester,
@@ -1164,6 +1328,10 @@ void main() {
       final scene = _scene();
       await _pumpReadyScene(tester, harness, scene, play: false);
 
+      // See the play/pause button test above (final review I3): clear the
+      // `PlayCommand` `loadScene` already issued before asserting on the
+      // one this interaction is supposed to cause.
+      harness.engine.commands.clear();
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
 

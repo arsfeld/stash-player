@@ -688,27 +688,83 @@ void main() {
   });
 
   group('dispose is bounded (C2 leg 3)', () {
-    test(
-      'dispose does not wait forever for a checkpoint that never resolves',
-      () async {
+    test('dispose does not wait forever for a checkpoint that never resolves '
+        '— it gives up exactly once disposeFlushTimeout elapses', () {
+      // `fakeAsync`, not the plain `buildSync()`/`RecordingDelay` combo
+      // this file otherwise leans on for instant virtual time: dispose's
+      // own timeout is now a raw `Timer` (final review I5), not a call
+      // through the injected `delay`, so faking "10s passed" requires
+      // `fakeAsync`'s own timer virtualization instead.
+      fakeAsync((async) {
         final sync = buildSync();
-        await sync.replaceScene('s1', outgoingResumeSeconds: position);
+        sync.replaceScene('s1', outgoingResumeSeconds: position);
+        async.flushMicrotasks();
 
         sync.playingChanged(true);
         clock.advance(const Duration(seconds: 6));
         save.holdNext(); // never completed — a checkpoint that hangs forever
 
-        // The outer timeout is a safety net only: if disposeFlushTimeout's
-        // race were broken, this would hang instead of failing fast, so a
-        // generous real bound here just prevents that from wedging the
-        // whole suite. On the passing path this resolves almost instantly
-        // — the injected delay (RecordingDelay) settles the race, not a
-        // real wait.
-        await sync.dispose().timeout(const Duration(seconds: 5));
+        var disposeCompleted = false;
+        unawaited(sync.dispose().then((_) => disposeCompleted = true));
+        async.flushMicrotasks();
 
-        expect(delay.requested, contains(disposeFlushTimeout));
-      },
-    );
+        expect(
+          disposeCompleted,
+          isFalse,
+          reason:
+              'the hung checkpoint has not resolved and '
+              'disposeFlushTimeout has not elapsed yet',
+        );
+
+        async.elapse(disposeFlushTimeout);
+        expect(disposeCompleted, isTrue);
+      });
+    });
+
+    test('dispose cancels its own timeout Timer once the flush settles '
+        'first, instead of leaking a pending real Timer for the rest of '
+        'the ~10s budget on every ordinary teardown (final review I5)', () {
+      fakeAsync((async) {
+        // Real `DateTime.now`/`Future.delayed` defaults, like the
+        // sibling "fully-failing dispose flush" test below — the point
+        // is to exercise the actual `Timer` machinery dispose's own
+        // race creates in production, not a test double
+        // (`RecordingDelay`) that never creates one at all.
+        final sync = ActivitySync(
+          resumePositionSeconds: () => 0.0,
+          saveActivity:
+              ({
+                required id,
+                required resumeTime,
+                required playDuration,
+              }) async {},
+        );
+        sync.replaceScene('s1', outgoingResumeSeconds: 0);
+        async.flushMicrotasks();
+
+        var disposeCompleted = false;
+        unawaited(sync.dispose().then((_) => disposeCompleted = true));
+        async.flushMicrotasks();
+
+        expect(
+          disposeCompleted,
+          isTrue,
+          reason:
+              'the flush (an immediately-succeeding no-op here) '
+              'should settle almost instantly, long before '
+              'disposeFlushTimeout',
+        );
+        expect(
+          async.nonPeriodicTimerCount,
+          0,
+          reason:
+              'the losing side of the race — the disposeFlushTimeout '
+              'countdown — must be cancelled once the flush wins, not '
+              'left pending for the rest of the real ~10s budget (the '
+              'old `Future.any` never cancelled its loser)',
+        );
+      });
+    });
 
     test('a fully-failing dispose flush warns within the real '
         'disposeFlushTimeout budget (Item 2: disposeFlushTimeout must '

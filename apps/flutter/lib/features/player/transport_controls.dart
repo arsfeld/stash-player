@@ -13,7 +13,11 @@ import 'playback_state.dart';
 /// a plain value) plus callbacks — this widget never touches a
 /// `PlaybackController` or any Riverpod provider directly, matching the
 /// "widgets consume immutable typed state and forward intents only" rule.
-class TransportControls extends StatelessWidget {
+///
+/// Stateful only for the seek bar's local drag position (see
+/// [_TransportControlsState._dragValueSeconds]) — everything else is still
+/// driven straight from [playback].
+class TransportControls extends StatefulWidget {
   const TransportControls({
     required this.playback,
     required this.title,
@@ -23,7 +27,6 @@ class TransportControls extends StatelessWidget {
     required this.onSeek,
     required this.onVolumeChanged,
     required this.onToggleMute,
-    required this.onToggleFullscreen,
     required this.onToggleMetadata,
     super.key,
   });
@@ -36,18 +39,38 @@ class TransportControls extends StatelessWidget {
   final ValueChanged<Duration> onSeek;
   final ValueChanged<double> onVolumeChanged;
   final VoidCallback onToggleMute;
-  final VoidCallback onToggleFullscreen;
   final VoidCallback onToggleMetadata;
 
+  @override
+  State<TransportControls> createState() => _TransportControlsState();
+}
+
+class _TransportControlsState extends State<TransportControls> {
   static const _textStyle = TextStyle(color: Colors.white);
+
+  /// Seek-bar thumb position while a drag is in progress, in seconds.
+  /// `null` when the user isn't dragging, in which case the slider tracks
+  /// [PlaybackState.position] directly. Committing a `sceneSaveActivity`
+  /// mutation on every `Slider.onChanged` sample turned a single drag
+  /// gesture into dozens of GraphQL POSTs against the user's server (final
+  /// review I2) — tracking the drag locally and calling [onSeek] only from
+  /// `onChangeEnd` fires exactly one seek per gesture, and this local value
+  /// also stops the thumb from snapping back to the stale pre-seek
+  /// position between samples.
+  double? _dragValueSeconds;
 
   @override
   Widget build(BuildContext context) {
+    final playback = widget.playback;
     final durationSeconds = playback.duration.inMilliseconds / 1000;
-    final positionSeconds = playback.position.inMilliseconds / 1000;
+    final actualPositionSeconds = playback.position.inMilliseconds / 1000;
     final hasKnownDuration = playback.duration > Duration.zero;
     final sliderMax = hasKnownDuration ? durationSeconds : 1.0;
-    final sliderValue = positionSeconds.clamp(0.0, sliderMax);
+    final positionSeconds = (_dragValueSeconds ?? actualPositionSeconds).clamp(
+      0.0,
+      sliderMax,
+    );
+    final sliderValue = positionSeconds;
 
     return DecoratedBox(
       decoration: const BoxDecoration(
@@ -68,22 +91,24 @@ class TransportControls extends StatelessWidget {
                   message: 'Back to library',
                   child: IconButton(
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: onBack,
+                    onPressed: widget.onBack,
                   ),
                 ),
                 Expanded(
                   child: Text(
-                    title,
+                    widget.title,
                     style: _textStyle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 Tooltip(
-                  message: metadataOpen ? 'Hide details' : 'Show details',
+                  message: widget.metadataOpen
+                      ? 'Hide details'
+                      : 'Show details',
                   child: IconButton(
                     icon: const Icon(Icons.info_outline, color: Colors.white),
-                    onPressed: onToggleMetadata,
+                    onPressed: widget.onToggleMetadata,
                   ),
                 ),
               ],
@@ -113,9 +138,21 @@ class TransportControls extends StatelessWidget {
                         max: sliderMax,
                         label: formatDuration(positionSeconds),
                         onChanged: hasKnownDuration
-                            ? (value) => onSeek(
-                                Duration(milliseconds: (value * 1000).round()),
-                              )
+                            ? (value) => setState(() {
+                                _dragValueSeconds = value;
+                              })
+                            : null,
+                        onChangeEnd: hasKnownDuration
+                            ? (value) {
+                                widget.onSeek(
+                                  Duration(
+                                    milliseconds: (value * 1000).round(),
+                                  ),
+                                );
+                                setState(() {
+                                  _dragValueSeconds = null;
+                                });
+                              }
                             : null,
                       ),
                     ),
@@ -141,7 +178,7 @@ class TransportControls extends StatelessWidget {
                       playback.playing ? Icons.pause : Icons.play_arrow,
                       color: Colors.white,
                     ),
-                    onPressed: onTogglePlayPause,
+                    onPressed: widget.onTogglePlayPause,
                   ),
                 ),
                 Tooltip(
@@ -151,7 +188,7 @@ class TransportControls extends StatelessWidget {
                       playback.muted ? Icons.volume_off : Icons.volume_up,
                       color: Colors.white,
                     ),
-                    onPressed: onToggleMute,
+                    onPressed: widget.onToggleMute,
                   ),
                 ),
                 SizedBox(
@@ -167,24 +204,26 @@ class TransportControls extends StatelessWidget {
                       child: Slider(
                         key: const Key('scene-volume-slider'),
                         value: playback.volume.clamp(0.0, 1.0),
-                        onChanged: onVolumeChanged,
+                        onChanged: widget.onVolumeChanged,
                       ),
                     ),
                   ),
                 ),
                 const Spacer(),
+                // Fullscreen has no real platform implementation on any
+                // target yet (final review C4) — disabled rather than
+                // shipping a control that flips its icon and claims a
+                // window state the OS was never asked for. The `F`/Escape
+                // shortcuts stay wired in `PlayerActionShortcuts`: they
+                // route through `PlaybackController.setFullscreen`, whose
+                // `FullscreenRequester` now reports failure, so those
+                // bindings already no-op safely without special-casing
+                // them here too.
                 Tooltip(
-                  message: playback.fullscreen
-                      ? 'Exit fullscreen'
-                      : 'Fullscreen',
+                  message: 'Fullscreen (not yet implemented)',
                   child: IconButton(
-                    icon: Icon(
-                      playback.fullscreen
-                          ? Icons.fullscreen_exit
-                          : Icons.fullscreen,
-                      color: Colors.white,
-                    ),
-                    onPressed: onToggleFullscreen,
+                    icon: const Icon(Icons.fullscreen, color: Colors.white38),
+                    onPressed: null,
                   ),
                 ),
                 const SizedBox(width: 4),

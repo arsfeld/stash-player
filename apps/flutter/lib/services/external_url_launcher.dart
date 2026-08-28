@@ -37,11 +37,14 @@ class UrlLauncherExternalUrlLauncher implements ExternalUrlLauncher {
 /// stores it. **Never** pass an authenticated stream URL here.
 ///
 /// Deliberately rebuilds the [Uri] from just [baseUrl]'s
-/// scheme/userInfo/host/port and a freshly-built path — [baseUrl]'s own
-/// query string (and fragment) are never carried forward, so an API key
-/// that ever ended up embedded in a misconfigured server URL can't leak
-/// into the browser's address bar either (see the "never includes
-/// apikey" hazard in Task 11's brief). [sceneId] is percent-encoded via
+/// scheme/host/port and a freshly-built path — [baseUrl]'s own query
+/// string, fragment, **and userinfo** are never carried forward, so an
+/// API key that ever ended up embedded in a misconfigured server URL
+/// can't leak into the browser's address bar either (see the "never
+/// includes apikey" hazard in Task 11's brief), and HTTP basic-auth
+/// credentials (`https://user:pass@host/`, e.g. behind a reverse proxy)
+/// never reach the system browser's address bar, history, or process
+/// list either (final review I4). [sceneId] is percent-encoded via
 /// [Uri]'s own `pathSegments` constructor parameter — never string
 /// concatenation with `Uri.encodeComponent`, which would double-encode an
 /// id that already contains a percent-escaped character.
@@ -54,7 +57,6 @@ Uri resolveStashSceneUrl(String baseUrl, String sceneId) {
   ];
   return Uri(
     scheme: base.scheme.isEmpty ? 'https' : base.scheme,
-    userInfo: base.userInfo.isEmpty ? null : base.userInfo,
     host: base.host,
     port: base.hasPort ? base.port : null,
     pathSegments: segments,

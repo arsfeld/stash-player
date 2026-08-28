@@ -54,7 +54,13 @@ void main() {
       find.text('Enter a valid http or https server URL.'),
       findsOneWidget,
     );
-    expect(find.text('Could not reach Stash.'), findsNothing);
+    // `find.text` needs an exact match — the real copy is 'Could not
+    // reach Stash. Check the server URL and network connection.', so a
+    // truncated `find.text('Could not reach Stash.')` could never match
+    // under any implementation and would pass even if URL validation
+    // wrongly rendered the network-error copy (final review §3b).
+    // `textContaining` actually rules that out.
+    expect(find.textContaining('Could not reach Stash'), findsNothing);
   });
 
   testWidgets('shows server errors and finishes only after a success', (

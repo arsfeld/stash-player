@@ -6,6 +6,7 @@ import 'package:stash_player_flutter/app/app_router.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
 
 import '../support/fake_playback_engine.dart';
@@ -138,19 +139,19 @@ void main() {
     // comment here claimed `pumpAndSettle`'s own ~10s default budget was
     // the problem. That's wrong; `pumpAndSettle`'s default *timeout* is
     // 10 *minutes* of fake-clock time, not ~10s, and it only stops
-    // pumping once `hasScheduledFrame` is false. The real cause is
-    // `activity_sync.dart`'s `dispose()`: `Future.any([flushSettled.future,
-    // _delay(disposeFlushTimeout)])` resolves as soon as the (here,
-    // fast-succeeding fake) flush settles, but `Future.any` never cancels
-    // the *losing* branch — so `_delay(disposeFlushTimeout)`'s own ~10s
-    // `Future.delayed` `Timer` is left pending regardless, which trips
-    // `flutter_test`'s pending-timer invariant. That leak is a real
-    // Task 10 wart (already logged for the whole-branch review, not
-    // fixed here) rather than anything wrong with this test. An explicit
-    // pump past the leaked timer's ~10s deadline drains it deterministically
-    // before the test ends.
+    // pumping once `hasScheduledFrame` is false.
+    //
+    // `ActivitySync.dispose` now cancels its own timeout `Timer` the
+    // moment its flush settles (final review I5), so the (fast-
+    // succeeding, here) flush this test's teardown triggers no longer
+    // leaves a stray ~10s `Timer` pending the way the old
+    // `Future.any([flushSettled.future, _delay(disposeFlushTimeout)])`
+    // did. This explicit pump past `disposeFlushTimeout` is kept anyway,
+    // as a bound tied to the named production constant rather than a
+    // bare magic number, so a future regression that reintroduces a
+    // leaked timer here fails obviously instead of silently.
     await tester.pump();
-    await tester.pump(const Duration(seconds: 11));
+    await tester.pump(disposeFlushTimeout + const Duration(seconds: 1));
 
     expect(find.text('Library'), findsOneWidget);
     expect(find.text('Scene 42'), findsNothing);

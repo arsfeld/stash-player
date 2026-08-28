@@ -311,6 +311,7 @@ void main() {
     test(
       'does not start a second request while one is already in flight',
       () async {
+        api.allowManualCompletion = true;
         final first = controller.loadInitial();
         final second = controller.loadInitial();
 
@@ -328,6 +329,7 @@ void main() {
 
     test('ensureViewportFilled does not start a second request while its own '
         'page fetch is already in flight', () async {
+      api.allowManualCompletion = true;
       api.pages.add(ScenePage(total: 120, scenes: scenes(48)));
       await controller.loadInitial();
 
@@ -444,6 +446,7 @@ void main() {
     test(
       'a response landing after dispose is discarded rather than throwing',
       () async {
+        api.allowManualCompletion = true;
         final future = controller.loadInitial(); // page 1 left pending
         controller.dispose();
 
@@ -463,6 +466,7 @@ void main() {
     test(
       'an error landing after dispose is discarded rather than throwing',
       () async {
+        api.allowManualCompletion = true;
         final future = controller.loadInitial();
         controller.dispose();
 
@@ -471,12 +475,28 @@ void main() {
         await future;
       },
     );
+
+    test('a filter-changing call reaching _resetAndFetch after dispose does '
+        'not throw (final review §3b: library_controller.dart:188 — the '
+        "widget-level guard in LibraryToolbar's own debounce timer already "
+        "intercepts this in practice, so it needs its own direct test here "
+        'rather than relying on a widget test to reach it)', () async {
+      controller.dispose();
+
+      // `setQuery` (like every other `set*` method) routes through
+      // `_resetAndFetch`, which calls `notifyListeners()` —
+      // `ChangeNotifier.notifyListeners` asserts (and throws) when
+      // called on an already-disposed notifier, so this must complete
+      // without throwing.
+      await controller.setQuery('anything');
+    });
   });
 
   group('races', () {
     test(
       'a stale response from a superseded generation is discarded',
       () async {
+        api.allowManualCompletion = true;
         final firstLoad = controller.loadInitial();
         expect(controller.state.generation, 0);
 
@@ -509,6 +529,7 @@ void main() {
     test(
       'a stale error from a superseded generation is discarded too',
       () async {
+        api.allowManualCompletion = true;
         final firstLoad = controller.loadInitial();
         final secondLoad = controller.setQuery('cats');
 

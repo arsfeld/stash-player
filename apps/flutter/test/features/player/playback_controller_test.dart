@@ -49,18 +49,31 @@ PlaybackController _buildController({
   Future<void> Function(Duration)? activityDelay,
   void Function(String message)? onActivityWarning,
   Future<bool> Function(bool fullscreen)? setFullscreenPlatform,
-}) => PlaybackController(
-  engine: engine,
-  resolveConnection: () async => config,
-  setFullscreenPlatform: setFullscreenPlatform ?? (value) async => true,
-  activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
-    resumePositionSeconds: resumePositionSeconds,
-    saveActivity: saveActivity,
-    clock: activityClock,
-    delay: activityDelay ?? (_) async {},
-    onWarning: onActivityWarning,
-  ),
-);
+}) {
+  final controller = PlaybackController(
+    engine: engine,
+    resolveConnection: () async => config,
+    setFullscreenPlatform: setFullscreenPlatform ?? (value) async => true,
+    activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
+      resumePositionSeconds: resumePositionSeconds,
+      saveActivity: saveActivity,
+      clock: activityClock,
+      delay: activityDelay ?? (_) async {},
+      onWarning: onActivityWarning,
+    ),
+  );
+  // Every controller built through this helper is disposed at the end of
+  // its own test, regardless of whether the test body disposes it itself
+  // (`PlaybackController.dispose` is idempotent). Undisposed controllers
+  // that reach active playback start a genuine `Timer.periodic` against
+  // the real 1s production `tickInterval` and a real `DateTime.now`
+  // clock (no `activityClock`/`tickInterval` override here) — left
+  // running, that timer keeps ticking into later, unrelated tests for
+  // the rest of the suite's real wall-clock runtime, a live flake vector
+  // rather than a benign leak (final review §3b).
+  addTearDown(controller.dispose);
+  return controller;
+}
 
 /// Records every `onData` callback ever registered via [listen], in
 /// order, instead of delivering through a real broadcast controller —
@@ -206,6 +219,8 @@ class _FaultyEngine implements PlaybackEngine {
     this.volumeThrows = false,
     this.mutedThrows = false,
     this.pauseThrows = false,
+    this.openThrows = false,
+    this.errorMessage,
   });
 
   final FakePlaybackEngine inner;
@@ -213,6 +228,13 @@ class _FaultyEngine implements PlaybackEngine {
   final bool volumeThrows;
   final bool mutedThrows;
   final bool pauseThrows;
+  final bool openThrows;
+
+  /// Overrides every throw site's default generic message below — lets a
+  /// test embed a literal secret (e.g. a real API key) into the thrown
+  /// error to verify it gets redacted, rather than only ever exercising
+  /// the pattern-based `ApiKey: ...` regex (final review I6).
+  final String? errorMessage;
 
   @override
   Stream<bool> get playing => inner.playing;
@@ -233,33 +255,39 @@ class _FaultyEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) =>
-      inner.open(uri, play: play);
+  Future<void> open(Uri uri, {bool play = false}) async {
+    if (openThrows) throw StateError(errorMessage ?? 'engine open() failed');
+    return inner.open(uri, play: play);
+  }
 
   @override
   Future<void> play() => inner.play();
 
   @override
   Future<void> pause() async {
-    if (pauseThrows) throw StateError('engine pause() failed');
+    if (pauseThrows) throw StateError(errorMessage ?? 'engine pause() failed');
     return inner.pause();
   }
 
   @override
   Future<void> seek(Duration position) async {
-    if (seekThrows) throw StateError('engine seek() failed');
+    if (seekThrows) throw StateError(errorMessage ?? 'engine seek() failed');
     return inner.seek(position);
   }
 
   @override
   Future<void> setVolume(double zeroToOne) async {
-    if (volumeThrows) throw StateError('engine setVolume() failed');
+    if (volumeThrows) {
+      throw StateError(errorMessage ?? 'engine setVolume() failed');
+    }
     return inner.setVolume(zeroToOne);
   }
 
   @override
   Future<void> setMuted(bool muted) async {
-    if (mutedThrows) throw StateError('engine setMuted() failed');
+    if (mutedThrows) {
+      throw StateError(errorMessage ?? 'engine setMuted() failed');
+    }
     return inner.setMuted(muted);
   }
 
@@ -471,6 +499,7 @@ void main() {
           ),
           setFullscreenPlatform: (value) async => true,
         );
+        addTearDown(controller.dispose);
 
         await controller.loadScene(_sceneWith());
 
@@ -478,6 +507,22 @@ void main() {
         expect(controller.state.failure, isNot(contains('super-secret')));
       },
     );
+
+    test('redacts the real API key from an error thrown after the connection '
+        'already resolved (final review I6 — `config` must not fall out of '
+        'scope by the time the catch runs)', () async {
+      final engine = _FaultyEngine(
+        FakePlaybackEngine(),
+        openThrows: true,
+        errorMessage: 'engine open() failed: key=${_config.apiKey}',
+      );
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith());
+
+      expect(controller.state.phase, PlaybackPhase.failed);
+      expect(controller.state.failure, isNot(contains(_config.apiKey)));
+    });
   });
 
   group('seekAbsolute', () {
@@ -737,6 +782,21 @@ void main() {
         const Duration(seconds: 2000),
       );
     });
+
+    test('seekToEnd is a no-op while duration is unknown, rather than seeking '
+        'to zero and then wiping the resume point (final review I7)', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      // No `engine.emitDuration(...)` — `state.duration` stays
+      // `Duration.zero`, the documented "unknown" sentinel.
+      await controller.loadScene(_sceneWith());
+      engine.commands.clear();
+
+      await controller.handleAction(PlayerAction.seekToEnd);
+
+      expect(engine.commands, isEmpty);
+      expect(controller.state.position, Duration.zero);
+    });
   });
 
   group('playPause', () {
@@ -859,6 +919,30 @@ void main() {
       expect(controller.state.controlFailureSequence, 1);
       expect(controller.state.volume, isNot(0.5));
     });
+
+    test(
+      'redacts the real API key out of a controlFailure message too '
+      '(final review I6 — `_runEngineCommand` has no `config` of its own '
+      'in scope, so it must read the cached key instead of an empty one)',
+      () async {
+        final inner = FakePlaybackEngine();
+        final engine = _FaultyEngine(
+          inner,
+          volumeThrows: true,
+          errorMessage: 'setVolume failed: key=${_config.apiKey}',
+        );
+        final controller = _buildController(engine: engine);
+        await controller.loadScene(_sceneWith());
+
+        await controller.setVolume(0.5);
+
+        expect(controller.state.controlFailure, isNotNull);
+        expect(
+          controller.state.controlFailure,
+          isNot(contains(_config.apiKey)),
+        );
+      },
+    );
   });
 
   group('mute', () {
@@ -934,14 +1018,25 @@ void main() {
       expect(controller.state.fullscreen, isFalse);
     });
 
-    test('exitFullscreen action does nothing when not fullscreen', () async {
+    test('exitFullscreen action does nothing when not fullscreen — and never '
+        'even calls the FullscreenRequester (final review §3b: '
+        '`fullscreen isFalse` alone was already true before the action ran '
+        'and could never fail)', () async {
       final engine = FakePlaybackEngine();
-      final controller = _buildController(engine: engine);
+      var requesterCalls = 0;
+      final controller = _buildController(
+        engine: engine,
+        setFullscreenPlatform: (value) async {
+          requesterCalls++;
+          return true;
+        },
+      );
       await controller.loadScene(_sceneWith());
 
       await controller.handleAction(PlayerAction.exitFullscreen);
 
       expect(controller.state.fullscreen, isFalse);
+      expect(requesterCalls, 0);
     });
 
     test('exitFullscreen action exits when fullscreen', () async {
@@ -1046,6 +1141,7 @@ void main() {
           delay: (_) async {},
         ),
       );
+      addTearDown(controller.dispose);
 
       // Scene A loads fully, establishing a real (zero, but established)
       // position.
@@ -1106,6 +1202,7 @@ void main() {
           },
           setFullscreenPlatform: (value) async => true,
         );
+        addTearDown(controller.dispose);
 
         // Scene A must actually reach `resolveConnection` (and so be
         // parked on its own completer) *before* scene B starts — loadScene
@@ -1307,6 +1404,7 @@ void main() {
           delay: (_) async {},
         ),
       );
+      addTearDown(controller.dispose);
 
       // Scene b starts loading but never reaches its own resume-seek
       // decision point — parked awaiting resolveConnection, well

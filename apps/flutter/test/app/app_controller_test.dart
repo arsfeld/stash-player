@@ -196,4 +196,32 @@ void main() {
       const AppDestination.library(),
     );
   });
+
+  test('replaceConnection leaves the destination, generation, and notice '
+      'untouched when testAndSave fails validation (final review §3b: '
+      'app_controller.dart:101\'s early return had no test)', () async {
+    final (:container, :store) = buildContainer();
+    final notifier = container.read(appControllerProvider.notifier);
+    await notifier.bootstrap();
+    expect(
+      container.read(appControllerProvider),
+      const AppDestination.connection(),
+    );
+    final generationBefore = container.read(connectionGenerationProvider);
+
+    // An invalid server URL fails `ConnectionController.testAndSave`'s
+    // own client-side validation before any network call, landing it
+    // in `ConnectionPhase.failed` rather than `ready`.
+    await notifier.replaceConnection(
+      const ConnectionConfig(serverUrl: 'not a url'),
+    );
+
+    expect(
+      container.read(appControllerProvider),
+      const AppDestination.connection(),
+    );
+    expect(container.read(connectionGenerationProvider), generationBefore);
+    expect(store.saveCalls, isEmpty);
+    expect(container.read(globalNoticeProvider), isNull);
+  });
 }

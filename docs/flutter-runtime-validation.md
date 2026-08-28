@@ -113,8 +113,8 @@ until every row on both platforms is genuinely executed.
 | L10 | Home / End (seek to start / end) | — | — | — | — | UNRUN | Same as L1. |
 | L11 | Volume ±5% (9 / 0 keys) | — | — | — | — | UNRUN | Same as L1. |
 | L12 | Mute (M) | — | — | — | — | UNRUN | Same as L1. |
-| L13 | Fullscreen toggle (F) | — | — | — | — | UNRUN | Same as L1. |
-| L14 | Escape exits fullscreen (no-op outside fullscreen) | — | — | — | — | UNRUN | Same as L1. |
+| L13 | Fullscreen toggle (F) | — | — | — | — | NOT IMPLEMENTED | No platform fullscreen hook exists on Linux (final review C4). `PlaybackController`'s `FullscreenRequester` always reports failure, the on-screen control is disabled with a "not yet implemented" tooltip, and `F` is therefore a no-op. Not a runtime-validation gap — there is nothing here to validate against real hardware until a real implementation ships. |
+| L14 | Escape exits fullscreen (no-op outside fullscreen) | — | — | — | — | NOT IMPLEMENTED | Same root cause as L13: fullscreen can never be entered, so Escape is always the no-op branch. Re-mark UNRUN once a real fullscreen implementation lands. |
 | L15 | Mid-scene resume: reopening a partially-watched scene resumes near the last position | — | — | — | — | UNRUN | Same as L1. |
 | L16 | Completed-scene restart: reopening a scene played to the end starts over from zero | — | — | — | — | UNRUN | Same as L1. |
 | L17 | Periodic resume/play-duration writeback fires after ~10 active seconds | — | — | — | — | UNRUN | Same as L1; verify server-side via Stash's own scene activity, not the mock's `/__test__/activity` (mock is video-less and out of scope for this checklist). |
@@ -141,8 +141,8 @@ until every row on both platforms is genuinely executed.
 | M10 | Home / End (seek to start / end) | — | — | — | — | UNRUN | Same as M1. |
 | M11 | Volume ±5% (9 / 0 keys) | — | — | — | — | UNRUN | Same as M1. |
 | M12 | Mute (M) | — | — | — | — | UNRUN | Same as M1. |
-| M13 | Fullscreen toggle (F) | — | — | — | — | UNRUN | Same as M1. |
-| M14 | Escape exits fullscreen (no-op outside fullscreen) | — | — | — | — | UNRUN | Same as M1. |
+| M13 | Fullscreen toggle (F) | — | — | — | — | NOT IMPLEMENTED | No platform fullscreen hook exists on macOS either (final review C4) — see L13. `NSWindow.toggleFullScreen(_:)` (as the SwiftUI app already uses) is the follow-up, not part of this fix. |
+| M14 | Escape exits fullscreen (no-op outside fullscreen) | — | — | — | — | NOT IMPLEMENTED | Same root cause as M13 — see L14. |
 | M15 | Mid-scene resume: reopening a partially-watched scene resumes near the last position | — | — | — | — | UNRUN | Same as M1. |
 | M16 | Completed-scene restart: reopening a scene played to the end starts over from zero | — | — | — | — | UNRUN | Same as M1. |
 | M17 | Periodic resume/play-duration writeback fires after ~10 active seconds | — | — | — | — | UNRUN | Same as M1. |

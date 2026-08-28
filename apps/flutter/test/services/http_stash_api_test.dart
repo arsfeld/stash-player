@@ -32,11 +32,32 @@ void main() {
     );
 
     expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+    // Deliberately *not* `expect(transport.lastQuery, findScenesDocument)`
+    // — that would be tautological, since both sides read the exact same
+    // mutable production constant and would still match each other even
+    // if a field were dropped from it. These instead pin literal
+    // substrings of the actual wire bytes, independent of that constant,
+    // so a selection set that silently lost `rating100` or `paths {
+    // stream }` — completely invisible to the hand-written fixtures,
+    // which would still supply the field regardless of what was actually
+    // requested — now fails here (final review §3b).
+    expect(transport.lastQuery, contains('rating100'));
+    expect(transport.lastQuery, contains('stream'));
     expect(transport.lastVariables['filter'], containsPair('sort', 'rating'));
     expect(transport.lastVariables['filter'], containsPair('direction', 'ASC'));
+    // A page<->perPage swap (`http_stash_api.dart:167-168`) would pass
+    // every other assertion in this file unnoticed (final review §3b) —
+    // pin both independently, against the distinct values supplied above.
+    expect(transport.lastVariables['filter'], containsPair('page', 2));
+    expect(transport.lastVariables['filter'], containsPair('per_page', 48));
+    expect(transport.lastVariables['filter'], containsPair('q', 'alpha'));
     expect(
       transport.lastVariables['scene_filter'],
       containsPair('rating100', {'value': 59, 'modifier': 'GREATER_THAN'}),
+    );
+    expect(
+      transport.lastVariables['scene_filter'],
+      containsPair('organized', true),
     );
     expect(
       transport.lastVariables['scene_filter'],
@@ -207,8 +228,26 @@ void main() {
       client: RecordingClient('failure', statusCode: 500),
     );
 
-    await expectLater(unauthorized.version(), throwsA(isA<HttpFailure>()));
-    await expectLater(serverError.version(), throwsA(isA<HttpFailure>()));
+    await expectLater(
+      unauthorized.version(),
+      throwsA(
+        isA<HttpFailure>().having(
+          (failure) => failure.statusCode,
+          'statusCode',
+          401,
+        ),
+      ),
+    );
+    await expectLater(
+      serverError.version(),
+      throwsA(
+        isA<HttpFailure>().having(
+          (failure) => failure.statusCode,
+          'statusCode',
+          500,
+        ),
+      ),
+    );
   });
 
   test('findScene returns null for a missing scene', () async {
@@ -222,14 +261,19 @@ void main() {
   });
 
   test('findScene decodes a typed scene', () async {
+    final transport = RecordingClient(fixture('find_scene.json'));
     final api = HttpStashApi(
       baseUri: Uri.parse('https://stash.test'),
       apiKey: '',
-      client: RecordingClient(fixture('find_scene.json')),
+      client: transport,
     );
 
     final scene = await api.findScene('1001');
 
+    // See the `findScenes` test's own comment on why this isn't a
+    // comparison against the `findSceneDocument` constant itself.
+    expect(transport.lastQuery, contains('rating100'));
+    expect(transport.lastQuery, contains('stream'));
     expect(scene?.id, '1001');
     expect(scene?.studio?.name, 'Studio Foo');
   });
@@ -248,6 +292,9 @@ void main() {
       playDuration: 4.25,
     );
 
+    // Same rationale as the `findScenes`/`findScene` tests above.
+    expect(transport.lastQuery, contains('resume_time'));
+    expect(transport.lastQuery, contains('playDuration'));
     expect(transport.lastVariables, {
       'id': '1001',
       'resume_time': 9.5,
@@ -303,11 +350,19 @@ class RecordingClient extends http.BaseClient {
   late http.BaseRequest lastRequest;
   late Map<String, Object?> lastVariables;
 
+  /// The `query` string of the last GraphQL request sent — a dropped
+  /// field (e.g. `paths { stream }` or `rating100`) from a selection set
+  /// is otherwise completely invisible to this test file, since the
+  /// hand-written fixtures would still supply the field regardless of
+  /// what was actually requested (final review §3b).
+  late String lastQuery;
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     lastRequest = request;
     final decoded = jsonDecode(await request.finalize().bytesToString());
     final envelope = Map<String, Object?>.from(decoded as Map);
+    lastQuery = envelope['query'] as String;
     lastVariables = Map<String, Object?>.from(envelope['variables'] as Map);
     return http.StreamedResponse(
       Stream<List<int>>.value(utf8.encode(responseBody)),

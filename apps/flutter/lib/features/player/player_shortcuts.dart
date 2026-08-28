@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -16,12 +14,13 @@ class PlayerIntent extends Intent {
   final PlayerAction action;
 }
 
-/// The exact, and only, keyboard mapping this app supports. Both
-/// `dispatchPlayerKeyEvent` below and any `Shortcuts` table Task 11
-/// builds for the scene screen must derive from this single map so the
-/// two can never drift apart. `LogicalKeyboardKey.space` and `.keyK`
-/// both resolve to [PlayerAction.togglePlayPause]; every other bound key
-/// maps to exactly one action.
+/// The exact, and only, keyboard mapping this app supports. The scene
+/// screen's `Shortcuts` table (`PlayerActionShortcuts` in
+/// `scene_screen.dart`) derives from this single map, so there is one
+/// source of truth for which key means which action.
+/// `LogicalKeyboardKey.space` and `.keyK` both resolve to
+/// [PlayerAction.togglePlayPause]; every other bound key maps to exactly
+/// one action.
 // Not `const`: `LogicalKeyboardKey` overrides `==`/`hashCode` (its
 // equality isn't the default identity-based one), and Dart only allows
 // primitive-equality keys/elements in a compile-time const map or set.
@@ -69,10 +68,9 @@ final Map<LogicalKeyboardKey, PlayerAction> playerKeyBindings = {
 /// `SeekCommand` on the underlying engine instead of moving the caret.
 /// `space` is included too, even though `togglePlayPause`'s *action* was
 /// already incidentally gated via `keyK`'s membership in this set
-/// (`PlayerActionShortcuts` gates by action, not literal key) — this set
-/// is also `dispatchPlayerKeyEvent`'s own, independent, *key*-based gate,
-/// which gets no such protection for `space` unless the key itself is
-/// listed here.
+/// (`PlayerActionShortcuts` gates by action, not literal key) — `space`
+/// itself has no bound alias to fall back on, so it needs its own entry
+/// here.
 ///
 /// J/K/L/M/F remain listed even though the same empirical test showed
 /// `sendKeyEvent` never inserts a character into a focused `TextField` in
@@ -97,80 +95,3 @@ final Set<LogicalKeyboardKey> playerTextEntryConflictKeys = {
   LogicalKeyboardKey.end,
   LogicalKeyboardKey.space,
 };
-
-/// Ctrl/Alt/Meta — held alongside a bound key, these mean "this
-/// keystroke belongs to a different (OS- or app-level) shortcut, not
-/// ours," so the match is suppressed entirely rather than fired anyway.
-///
-/// Shift is deliberately excluded. None of [playerKeyBindings]'s
-/// triggers need it held, and — unlike Ctrl/Alt/Meta — an incidentally
-/// held Shift isn't a reliable "this keystroke means something else"
-/// signal for a single letter/digit key in a media player: it's the kind
-/// of modifier a user's finger can land on by accident while reaching
-/// for K or F. Treating it as a blocking modifier would silently fail
-/// the shortcut in that case, which is worse than just firing it anyway.
-final Set<LogicalKeyboardKey> _modifierKeys = {
-  LogicalKeyboardKey.control,
-  LogicalKeyboardKey.controlLeft,
-  LogicalKeyboardKey.controlRight,
-  LogicalKeyboardKey.alt,
-  LogicalKeyboardKey.altLeft,
-  LogicalKeyboardKey.altRight,
-  LogicalKeyboardKey.meta,
-  LogicalKeyboardKey.metaLeft,
-  LogicalKeyboardKey.metaRight,
-};
-
-/// Resolves [event] against [playerKeyBindings] and, if eligible, invokes
-/// `controller.handleAction` — returning whether the key was consumed.
-///
-/// Returns [KeyEventResult.ignored] (and never touches [controller])
-/// when: [event] isn't a key-down; a Ctrl/Alt/Meta modifier is currently
-/// held; the key isn't bound in [playerKeyBindings]; the key is one of
-/// [playerTextEntryConflictKeys] while [isTextEditingTarget] is `true`;
-/// or the resolved action is [PlayerAction.exitFullscreen] while
-/// `controller.state.fullscreen` is `false` — which is what makes Escape
-/// a no-op, rather than a swallowed key, outside fullscreen.
-///
-/// [isModifierPressed] defaults to reading the ambient
-/// [HardwareKeyboard] singleton (what real key-event dispatch should
-/// use); tests that construct [KeyEvent]s directly without a live
-/// binding pass an explicit override instead.
-KeyEventResult dispatchPlayerKeyEvent(
-  KeyEvent event, {
-  required PlaybackController controller,
-  bool isTextEditingTarget = false,
-  bool Function()? isModifierPressed,
-}) {
-  if (event is! KeyDownEvent) return KeyEventResult.ignored;
-
-  final modified =
-      isModifierPressed?.call() ??
-      HardwareKeyboard.instance.logicalKeysPressed.any(_modifierKeys.contains);
-  if (modified) return KeyEventResult.ignored;
-
-  final action = playerKeyBindings[event.logicalKey];
-  if (action == null) return KeyEventResult.ignored;
-
-  if (isTextEditingTarget &&
-      playerTextEntryConflictKeys.contains(event.logicalKey)) {
-    return KeyEventResult.ignored;
-  }
-
-  if (action == PlayerAction.exitFullscreen && !controller.state.fullscreen) {
-    return KeyEventResult.ignored;
-  }
-
-  // Fired unawaited — `onKeyEvent` must return synchronously — so
-  // nothing else is ever positioned to catch a failure here.
-  // `PlaybackController`'s own command methods already swallow engine
-  // failures into `state.failure` rather than throwing (see its
-  // `_runEngineCommand`), but this `catchError` is the last line of
-  // defense against a future regression: an uncaught error at this
-  // boundary means a red screen in debug, or a logged crash in release,
-  // for something as ordinary as pressing a key.
-  unawaited(
-    controller.handleAction(action).catchError((Object _, StackTrace _) {}),
-  );
-  return KeyEventResult.handled;
-}

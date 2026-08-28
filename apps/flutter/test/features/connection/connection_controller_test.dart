@@ -181,4 +181,48 @@ void main() {
     expect(controller.state.phase, ConnectionPhase.failed);
     expect(store.saveCalls, isEmpty);
   });
+
+  test(
+    'load() falls back to a generic failure message when the store throws '
+    'a bare (non-Failure) error (final review §3b: previously untested)',
+    () async {
+      final controller = ConnectionController(
+        store: FakeConnectionStore(
+          loadFuture: Future<ConnectionConfig>.error(
+            Exception('disk unreadable'),
+          ),
+        ),
+        environment: const {},
+        apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+      );
+
+      await controller.load();
+
+      expect(controller.state.phase, ConnectionPhase.failed);
+      expect(
+        controller.state.failure,
+        'Could not load saved connection settings.',
+      );
+    },
+  );
+
+  test('testAndSave falls back to a generic failure message when the API '
+      'factory throws a bare (non-Failure) error (final review §3b: '
+      'previously untested)', () async {
+    final store = FakeConnectionStore();
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) =>
+          FakeStashApi(versionFuture: Future<String>.error(Exception('boom'))),
+    );
+
+    await controller.testAndSave(
+      const ConnectionConfig(serverUrl: 'https://stash.test', apiKey: 'key'),
+    );
+
+    expect(controller.state.phase, ConnectionPhase.failed);
+    expect(controller.state.failure, 'Could not save the connection settings.');
+    expect(store.saveCalls, isEmpty);
+  });
 }

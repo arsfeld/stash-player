@@ -59,9 +59,14 @@ const _maxSingleActiveSpan = Duration(seconds: 30);
 /// checkpoint endpoint (connection refused, DNS failure) typically fails
 /// each attempt in well under a second, so this comfortably covers all
 /// four attempts' own round-trip time without materially loosening the
-/// dispose bound. It does not, and cannot, cover an endpoint that hangs
-/// instead of failing fast — `stash-api`'s HTTP client has no per-request
-/// `.timeout()` today, which is a separate, already-tracked gap.
+/// dispose bound. It does not cover an attempt still in flight when this
+/// margin runs out: `HttpStashApi._post` does enforce its own per-request
+/// `.timeout()`, but that timeout is deliberately longer than this whole
+/// margin, so a slow (not yet failed) attempt can still be outstanding when
+/// [ActivitySync.dispose] gives up. That is fine — `dispose` bounds itself
+/// independently via [disposeFlushTimeout] no matter what the in-flight
+/// request is doing; this margin only needs to cover a *fast-failing*
+/// endpoint's four round trips.
 const _disposeFlushMargin = Duration(seconds: 3);
 
 /// Upper bound on how long [ActivitySync.dispose] will wait for its final
@@ -168,9 +173,18 @@ final Duration disposeFlushTimeout =
 /// also clamped at [Duration.zero] regardless.
 ///
 /// The periodic timer itself only runs while playback is active: it
-/// starts on a transition to active and is cancelled on every transition
-/// to inactive (pause, buffering, [dispose]) — so a paused scene can never
-/// keep retrying (and re-warning) in the background.
+/// starts on a transition to active and is cancelled on a transition to
+/// inactive that goes through [_applyActiveTransition] — pause,
+/// buffering, or [dispose] — so a paused scene can never keep retrying
+/// (and re-warning) in the background. [replaceScene] is the one
+/// exception: it sets `_playing = false` directly rather than routing
+/// through [_applyActiveTransition], so a timer already running when a
+/// scene swap happens is *not* cancelled there. This is harmless at
+/// runtime — [tick] is a no-op once [replaceScene] has also zeroed
+/// [_playStartedAt] and [queuedActive], and the same timer simply keeps
+/// serving the new scene once it starts playing — but it means the timer
+/// is not, in fact, cancelled on *every* transition to inactive as an
+/// earlier version of this doc claimed.
 ///
 /// [dispose] cancels the periodic timer first (so it can never fire again,
 /// not even mid-teardown) and then performs one last, time-bounded
@@ -232,8 +246,6 @@ class ActivitySync {
   /// successful [flush]. Exposed read-only as [queuedActive].
   Duration _queuedActive = Duration.zero;
 
-  DateTime? _lastSuccessfulCheckpointAt;
-
   /// Bumped by every [replaceScene] call. A flush's snapshot is tagged
   /// with the epoch in effect when it was taken; if the epoch has moved on
   /// by the time that flush (possibly a detached, still-retrying one)
@@ -274,12 +286,6 @@ class ActivitySync {
   /// inactive). Exposed for tests; production code has no reason to read
   /// it.
   Duration get queuedActive => _queuedActive;
-
-  /// When the last checkpoint actually succeeded, per the injected clock —
-  /// `null` until the first one does. Exposed for tests/diagnostics;
-  /// [flush]'s own retry/warning logic is driven entirely by [queuedActive]
-  /// and doesn't consult this.
-  DateTime? get lastSuccessfulCheckpointAt => _lastSuccessfulCheckpointAt;
 
   bool get _active => _playing && !_buffering;
 
@@ -412,12 +418,10 @@ class ActivitySync {
     Completer<void>? firstAttemptSignal,
   }) {
     _flushPending = true;
-    final epochAtEnqueue = _sceneEpoch;
     final next = _flushTail.then(
       (_) => _doFlush(
         resumeTimeOverride: resumeTimeOverride,
         requireKnownResumeTime: requireKnownResumeTime,
-        epochAtEnqueue: epochAtEnqueue,
         firstAttemptSignal: firstAttemptSignal,
       ),
     );
@@ -428,7 +432,6 @@ class ActivitySync {
   Future<void> _doFlush({
     double? resumeTimeOverride,
     bool requireKnownResumeTime = false,
-    required int epochAtEnqueue,
     Completer<void>? firstAttemptSignal,
   }) async {
     try {
@@ -509,7 +512,6 @@ class ActivitySync {
           // different scene and subtracting this snapshot from it would
           // drive it negative, eventually reporting a negative
           // `playDuration` for whatever scene is current by then (N1).
-          _lastSuccessfulCheckpointAt = _clock();
           _warnedSinceLastSuccess = false;
           _completeFirstAttempt(firstAttemptSignal);
           return;
@@ -626,12 +628,28 @@ class ActivitySync {
         if (!flushSettled.isCompleted) flushSettled.complete();
       }),
     );
+
+    // Deliberately a raw `Timer` here, not `_delay(disposeFlushTimeout)`:
+    // `Future.any` never cancels its losing branch, so racing against
+    // whatever `_delay` returns (a `Future` with no cancellation handle
+    // of its own) left a real ~10s `Timer` pending for the rest of the
+    // process's life on the overwhelmingly common path — the flush
+    // settles well inside the budget — on *every* scene teardown (final
+    // review I5). A `Timer` object gives the winning side something to
+    // cancel explicitly. `_delay` itself is untouched — it's still used
+    // for the retry backoff inside `_doFlush`.
+    final timedOut = Completer<void>();
+    final timeoutTimer = Timer(disposeFlushTimeout, () {
+      if (!timedOut.isCompleted) timedOut.complete();
+    });
     try {
-      await Future.any([flushSettled.future, _delay(disposeFlushTimeout)]);
+      await Future.any([flushSettled.future, timedOut.future]);
     } catch (_) {
       // Neither branch of the race above is expected to throw, but this
       // is belt-and-braces so a bug there can never strand this dispose
       // call.
+    } finally {
+      timeoutTimer.cancel();
     }
     if (!flushSettled.isCompleted) {
       // The timeout won: the flush chain (this one, or an earlier

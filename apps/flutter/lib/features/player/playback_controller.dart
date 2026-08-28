@@ -135,6 +135,17 @@ class PlaybackController extends ChangeNotifier {
   final FullscreenRequester _setFullscreenPlatform;
   late final ActivitySync _activitySync;
 
+  /// The API key of the most recently resolved [ConnectionConfig], kept
+  /// so [_runEngineCommand]'s `catch` — which has no connection in scope
+  /// of its own — can still redact a real key out of an error message
+  /// instead of passing an empty one to [redactSensitive] (final review
+  /// I6). Set the moment [loadScene] resolves a connection, regardless of
+  /// whether the rest of that call succeeds, and never re-read via `ref`
+  /// lazily — this controller is rebuilt fresh on every
+  /// `connectionGenerationProvider` change, so this field only ever holds
+  /// *this* controller's own generation's key.
+  String _lastKnownApiKey = '';
+
   PlaybackState _state = const PlaybackState();
   PlaybackState get state => _state;
 
@@ -229,8 +240,15 @@ class PlaybackController extends ChangeNotifier {
 
     _bindStreams(generation);
 
+    // Hoisted above the `try` (rather than a `final` inside it) so the
+    // `catch` below can still redact a real key out of an error thrown
+    // *after* the connection resolved — e.g. `_engine.open`/`seek`/`play`
+    // — instead of falling out of scope and forcing an empty one into
+    // `redactSensitive` (final review I6).
+    ConnectionConfig? config;
     try {
-      final config = await _resolveConnection();
+      config = await _resolveConnection();
+      _lastKnownApiKey = config.apiKey;
       if (_disposed || generation != _state.generation) return;
 
       final source = scene.paths.stream;
@@ -274,7 +292,7 @@ class PlaybackController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(
         phase: PlaybackPhase.failed,
-        failure: redactSensitive('$error', apiKey: ''),
+        failure: redactSensitive('$error', apiKey: config?.apiKey ?? ''),
       );
       notifyListeners();
     }
@@ -406,7 +424,17 @@ class PlaybackController extends ChangeNotifier {
       case PlayerAction.seekToStart:
         return seekAbsolute(Duration.zero);
       case PlayerAction.seekToEnd:
-        return seekAbsolute(_state.duration);
+        // `Duration.zero` doubles as "duration unknown" (see
+        // `PlaybackState.duration`'s own doc) — seeking there before the
+        // engine's duration stream has emitted would land at the start,
+        // not the end, and then report `resumeTime: 0` on the next
+        // checkpoint, wiping the scene's real server-side resume point
+        // (final review I7). No-op until a real duration is known, the
+        // same way `exitFullscreen` above short-circuits when there is
+        // nothing to do.
+        return _state.duration > Duration.zero
+            ? seekAbsolute(_state.duration)
+            : Future<void>.value();
       case PlayerAction.volumeDown:
         return setVolume(_state.volume - playerVolumeStep);
       case PlayerAction.volumeUp:
@@ -572,7 +600,7 @@ class PlaybackController extends ChangeNotifier {
     } catch (error) {
       if (_disposed || generation != _state.generation) return false;
       _state = _state.copyWith(
-        controlFailure: redactSensitive('$error', apiKey: ''),
+        controlFailure: redactSensitive('$error', apiKey: _lastKnownApiKey),
         controlFailureSequence: _state.controlFailureSequence + 1,
       );
       notifyListeners();
@@ -638,11 +666,19 @@ final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
 /// `libraryControllerProvider` is: a settings-driven reconnection must
 /// not keep streaming from the old server/key.
 ///
-/// The fullscreen requester is a placeholder that always reports success
+/// The fullscreen requester is a placeholder that always reports **failure**
 /// without touching any real window: this codebase has no window-manager
-/// integration yet, and wiring one up is out of this task's scope — Task
-/// 11 (or later) can override [setFullscreenPlatform] with a real one
-/// once the scene screen has a window/context to call it against.
+/// integration on either target yet (final review C4), and implementing one
+/// couldn't be verified from the host this fix shipped from (no macOS host;
+/// Linux fullscreen is unverifiable headlessly) — shipping an unverifiable
+/// implementation as "done" would repeat the exact mistake C4 named.
+/// Reporting `false` keeps [setFullscreen] honest: [PlaybackState.fullscreen]
+/// never flips to `true`, so `TransportControls` can disable the fullscreen
+/// button instead of offering a control that lies about window state. A
+/// real [setFullscreenPlatform] (Linux: GTK `gtk_window_fullscreen` via the
+/// runner or a `window_manager`-class dependency; macOS:
+/// `NSWindow.toggleFullScreen(_:)`, as the SwiftUI app already does) is
+/// clearly-scoped follow-up work, not part of this fix.
 ///
 /// The [ActivitySyncFactory] wires a real [ActivitySync] to
 /// [stashApiProvider] for `saveSceneActivity` and to [globalNoticeProvider]
@@ -677,7 +713,7 @@ final playbackControllerProvider = ChangeNotifierProvider<PlaybackController>((
   return PlaybackController(
     engine: ref.watch(playbackEngineProvider),
     resolveConnection: () => ref.read(effectiveConnectionProvider.future),
-    setFullscreenPlatform: (fullscreen) async => true,
+    setFullscreenPlatform: (fullscreen) async => false,
     activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
       resumePositionSeconds: resumePositionSeconds,
       saveActivity:

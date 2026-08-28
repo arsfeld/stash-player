@@ -34,12 +34,6 @@ class NoticeController extends Notifier<AppNotice?> {
   AppNotice? build() => null;
 
   void show(AppNotice notice) => state = notice;
-
-  /// Clears the currently displayed notice, but only if [id] still matches
-  /// it — guards against a stale dismissal racing a newer notice.
-  void dismiss(int id) {
-    if (state?.id == id) state = null;
-  }
 }
 
 final globalNoticeProvider = NotifierProvider<NoticeController, AppNotice?>(

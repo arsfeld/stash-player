@@ -163,14 +163,19 @@ void main() {
       'initial/loading with no data shows centered progress and Loading '
       'scenes semantics',
       (tester) async {
-        // No pages configured: `findScenes` never resolves, so the
+        // No pages configured, and `allowManualCompletion` opts out of
+        // `FakeStashApi`'s drain-safety default (final review §3b): the
         // controller stays in `loading` forever — exactly the
-        // "initial/loading with no data" bucket. Deliberately bounded
-        // pumps rather than `pumpAndSettle`: the indeterminate
+        // "initial/loading with no data" bucket — instead of the call
+        // completing with a `StateError`. Deliberately bounded pumps
+        // rather than `pumpAndSettle`: the indeterminate
         // `CircularProgressIndicator` this state renders schedules
         // frames forever, which `pumpAndSettle` would wait on forever
         // too.
-        await _pumpLibrary(tester, api: FakeStashApi());
+        await _pumpLibrary(
+          tester,
+          api: FakeStashApi()..allowManualCompletion = true,
+        );
         await tester.pump();
         await tester.pump();
 
@@ -205,7 +210,7 @@ void main() {
 
     testWidgets('ready shows bottom-page progress while a further page is '
         'loading', (tester) async {
-      final api = FakeStashApi();
+      final api = FakeStashApi()..allowManualCompletion = true;
       api.pages.add(ScenePage(total: 100, scenes: _scenes(48)));
       final harness = await _pumpLibrary(tester, api: api);
       await tester.pumpAndSettle();
@@ -425,6 +430,7 @@ void main() {
           (i) => _scene(id: '$i', screenshot: page1Sources[i]),
         );
         final api = FakeStashApi()
+          ..allowManualCompletion = true
           ..pages.add(ScenePage(total: 100, scenes: page1));
         final thumbnailRepo = FakeThumbnailRepository(bytes: _transparentPng);
         final harness = await _pumpLibrary(
@@ -652,6 +658,54 @@ void main() {
         expect(find.text(label), findsWidgets);
       }
     });
+
+    testWidgets(
+      'each label sends its own distinct SceneSort on the wire — swapping '
+      'any two labels in _sortLabel would pass the label-presence test '
+      'above but fail this one (final review §3b)',
+      (tester) async {
+        final api = FakeStashApi()
+          // One page per sort selection below, plus the initial load —
+          // otherwise `FakeStashApi.findScenes` hangs forever once the
+          // queue drains instead of failing (a separate, also-fixed
+          // final review §3b gap), and `pumpAndSettle` times out.
+          ..pages.addAll(
+            List.generate(9, (_) => ScenePage(total: 1, scenes: _scenes(1))),
+          );
+        await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
+        await tester.pumpAndSettle();
+
+        // Ordered so every selection genuinely differs from both the
+        // default filter's sort (`SceneFilter.sort` defaults to
+        // `createdAt`, i.e. "Date added") and the previous iteration's —
+        // a same-value reselection could otherwise leave
+        // `api.requestedFilters.last` reflecting a stale request instead
+        // of proving this iteration's own mapping.
+        const labelToSort = <String, SceneSort>{
+          'Date': SceneSort.date,
+          'Title': SceneSort.title,
+          'Rating': SceneSort.rating,
+          'Play count': SceneSort.playCount,
+          'Duration': SceneSort.duration,
+          'Last updated': SceneSort.updatedAt,
+          'Random': SceneSort.random,
+          'Date added': SceneSort.createdAt,
+        };
+
+        for (final entry in labelToSort.entries) {
+          await tester.tap(find.byType(DropdownButton<SceneSort>));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(entry.key).last);
+          await tester.pumpAndSettle();
+
+          expect(
+            api.requestedFilters.last.sort,
+            entry.value,
+            reason: '"${entry.key}" must request SceneSort.${entry.value.name}',
+          );
+        }
+      },
+    );
   });
 
   group('tooltips', () {
@@ -705,7 +759,7 @@ void main() {
       (tester) async {
         final api = FakeStashApi()
           ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
-        await _pumpLibrary(tester, api: api);
+        final harness = await _pumpLibrary(tester, api: api);
         await tester.pumpAndSettle();
 
         await tester.enterText(
@@ -714,12 +768,32 @@ void main() {
         );
         // The 250ms debounce timer is now armed but hasn't fired.
         await tester.pumpWidget(const SizedBox.shrink());
+        // Dispose the controller for real, *here* — inside the test body,
+        // before the timer fires — rather than relying only on the
+        // `addTearDown(container.dispose)` `_pumpLibrary` already
+        // registers, which doesn't run until after this test body
+        // returns.
+        //
+        // This exercises the widget-level `mounted` guard in
+        // `LibraryToolbar._onSearchChanged` for real (the widget is
+        // genuinely unmounted before the timer fires). It does *not*, on
+        // its own, prove anything about the controller-level `_disposed`
+        // guard in `LibraryController._resetAndFetch`: that guard is
+        // structurally unreachable from this path, since the widget-level
+        // `mounted` check returns before ever calling into the controller
+        // — true whether or not the controller has also been disposed by
+        // then. `library_controller_test.dart`'s own disposal group has a
+        // direct test for that guard instead (final review §3b — an
+        // earlier version of this comment claimed this test covered both,
+        // which does not hold up).
+        harness.container.dispose();
 
         // Must not throw once the timer's original fire time passes —
-        // regression guard for both the widget-level `mounted` check in
-        // `LibraryToolbar._onSearchChanged` and the controller-level
-        // `_disposed` guard in `LibraryController._resetAndFetch`.
+        // regression guard for the widget-level `mounted` check in
+        // `LibraryToolbar._onSearchChanged`.
         await tester.pump(const Duration(milliseconds: 300));
+
+        expect(tester.takeException(), isNull);
       },
     );
   });
@@ -921,13 +995,25 @@ void main() {
       await _pumpLibrary(tester, api: api, size: const Size(1200, 20000));
       await tester.pump();
 
+      final requestedPagesAtUnmount = List.of(api.requestedPages);
+
       // Unmount mid-flight, before the next page's post-frame check
       // would fire.
       await tester.pumpWidget(const SizedBox.shrink());
 
       // Must not throw (a stray callback touching a disposed
-      // controller/widget would).
+      // controller/widget would) — though note that on its own this is
+      // weak: `ScrollController.hasClients` doesn't assert on an already
+      // -disposed controller, and `State.widget`/`mounted` stay readable
+      // after unmount, so a *removed* `_scheduleViewportCheck` `mounted`
+      // guard wouldn't make this throw either (final review §3b). The
+      // real regression this guards against is a *page still being
+      // requested* after unmount, which the assertion below actually
+      // pins.
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      expect(api.requestedPages, requestedPagesAtUnmount);
     });
   });
 
