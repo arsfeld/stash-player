@@ -6,7 +6,9 @@ import 'package:stash_player_flutter/app/app_router.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/features/player/playback_controller.dart';
 
+import '../support/fake_playback_engine.dart';
 import '../support/fakes.dart';
 
 void main() {
@@ -82,9 +84,32 @@ void main() {
   );
 
   testWidgets('popping the scene page returns to the library', (tester) async {
+    // Task 11 wired the real `SceneScreen` into the `scene(sceneId)`
+    // branch this test exercises, so — like every other test that mounts
+    // it (see `scene_screen_test.dart`) — this needs the same
+    // `playbackEngineFactoryProvider` override the rest of the suite
+    // uses: without it, simply watching `sceneControllerProvider` (which
+    // eagerly reads `playbackControllerProvider`, per that provider's own
+    // doc) would construct a real `MediaKitPlaybackEngine`, starting
+    // native playback libraries mid-test.
+    final stashApi = FakeStashApi()
+      ..sceneResults.add(
+        Scene(
+          id: '42',
+          paths: const ScenePaths(stream: 'x.mp4'),
+        ),
+      );
     final container = ProviderContainer(
       overrides: [
         appControllerProvider.overrideWith(_SceneFirstController.new),
+        connectionStoreProvider.overrideWithValue(
+          FakeConnectionStore(
+            saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+          ),
+        ),
+        environmentProvider.overrideWithValue(const {}),
+        stashApiFactoryProvider.overrideWithValue((config) => stashApi),
+        playbackEngineFactoryProvider.overrideWithValue(FakePlaybackEngine.new),
       ],
     );
     addTearDown(container.dispose);
@@ -95,13 +120,29 @@ void main() {
         child: const MaterialApp(home: AppRouter()),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(find.text('Scene 42'), findsOneWidget);
+    // `Scene(id: '42')` has no title, so `Scene.displayTitle` falls back
+    // to `'Scene 42'` — the scene screen's own transport bar renders it
+    // (a second copy also sits in the metadata drawer's header, always
+    // present in the tree even while the drawer itself is slid off-screen
+    // — hence `findsWidgets`, not `findsOneWidget`).
+    expect(find.text('Scene 42'), findsWidgets);
     expect(find.text('Library'), findsNothing);
 
-    await tester.tap(find.byType(BackButton));
-    await tester.pumpAndSettle();
+    // `SceneScreen` is video-first with no `AppBar` (so no automatic
+    // Material `BackButton`) — its own back control is the transport
+    // bar's tooltip-labelled icon button.
+    await tester.tap(find.byTooltip('Back to library'));
+    // Not `pumpAndSettle()`: popping the scene page auto-disposes
+    // `sceneControllerProvider`, which releases the shared
+    // `PlaybackController` — its `dispose()` awaits `ActivitySync`'s own
+    // bounded final flush (`disposeFlushTimeout`, ~10s of real/virtual
+    // time), right at the edge of `pumpAndSettle`'s own default 100-step
+    // (~10s) budget. An explicit pump past that bound is deterministic;
+    // `pumpAndSettle` intermittently isn't.
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
 
     expect(find.text('Library'), findsOneWidget);
     expect(find.text('Scene 42'), findsNothing);

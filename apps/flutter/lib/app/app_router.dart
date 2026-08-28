@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/connection/connection_controller.dart';
 import '../features/connection/connection_screen.dart';
 import '../features/library/library_screen.dart';
+import '../features/player/scene_screen.dart';
 import 'app_controller.dart';
 
 /// Switches on [AppController]'s current [AppDestination] and renders it
@@ -43,7 +44,7 @@ class AppRouter extends ConsumerWidget {
           MaterialPage<void>(
             key: ValueKey('scene-$sceneId'),
             name: _scenePageName,
-            child: _ScenePlaceholder(sceneId: sceneId),
+            child: SceneScreen(sceneId: sceneId),
           ),
         ],
       };
@@ -109,20 +110,5 @@ class _SettingsRoute extends ConsumerWidget {
       if (context.mounted) Navigator.of(context).pop();
     },
     onCancel: () => Navigator.of(context).pop(),
-  );
-}
-
-/// Stand-in for the scene feature, which Task 5+ builds. Nothing in this
-/// task navigates here yet; this exists so [AppRouter]'s `scene(sceneId)`
-/// case has somewhere to render.
-class _ScenePlaceholder extends StatelessWidget {
-  const _ScenePlaceholder({required this.sceneId});
-
-  final String sceneId;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text('Scene $sceneId')),
-    body: const Center(child: Text('Scene — coming soon.')),
   );
 }

@@ -48,6 +48,16 @@ class FindScenesCall {
   final Completer<ScenePage> completer = Completer<ScenePage>();
 }
 
+/// One recorded `findScene` call, with its own [completer] so a test can
+/// resolve or reject calls individually and out of order — mirrors
+/// [FindScenesCall] for the single-scene lookup `SceneController` uses.
+class FindSceneCall {
+  FindSceneCall(this.id);
+
+  final String id;
+  final Completer<Scene?> completer = Completer<Scene?>();
+}
+
 class FakeStashApi implements StashApi {
   FakeStashApi({this.versionValue, this.versionFailure, this.versionFuture});
 
@@ -91,8 +101,31 @@ class FakeStashApi implements StashApi {
     return versionValue!;
   }
 
+  /// `findScene` results consumed in call order, mirroring [pages]/
+  /// [pageFailures]/[pageRawErrors] for `findScenes` below. Leave all
+  /// three empty and resolve/reject a specific [FindSceneCall.completer]
+  /// from [sceneCalls] directly for full control over completion order
+  /// and timing (e.g. a late-response race for `SceneController`).
+  final List<Scene?> sceneResults = [];
+  final List<Failure> sceneFailures = [];
+  final List<Object> sceneRawErrors = [];
+
+  /// Every `findScene` call, in the order received.
+  final List<FindSceneCall> sceneCalls = [];
+
   @override
-  Future<Scene?> findScene(String id) => throw UnimplementedError();
+  Future<Scene?> findScene(String id) {
+    final call = FindSceneCall(id);
+    sceneCalls.add(call);
+    if (sceneRawErrors.isNotEmpty) {
+      call.completer.completeError(sceneRawErrors.removeAt(0));
+    } else if (sceneFailures.isNotEmpty) {
+      call.completer.completeError(sceneFailures.removeAt(0));
+    } else if (sceneResults.isNotEmpty) {
+      call.completer.complete(sceneResults.removeAt(0));
+    }
+    return call.completer.future;
+  }
 
   @override
   Future<ScenePage> findScenes(

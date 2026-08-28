@@ -306,11 +306,14 @@ void main() {
         final engine = FakePlaybackEngine();
         final controller = _buildController(engine: engine);
         await controller.loadScene(_scene());
-        engine.emitDuration(const Duration(seconds: 1000));
         engine.commands.clear();
 
+        // Digit9 (volumeDown) has no competing binding in
+        // `DefaultTextEditingShortcuts` and isn't part of the (Task 11
+        // widened) text-entry conflict set — it should still fire as a
+        // player action even while a text field has focus.
         final result = dispatchPlayerKeyEvent(
-          _keyDown(LogicalKeyboardKey.arrowLeft),
+          _keyDown(LogicalKeyboardKey.digit9),
           controller: controller,
           isTextEditingTarget: true,
           isModifierPressed: () => false,
@@ -318,17 +321,26 @@ void main() {
 
         expect(result, KeyEventResult.handled);
         await pumpEventQueue();
-        expect(engine.commands.whereType<SeekCommand>(), isNotEmpty);
+        expect(controller.state.volume, closeTo(0.95, 1e-9));
       },
     );
 
-    test('the conflict set is exactly J/K/L/M/F', () {
+    test('the conflict set is J/K/L/M/F plus arrows/Home/End/Space '
+        '(widened by Task 11 — see the set\'s own doc comment for the '
+        'empirical finding that required this)', () {
       expect(playerTextEntryConflictKeys, {
         LogicalKeyboardKey.keyJ,
         LogicalKeyboardKey.keyK,
         LogicalKeyboardKey.keyL,
         LogicalKeyboardKey.keyM,
         LogicalKeyboardKey.keyF,
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.home,
+        LogicalKeyboardKey.end,
+        LogicalKeyboardKey.space,
       });
     });
   });

@@ -43,40 +43,59 @@ final Map<LogicalKeyboardKey, PlayerAction> playerKeyBindings = {
   LogicalKeyboardKey.escape: PlayerAction.exitFullscreen,
 };
 
-/// Keys whose plain character has no built-in [EditableText] handling of
-/// its own, so they need an explicit escape hatch here to keep typing
-/// them possible in the metadata/search UI.
+/// Keys that must yield to normal text editing (cursor movement,
+/// selection, character/space insertion) whenever the currently focused
+/// widget is an [EditableText], rather than firing their bound
+/// [PlayerAction].
 ///
-/// **Correction (fix round 1):** an earlier version of this comment
-/// claimed the arrow keys and Home/End are excluded because they're
-/// "already consumed by a focused text field before they could ever
-/// reach a `Shortcuts` ancestor." That's wrong for the composition this
-/// app will actually use. Flutter resolves a key event at the
-/// *innermost* `Shortcuts` ancestor of the currently-focused widget
-/// first, and `DefaultTextEditingShortcuts` — which owns cursor
-/// movement, selection, and space/character insertion for a focused
-/// [EditableText] — is mounted up in `WidgetsApp`, near the app root:
-/// *outside*, not inside, any narrower scene-screen-level player
-/// `Shortcuts` Task 11 builds. If a text field ends up nested *inside*
-/// that player `Shortcuts` subtree (e.g. a search/metadata field on the
-/// scene screen), the player's own bindings for arrows/Home/End/Space
-/// would resolve *first* and win over `DefaultTextEditingShortcuts`'s
-/// cursor-movement/space-insertion handling — the opposite of what the
-/// old comment assumed.
+/// **Widened by Task 11 (verified empirically, not just reasoned about —
+/// see `scene_screen_test.dart`'s "text-entry propagation (I7)" group,
+/// which builds a real `TextField` nested inside a real player
+/// `Shortcuts`/`Actions` composition, `PlayerActionShortcuts`).** An
+/// earlier version of this set held only J/K/L/M/F, on the theory that
+/// arrows/Home/End/Space were already safe because
+/// `DefaultTextEditingShortcuts` (which owns cursor movement, selection,
+/// and space handling for a focused [EditableText]) is mounted by
+/// `WidgetsApp`, near the app root — *outside*, not inside, any narrower
+/// player `Shortcuts` a screen builds. That reasoning about *where*
+/// `DefaultTextEditingShortcuts` lives was correct, but the conclusion
+/// drawn from it was backwards: Flutter resolves a key event at the
+/// *innermost* `Shortcuts` ancestor of the focused widget first, so a
+/// player `Shortcuts` table nested *inside* `WidgetsApp` (i.e. anywhere a
+/// real screen would put it) intercepts arrows/Home/End *before* they
+/// ever reach `DefaultTextEditingShortcuts` — the empirical test proved
+/// this directly: with only J/K/L/M/F gated, Home/End/arrow-key
+/// keystrokes sent to a focused, nested `TextField` produced a
+/// `SeekCommand` on the underlying engine instead of moving the caret.
+/// `space` is included too, even though `togglePlayPause`'s *action* was
+/// already incidentally gated via `keyK`'s membership in this set
+/// (`PlayerActionShortcuts` gates by action, not literal key) — this set
+/// is also `dispatchPlayerKeyEvent`'s own, independent, *key*-based gate,
+/// which gets no such protection for `space` unless the key itself is
+/// listed here.
 ///
-/// This set only covers what's provably safe to gate *right now*
-/// (J/K/L/M/F, which have no competing binding anywhere in the
-/// framework). There is no real `Shortcuts`/`Actions` composition built
-/// yet for this to be tested against (Task 11 owns that). Task 11 needs
-/// to verify empirically — a real `TextField` nested under a real player
-/// `Shortcuts` widget — whether arrows/Home/End/Space need to join this
-/// set too, and widen it if so.
+/// J/K/L/M/F remain listed even though the same empirical test showed
+/// `sendKeyEvent` never inserts a character into a focused `TextField` in
+/// a headless test regardless of gating (basic character entry goes
+/// through the platform's separate `TextInputClient`/IME channel, not
+/// raw hardware key events) — keeping them gated is still correct
+/// production behavior: it stops the *player action* (seek/mute/
+/// fullscreen/play-pause) from firing while the user is typing a letter,
+/// which is the actual property this set exists to guarantee, independent
+/// of how test-simulated character entry happens to work.
 final Set<LogicalKeyboardKey> playerTextEntryConflictKeys = {
   LogicalKeyboardKey.keyJ,
   LogicalKeyboardKey.keyK,
   LogicalKeyboardKey.keyL,
   LogicalKeyboardKey.keyM,
   LogicalKeyboardKey.keyF,
+  LogicalKeyboardKey.arrowLeft,
+  LogicalKeyboardKey.arrowRight,
+  LogicalKeyboardKey.arrowUp,
+  LogicalKeyboardKey.arrowDown,
+  LogicalKeyboardKey.home,
+  LogicalKeyboardKey.end,
+  LogicalKeyboardKey.space,
 };
 
 /// Ctrl/Alt/Meta — held alongside a bound key, these mean "this
