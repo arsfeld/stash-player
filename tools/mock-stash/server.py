@@ -9,6 +9,14 @@ Implements the subset of the Stash schema that stash-player consumes:
 Thumbnails come from `./thumbs/<id>.jpg` (regenerate via gen_thumbs.sh).
 The data set is 12 SFW landscape-themed scenes — safe for screenshots
 and demos.
+
+Test-only observability (not part of the Stash schema): every accepted
+`sceneSaveActivity` call is recorded in-memory, in order, and can be read
+back via `GET /__test__/activity` or cleared via `POST /__test__/reset`.
+This exists so the Flutter integration smoke test (and any other client
+test) can assert on activity writeback without a real Stash instance.
+`/stream` stays a documented 404 — this does not add real video or
+bypass authentication in any way.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +29,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 THUMB_DIR = os.path.join(HERE, "thumbs")
 HOST = os.environ.get("MOCK_STASH_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MOCK_STASH_PORT", "9999"))
+
+# In-memory, ordered record of every accepted `sceneSaveActivity` call —
+# test-only observability, see the module docstring. Never persisted, and
+# cleared only by `POST /__test__/reset` (not by any GraphQL mutation).
+ACTIVITY_LOG = []
 
 STUDIOS = [
     {"id": "S1", "name": "Open Frame"},
@@ -173,6 +186,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/__test__/activity":
+            return self._json({"activity": ACTIVITY_LOG})
         m = re.match(r"^/scene/(\d+)/screenshot", self.path)
         if m:
             sid = m.group(1)
@@ -194,6 +209,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404); self.end_headers()
 
     def do_POST(self):
+        if self.path == "/__test__/reset":
+            ACTIVITY_LOG.clear()
+            return self._json({"reset": True})
         if not self.path.startswith("/graphql"):
             self.send_response(404); self.end_headers(); return
         n = int(self.headers.get("Content-Length") or 0)
@@ -229,6 +247,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"data": {"findScene": None}})
 
         if op == "SceneSaveActivity":
+            ACTIVITY_LOG.append({
+                "id": str(variables.get("id")),
+                "resume_time": variables.get("resume_time"),
+                "playDuration": variables.get("playDuration"),
+            })
             return self._json({"data": {"sceneSaveActivity": True}})
 
         if op == "SceneIncrementO":

@@ -25,6 +25,28 @@ jobs:
             dart format --output=none --set-exit-if-changed .
             flutter analyze --fatal-infos --fatal-warnings
             flutter test
+          '
+
+      # Mock-only: proves the connection → library → scene wiring works
+      # end-to-end against a real GraphQL backend, not that video plays.
+      # `tools/mock-stash/server.py` keeps `/stream` a documented 404 by
+      # design (see that file and `docs/flutter-runtime-validation.md`),
+      # so this step's expected outcome is the scene screen's recoverable
+      # playback-failure state, never real playback — see this step's own
+      # name, which is load-bearing for exactly that reason.
+      - name: Connection/library smoke (mock stream; no playback validation)
+        run: |
+          nix develop --command bash -c '
+            set -e
+            python3 tools/mock-stash/server.py &
+            MOCK_PID=$!
+            trap "kill $MOCK_PID 2>/dev/null || true" EXIT
+            for i in $(seq 1 30); do
+              curl -s -o /dev/null -X POST -H "content-type: application/json" -d "{}" http://127.0.0.1:9999/graphql && break
+              sleep 1
+            done
+            cd apps/flutter
+            STASH_URL=http://127.0.0.1:9999 STASH_API_KEY= flutter test integration_test/connection_library_scene_test.dart -d linux
             flutter build linux --debug
           '
 
@@ -46,5 +68,22 @@ jobs:
             dart format --output=none --set-exit-if-changed .
             flutter analyze --fatal-infos --fatal-warnings
             flutter test
+          '
+
+      # Mock-only — see the Linux job's identical step for the full
+      # rationale. Name kept byte-for-byte identical across both jobs.
+      - name: Connection/library smoke (mock stream; no playback validation)
+        run: |
+          nix develop --command bash -c '
+            set -e
+            python3 tools/mock-stash/server.py &
+            MOCK_PID=$!
+            trap "kill $MOCK_PID 2>/dev/null || true" EXIT
+            for i in $(seq 1 30); do
+              curl -s -o /dev/null -X POST -H "content-type: application/json" -d "{}" http://127.0.0.1:9999/graphql && break
+              sleep 1
+            done
+            cd apps/flutter
+            STASH_URL=http://127.0.0.1:9999 STASH_API_KEY= flutter test integration_test/connection_library_scene_test.dart -d macos
             flutter build macos --debug
           '
