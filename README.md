@@ -196,7 +196,7 @@ app remain the supported frontends. See
 build, and troubleshooting instructions:
 
 ```sh
-nix develop
+nix develop .#flutter
 cd apps/flutter
 flutter pub get
 flutter run -d linux    # or -d macos
