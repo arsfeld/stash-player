@@ -89,7 +89,9 @@ stash-player/
 │   ├── stash-player-ui/        # relm4 components — the Linux binary
 │   └── stash-player-ffi/       # UniFFI bridge for the macOS app
 ├── apps/
-│   └── macos/                  # SwiftUI app (Xcode project + sources)
+│   ├── macos/                  # SwiftUI app (Xcode project + sources)
+│   └── flutter/                # Experimental Flutter desktop client
+│                                #   (Linux + macOS) — see its own README
 ├── data/                       # .desktop, AppStream metainfo, icon
 ├── build-aux/                  # Flatpak manifest, macOS xcframework script
 └── flake.nix                   # Nix dev shell
@@ -182,6 +184,23 @@ open apps/macos/StashPlayer.xcodeproj
 ```
 
 After Rust changes, re-run the script (or `nix run .#macos-build`).
+
+### Flutter (experimental)
+
+`apps/flutter/` is an **experimental** third desktop client (Linux +
+macOS), built independently of the Rust/Swift codebases above to
+evaluate Flutter as a toolchain. It is not a replacement for either
+released client above — the GTK4/libadwaita app or the SwiftUI/AVKit
+app remain the supported frontends. See
+[`apps/flutter/README.md`](apps/flutter/README.md) for its full setup,
+build, and troubleshooting instructions:
+
+```sh
+nix develop .#flutter
+cd apps/flutter
+flutter pub get
+flutter run -d linux    # or -d macos
+```
 
 ## Configuration
 

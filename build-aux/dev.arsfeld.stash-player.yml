@@ -72,3 +72,4 @@ modules:
           - .direnv
           - .env
           - .github
+          - apps/flutter
