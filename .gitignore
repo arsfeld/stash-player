@@ -25,6 +25,9 @@ devenv.local.nix
 
 # Reasonix session artifacts
 /.reasonix/
+
+# Agent session artifacts
+/.superpowers/
 /.worktrees/
 
 # macOS / Xcode. project.yml is the source of truth; the .xcodeproj is
