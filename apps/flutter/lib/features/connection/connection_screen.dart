@@ -131,125 +131,136 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
               ],
             ),
           Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Padding(
-                  padding: const EdgeInsets.all(AppTokens.space5),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Connect to Stash',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: 24),
-                      TextField(
-                        key: const Key('connection-server-url'),
-                        controller: _urlController,
-                        focusNode: _urlFocusNode,
-                        enabled: !loading,
-                        keyboardType: TextInputType.url,
-                        textInputAction: TextInputAction.next,
-                        onSubmitted: (_) => _apiKeyFocusNode.requestFocus(),
-                        decoration: InputDecoration(
-                          labelText: 'Stash server URL',
-                          errorText: state.fieldError,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        key: const Key('connection-api-key'),
-                        controller: _apiKeyController,
-                        focusNode: _apiKeyFocusNode,
-                        enabled: !loading,
-                        obscureText: !_showApiKey,
-                        textInputAction: TextInputAction.done,
-                        decoration: InputDecoration(
-                          labelText: 'Stash API key (optional)',
-                          suffixIcon: Tooltip(
-                            message: _showApiKey
-                                ? 'Hide API key'
-                                : 'Show API key',
-                            child: IconButton(
-                              onPressed: () =>
-                                  setState(() => _showApiKey = !_showApiKey),
-                              icon: Icon(
-                                _showApiKey
-                                    ? Icons.visibility_off
-                                    : Icons.visibility,
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppTokens.space5),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Connect to Stash',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 24),
+                            TextField(
+                              key: const Key('connection-server-url'),
+                              controller: _urlController,
+                              focusNode: _urlFocusNode,
+                              enabled: !loading,
+                              keyboardType: TextInputType.url,
+                              textInputAction: TextInputAction.next,
+                              onSubmitted: (_) =>
+                                  _apiKeyFocusNode.requestFocus(),
+                              decoration: InputDecoration(
+                                labelText: 'Stash server URL',
+                                errorText: state.fieldError,
                               ),
                             ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        key: const Key('connection-socks-proxy'),
-                        controller: _socksProxyController,
-                        enabled: !loading,
-                        textInputAction: TextInputAction.done,
-                        decoration: InputDecoration(
-                          labelText: 'SOCKS5 proxy (optional)',
-                          helperText:
-                              'Reach Stash through a SOCKS5 proxy, for a server '
-                              'only routable that way. Tailscale in userspace mode '
-                              'listens on 127.0.0.1:1055.',
-                          helperMaxLines: 3,
-                          errorText: state.proxyFieldError,
-                        ),
-                      ),
-                      if (state.failure case final String failure) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          failure,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
-                      if (state.serverVersion case final String version) ...[
-                        const SizedBox(height: 16),
-                        Text('Connected to Stash $version.'),
-                      ],
-                      const SizedBox(height: 24),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          Tooltip(
-                            message:
-                                'Test this connection and save it if Stash responds.',
-                            child: FilledButton(
-                              onPressed: loading
-                                  ? null
-                                  : () => controller.testAndSave(
-                                      ConnectionConfig(
-                                        serverUrl: _urlController.text,
-                                        apiKey: _apiKeyController.text,
-                                        socksProxy: _socksProxyController.text,
-                                      ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              key: const Key('connection-api-key'),
+                              controller: _apiKeyController,
+                              focusNode: _apiKeyFocusNode,
+                              enabled: !loading,
+                              obscureText: !_showApiKey,
+                              textInputAction: TextInputAction.done,
+                              decoration: InputDecoration(
+                                labelText: 'Stash API key (optional)',
+                                suffixIcon: Tooltip(
+                                  message: _showApiKey
+                                      ? 'Hide API key'
+                                      : 'Show API key',
+                                  child: IconButton(
+                                    onPressed: () => setState(
+                                      () => _showApiKey = !_showApiKey,
                                     ),
-                              child: loading
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Text('Test connection'),
+                                    icon: Icon(
+                                      _showApiKey
+                                          ? Icons.visibility_off
+                                          : Icons.visibility,
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                          if (widget.settingsMode)
-                            OutlinedButton(
-                              onPressed: widget.onCancel,
-                              child: const Text('Cancel'),
+                            const SizedBox(height: 16),
+                            TextField(
+                              key: const Key('connection-socks-proxy'),
+                              controller: _socksProxyController,
+                              enabled: !loading,
+                              textInputAction: TextInputAction.done,
+                              decoration: InputDecoration(
+                                labelText: 'SOCKS5 proxy (optional)',
+                                helperText:
+                                    'Reach Stash through a SOCKS5 proxy, for a server '
+                                    'only routable that way. Tailscale in userspace mode '
+                                    'listens on 127.0.0.1:1055.',
+                                helperMaxLines: 3,
+                                errorText: state.proxyFieldError,
+                              ),
                             ),
-                        ],
+                            if (state.failure case final String failure) ...[
+                              const SizedBox(height: 16),
+                              Text(
+                                failure,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            ],
+                            if (state.serverVersion
+                                case final String version) ...[
+                              const SizedBox(height: 16),
+                              Text('Connected to Stash $version.'),
+                            ],
+                            const SizedBox(height: 24),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                Tooltip(
+                                  message:
+                                      'Test this connection and save it if Stash responds.',
+                                  child: FilledButton(
+                                    onPressed: loading
+                                        ? null
+                                        : () => controller.testAndSave(
+                                            ConnectionConfig(
+                                              serverUrl: _urlController.text,
+                                              apiKey: _apiKeyController.text,
+                                              socksProxy:
+                                                  _socksProxyController.text,
+                                            ),
+                                          ),
+                                    child: loading
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Text('Test connection'),
+                                  ),
+                                ),
+                                if (widget.settingsMode)
+                                  OutlinedButton(
+                                    onPressed: widget.onCancel,
+                                    child: const Text('Cancel'),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),

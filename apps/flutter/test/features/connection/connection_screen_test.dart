@@ -169,6 +169,29 @@ void main() {
     },
   );
 
+  testWidgets('does not overflow in settings mode at a raised text scale and a '
+      'short height', (tester) async {
+    // 800 wide keeps `AppWindowChrome`'s own strip (back button, spacing,
+    // title) clear of its own separate width limit at this text scale,
+    // so this test isolates the form's vertical overflow protection
+    // rather than the strip's horizontal one. Without the screen's
+    // scroll wrapper, this exact size overflows the bottom by 248
+    // pixels; a bare `SingleChildScrollView` alone is not enough to fix
+    // that without also losing vertical centring at normal sizes, which
+    // is why the screen builds it with a `LayoutBuilder` instead.
+    final controller = _controller();
+    await _pump(
+      tester,
+      controller: controller,
+      settingsMode: true,
+      onCancel: () {},
+      size: const Size(800, 320),
+      textScaler: const TextScaler.linear(1.3),
+    );
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('mounts without initialConfig and fills fields from the loaded '
       'config', (tester) async {
     final store = FakeConnectionStore(
@@ -277,21 +300,37 @@ Future<void> _pump(
   VoidCallback? onCancel,
   bool settingsMode = false,
   ConnectionConfig? initialConfig = const ConnectionConfig(),
-}) => tester.pumpWidget(
-  ProviderScope(
-    key: ValueKey(controller),
-    overrides: [connectionControllerProvider.overrideWith((ref) => controller)],
-    child: MaterialApp(
-      theme: buildAppTheme(Brightness.light),
-      home: ConnectionScreen(
-        initialConfig: initialConfig,
-        onConnected: onConnected ?? () {},
-        onCancel: onCancel,
-        settingsMode: settingsMode,
+  Size? size,
+  TextScaler textScaler = TextScaler.noScaling,
+}) {
+  if (size != null) {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = size;
+  }
+  return tester.pumpWidget(
+    ProviderScope(
+      key: ValueKey(controller),
+      overrides: [
+        connectionControllerProvider.overrideWith((ref) => controller),
+      ],
+      child: MaterialApp(
+        theme: buildAppTheme(Brightness.light),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: child!,
+        ),
+        home: ConnectionScreen(
+          initialConfig: initialConfig,
+          onConnected: onConnected ?? () {},
+          onCancel: onCancel,
+          settingsMode: settingsMode,
+        ),
       ),
     ),
-  ),
-);
+  );
+}
 
 final _serverUrlField = find.byKey(const Key('connection-server-url'));
 final _socksProxyField = find.byKey(const Key('connection-socks-proxy'));
