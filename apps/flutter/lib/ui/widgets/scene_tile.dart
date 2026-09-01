@@ -152,16 +152,9 @@ class _SceneTileState extends State<SceneTile> {
                   child: Stack(
                     fit: StackFit.passthrough,
                     children: [
-                      // `container: true` keeps the placeholder's own
-                      // "Thumbnail unavailable" label as a distinct
-                      // semantics node instead of letting it fold into
-                      // the tile's outer button label below.
-                      Semantics(
-                        container: true,
-                        child: _SceneThumbnail(
-                          source: scene.paths.screenshot,
-                          thumbnailRepository: widget.thumbnailRepository,
-                        ),
+                      _SceneThumbnail(
+                        source: scene.paths.screenshot,
+                        thumbnailRepository: widget.thumbnailRepository,
                       ),
                       if (_hovered)
                         const Positioned.fill(
