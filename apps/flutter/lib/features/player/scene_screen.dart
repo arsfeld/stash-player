@@ -371,59 +371,86 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                 onOpenInStash: () => _openInStash(scene.id),
               ),
             // 2. Controls overlay: a top bar pinned to the video's top edge
-            // and a player bar pinned to its bottom edge, sharing one
-            // `AnimatedOpacity` so both fade together as a single unit (an
-            // unchanged property from the old single-widget transport).
-            // Each bar keeps its own tightly-scoped `MouseRegion`/
-            // `FocusScope` rather than one spanning the whole video: a
-            // `Column`+`Spacer` filling this `Positioned` needs the
-            // Positioned to span the full stack height (top bar at the
-            // top, player bar at the bottom), and a single `MouseRegion`
-            // over that full height would make hovering *anywhere* over
-            // the picture, not just the chrome, suppress auto-hide,
-            // breaking the video-vs-controls distinction this file's own
-            // "hovering the controls suppresses auto-hide" test pins
-            // against. A `Stack` with two independently-`Positioned`,
-            // independently-hover-scoped bars gets the same full-height
-            // layout without that regression.
+            // and a player bar pinned to its bottom edge. Fix round 1 of
+            // this task's own review: the banner below shares the top
+            // bar's `Column` (not a second, independently-`Positioned`
+            // widget guessing a pixel offset) so the two can never
+            // overlap: Flutter measures the top bar's real height and
+            // lays the banner out directly beneath it, at any window
+            // width or message length, with no hardcoded number anywhere.
+            //
+            // One shared `FocusScope` wraps both bars (not one each): a
+            // `FocusScope` is not a hit-test participant, so splitting it
+            // alongside the two `MouseRegion`s bought nothing but two
+            // separate Tab rings for what are, visually, one control strip.
+            //
+            // The top bar and the player bar each keep their own
+            // `IgnorePointer`/`AnimatedOpacity` pair, both driven by the
+            // same `effectiveVisible`/`_fadeDuration` (so they still fade
+            // in lockstep), rather than one shared instance wrapping both:
+            // the banner must sit *outside* whichever fade wraps the top
+            // bar (it must stay visible and tappable even while the
+            // controls are faded), and Flutter's opacity only ever applies
+            // to a widget's own descendants: a `Column` sibling of the top
+            // bar's fade subtree is the only way for the banner to be laid
+            // out relative to it without inheriting its opacity.
             Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !effectiveVisible,
-                child: AnimatedOpacity(
-                  key: const Key('scene-controls-overlay'),
-                  duration: _fadeDuration,
-                  opacity: effectiveVisible ? 1 : 0,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: MouseRegion(
-                          onEnter: (_) => _setHovering(true, playback),
-                          onExit: (_) => _setHovering(false, playback),
-                          child: FocusScope(
-                            onFocusChange: (value) =>
-                                _setControlsFocused(value, playback),
-                            child: PlayerTopBar(
-                              title: scene.displayTitle,
-                              metadataOpen: _metadataOpen,
-                              onBack: () => Navigator.of(context).maybePop(),
-                              onToggleMetadata: () => _toggleMetadata(playback),
+              child: FocusScope(
+                onFocusChange: (value) => _setControlsFocused(value, playback),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IgnorePointer(
+                            ignoring: !effectiveVisible,
+                            child: AnimatedOpacity(
+                              key: const Key('scene-controls-overlay'),
+                              duration: _fadeDuration,
+                              opacity: effectiveVisible ? 1 : 0,
+                              child: MouseRegion(
+                                onEnter: (_) => _setHovering(true, playback),
+                                onExit: (_) => _setHovering(false, playback),
+                                child: PlayerTopBar(
+                                  title: scene.displayTitle,
+                                  metadataOpen: _metadataOpen,
+                                  onBack: () =>
+                                      Navigator.of(context).maybePop(),
+                                  onToggleMetadata: () =>
+                                      _toggleMetadata(playback),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          if (showTransientFailureBanner)
+                            _TransientPlaybackFailureBanner(
+                              key: const Key('scene-transient-failure-banner'),
+                              message:
+                                  playback.failure ??
+                                  'Playback ran into a problem.',
+                              onRetry: () => ref
+                                  .read(sceneControllerProvider)
+                                  .load(scene.id),
+                            ),
+                        ],
                       ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: MouseRegion(
-                          onEnter: (_) => _setHovering(true, playback),
-                          onExit: (_) => _setHovering(false, playback),
-                          child: FocusScope(
-                            onFocusChange: (value) =>
-                                _setControlsFocused(value, playback),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
+                        ignoring: !effectiveVisible,
+                        child: AnimatedOpacity(
+                          duration: _fadeDuration,
+                          opacity: effectiveVisible ? 1 : 0,
+                          child: MouseRegion(
+                            onEnter: (_) => _setHovering(true, playback),
+                            onExit: (_) => _setHovering(false, playback),
                             child: PlayerBar(
                               playback: playback,
                               onTogglePlayPause: playbackController.playPause,
@@ -434,24 +461,11 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            // Stacked above the controls overlay (not below, as it used to
-            // be listed before Task 8's rewrite): the transient banner is
-            // top-pinned, same as `PlayerTopBar` now is, and must stay
-            // reachable and un-occluded regardless of the controls'
-            // auto-hide fade, rather than sitting underneath a `MouseRegion`
-            // that (per `MouseRegion`'s own default `HitTestBehavior.opaque`)
-            // would otherwise swallow every tap across the whole top strip.
-            if (showTransientFailureBanner)
-              _TransientPlaybackFailureBanner(
-                key: const Key('scene-transient-failure-banner'),
-                message: playback.failure ?? 'Playback ran into a problem.',
-                onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
-              ),
             // 3. Metadata drawer, aligned right, capped at 420 logical
             // pixels, sliding over the video rather than reflowing it. A
             // `Positioned` (top/right/bottom pinned, explicit width) rather
@@ -694,32 +708,31 @@ class _TransientPlaybackFailureBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: SafeArea(
-        bottom: false,
-        child: Material(
-          color: theme.colorScheme.errorContainer,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  color: theme.colorScheme.onErrorContainer,
+    // No `Positioned` here (fix round 1 of this task's own review): this is
+    // now placed as a `Column` child, immediately below `PlayerTopBar`, by
+    // its caller in `_buildSceneStack`; see that call site's own doc for
+    // why. A `Positioned` is only valid directly under a `Stack`.
+    return SafeArea(
+      bottom: false,
+      child: Material(
+        color: theme.colorScheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.error_outline,
+                color: theme.colorScheme.onErrorContainer,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(color: theme.colorScheme.onErrorContainer),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    message,
-                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                  ),
-                ),
-                TextButton(onPressed: onRetry, child: const Text('Retry')),
-              ],
-            ),
+              ),
+              TextButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
           ),
         ),
       ),

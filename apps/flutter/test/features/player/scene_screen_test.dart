@@ -1227,6 +1227,64 @@ void main() {
         await _tearDownScene(tester, harness);
       },
     );
+
+    testWidgets(
+      'with a failure banner showing, the back button and details toggle '
+      'stay hit-testable and tapping the details toggle opens the drawer, '
+      'not the banner underneath it (fix round 1 of this task\'s own '
+      'review: the banner used to sit on top of the top bar and silently '
+      'swallow these taps)',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
+        harness.engine.emitDuration(const Duration(seconds: 120));
+        await tester.pump();
+
+        harness.engine.emitError('stream broke');
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('scene-transient-failure-banner')),
+          findsOneWidget,
+        );
+
+        // A hit-test miss on either control below only prints a warning
+        // by default (see `WidgetController.tap`'s own doc); make it
+        // fatal for this test so a tap occluded by the banner fails
+        // loudly instead of silently passing.
+        WidgetController.hitTestWarningShouldBeFatal = true;
+        addTearDown(() => WidgetController.hitTestWarningShouldBeFatal = false);
+
+        // Nothing to pop from the root route, but the tap must actually
+        // land on the back button rather than being swallowed by the
+        // banner sitting near it.
+        await tester.tap(find.byTooltip('Back to library'));
+        await tester.pump();
+
+        double scrimOpacity() => tester
+            .widget<AnimatedOpacity>(
+              find.byKey(const Key('scene-metadata-scrim')),
+            )
+            .opacity;
+        expect(scrimOpacity(), 0.0);
+        final callsBefore = harness.api.calls.length;
+
+        await tester.tap(find.byTooltip('Show details'));
+        await tester.pumpAndSettle();
+
+        // The drawer opened, not the banner's Retry action underneath it
+        // (before this fix: the details toggle's centre fell inside the
+        // banner's Retry button, so this tap re-loaded the scene instead).
+        expect(scrimOpacity(), 1.0);
+        expect(find.byTooltip('Hide details'), findsOneWidget);
+        expect(harness.api.calls, hasLength(callsBefore));
+
+        await _tearDownScene(tester, harness);
+      },
+    );
   });
 
   group('SceneScreen: control-command failures (fix round 1, item 5)', () {
