@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene.dart';
 import '../../shared/formatters.dart';
+import '../../ui/theme/app_tokens.dart';
 
 /// The right-hand metadata overlay: title, details, date, studio,
 /// performer chips, and file info (duration, resolution, codec, frame
-/// rate) — every field with a safe fallback for Stash's own nullable
+/// rate), every field with a safe fallback for Stash's own nullable
 /// GraphQL schema (`Scene`'s own doc: "Every metadata field is
 /// nullable").
 ///
 /// Purely presentational, and deliberately has no opinion on its own
-/// width or position — `SceneScreen` is responsible for constraining this
+/// width or position: `SceneScreen` is responsible for constraining this
 /// to the brief's 420-logical-pixel max width and sliding it in from the
 /// right over the video, never resizing the video itself (see that file's
 /// own doc for the `Stack` layering this must never become a `Row` or
@@ -22,8 +23,9 @@ class SceneMetadataDrawer extends StatelessWidget {
     super.key,
   });
 
-  /// The brief's mandated maximum drawer width, in logical pixels.
-  static const double maxWidth = 420;
+  /// The drawer's maximum width. `SceneScreen` is responsible for
+  /// applying it; this widget has no opinion on its own position.
+  static const double maxWidth = AppTokens.drawerMaxWidth;
 
   final Scene scene;
   final VoidCallback onClose;
@@ -33,12 +35,14 @@ class SceneMetadataDrawer extends StatelessWidget {
     final theme = Theme.of(context);
     final file = scene.files.isNotEmpty ? scene.files.first : null;
 
-    return Material(
-      color: theme.colorScheme.surface,
-      elevation: 8,
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xF0131416),
+        border: Border(left: BorderSide(color: AppTokens.playerHairline)),
+      ),
       child: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTokens.space4),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -78,28 +82,71 @@ class SceneMetadataDrawer extends StatelessWidget {
               ),
               if (scene.performers.isNotEmpty) ...[
                 const SizedBox(height: 16),
-                Text('Performers', style: theme.textTheme.titleSmall),
+                const _SectionLabel('Performers'),
                 const SizedBox(height: 4),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
                     for (final performer in scene.performers)
-                      Chip(label: Text(performer.name)),
+                      Chip(
+                        avatar: CircleAvatar(
+                          radius: 10,
+                          backgroundColor:
+                              theme.colorScheme.surfaceContainerHighest,
+                          child: Text(
+                            _initial(performer.name),
+                            style: theme.textTheme.labelSmall,
+                          ),
+                        ),
+                        label: Text(performer.name),
+                      ),
                   ],
                 ),
               ],
-              const SizedBox(height: 16),
-              Text('File info', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 4),
-              Text('Duration: ${_duration(file)}'),
-              Text('Resolution: ${_resolution(file)}'),
-              Text('Codec: ${_codec(file)}'),
-              Text('Frame rate: ${_frameRate(file)}'),
+              const SizedBox(height: AppTokens.space4),
+              const _SectionLabel('File'),
+              const SizedBox(height: AppTokens.space2),
+              Table(
+                columnWidths: const {
+                  0: IntrinsicColumnWidth(),
+                  1: FlexColumnWidth(),
+                },
+                children: [
+                  _fileRow(context, 'Duration', _duration(file)),
+                  _fileRow(context, 'Resolution', _resolution(file)),
+                  _fileRow(context, 'Codec', _codec(file)),
+                  _fileRow(context, 'Frame rate', _frameRate(file)),
+                ],
+              ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  static TableRow _fileRow(BuildContext context, String label, String value) {
+    final theme = Theme.of(context);
+    return TableRow(
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(
+            right: AppTokens.space4,
+            bottom: AppTokens.space1,
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppTokens.space1),
+          child: Text(value, style: theme.textTheme.bodySmall),
+        ),
+      ],
     );
   }
 
@@ -119,5 +166,29 @@ class SceneMetadataDrawer extends StatelessWidget {
   static String _frameRate(SceneFile? file) {
     final frameRate = file?.frameRate;
     return frameRate == null ? 'Unknown' : '${frameRate.round()} fps';
+  }
+
+  /// First character of [name], for the chip avatar. Empty names are
+  /// possible (every Stash metadata field is nullable and the decoder
+  /// defaults absent ones), so they fall back to a placeholder.
+  static String _initial(String name) =>
+      name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
+}
+
+/// A small uppercase heading above a group of metadata.
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      text.toUpperCase(),
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    );
   }
 }
