@@ -34,7 +34,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
 
   /// The top strip's total height, and the control band inside it. The
   /// band is 28 because that is the height of the macOS system titlebar
-  /// the traffic lights are centred in — see [AppWindowChrome].
+  /// the traffic lights are centred in. See [AppWindowChrome].
   static const double stripHeight = 44;
   static const double controlBandHeight = 28;
 
