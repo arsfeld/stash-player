@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/connection.dart';
 import '../features/connection/connection_controller.dart';
+import '../services/socks_forward_proxy.dart';
 import 'notices.dart';
 import 'providers.dart';
 
@@ -61,6 +62,7 @@ class AppController extends Notifier<AppDestination> {
     final environment = ref.read(environmentProvider);
     try {
       final config = await ref.read(connectionStoreProvider).load(environment);
+      _applySocksProxy(config);
       state = config.serverUrl.isEmpty
           ? const AppDestination.connection()
           : const AppDestination.library();
@@ -100,6 +102,7 @@ class AppController extends Notifier<AppDestination> {
     }
     if (connection.state.phase != ConnectionPhase.ready) return;
 
+    _applySocksProxy(connection.state.config);
     ref.read(connectionGenerationProvider.notifier).state++;
     state = const AppDestination.library();
 
@@ -111,6 +114,33 @@ class AppController extends Notifier<AppDestination> {
             severity: AppNoticeSeverity.success,
           ),
         );
+  }
+
+  /// Points the loopback forward proxy at whatever [config] configures, so
+  /// the very next request (API, thumbnail or video) takes the new route.
+  ///
+  /// Done here rather than in a provider body because this class already
+  /// owns both moments the active connection is decided: bootstrap, and a
+  /// settings change. A parse failure resolves to null, which the connection
+  /// form has already refused to save, and which means "no proxy" anyway.
+  void _applySocksProxy(ConnectionConfig config) {
+    final proxy = ref.read(socksForwardProxyProvider);
+    if (proxy == null) {
+      if (config.socksProxy.isNotEmpty) {
+        ref
+            .read(globalNoticeProvider.notifier)
+            .show(
+              AppNotice(
+                message:
+                    'Could not start the local proxy, so the SOCKS setting '
+                    'is not in use. Stash will be contacted directly.',
+                severity: AppNoticeSeverity.warning,
+              ),
+            );
+      }
+      return;
+    }
+    proxy.endpoint = SocksEndpoint.tryParse(config.socksProxy);
   }
 
   /// Returns from a scene back to the library, e.g. when the router

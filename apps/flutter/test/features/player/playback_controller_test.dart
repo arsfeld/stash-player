@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart' show Key, Widget;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/services/socks_forward_proxy.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
@@ -1801,9 +1802,13 @@ void main() {
       ConnectionConfig saved = _config,
       required List<FakePlaybackEngine> engines,
       FakeStashApi? stashApi,
+      SocksForwardProxy? socksProxy,
+      List<String?>? recordProxyUrls,
     }) {
+      final proxyUrls = recordProxyUrls ?? <String?>[];
       final container = ProviderContainer(
         overrides: [
+          socksForwardProxyProvider.overrideWithValue(socksProxy),
           connectionStoreProvider.overrideWithValue(
             FakeConnectionStore(saved: saved),
           ),
@@ -1816,8 +1821,9 @@ void main() {
           stashApiFactoryProvider.overrideWithValue(
             (config) => stashApi ?? FakeStashApi(),
           ),
-          playbackEngineFactoryProvider.overrideWithValue(() {
+          playbackEngineFactoryProvider.overrideWithValue(({httpProxyUrl}) {
             final engine = FakePlaybackEngine();
+            proxyUrls.add(httpProxyUrl);
             engines.add(engine);
             return engine;
           }),
@@ -1826,6 +1832,40 @@ void main() {
       addTearDown(container.dispose);
       return container;
     }
+
+    test(
+      'builds the engine with the loopback proxy URL when one is set',
+      () async {
+        final proxy = await SocksForwardProxy.bind();
+        addTearDown(proxy.close);
+        proxy.endpoint = const SocksEndpoint(host: '127.0.0.1', port: 1055);
+        final proxyUrls = <String?>[];
+        final container = buildContainer(
+          engines: <FakePlaybackEngine>[],
+          socksProxy: proxy,
+          recordProxyUrls: proxyUrls,
+        );
+
+        container.read(playbackEngineProvider);
+
+        expect(proxyUrls.single, 'http://127.0.0.1:${proxy.port}');
+      },
+    );
+
+    test(
+      'builds the engine with no proxy URL when none is configured',
+      () async {
+        final proxyUrls = <String?>[];
+        final container = buildContainer(
+          engines: <FakePlaybackEngine>[],
+          recordProxyUrls: proxyUrls,
+        );
+
+        container.read(playbackEngineProvider);
+
+        expect(proxyUrls.single, isNull);
+      },
+    );
 
     test('the provided controller resolves the connection through the '
         'deferred effectiveConnectionProvider', () async {
@@ -1859,7 +1899,7 @@ void main() {
           stashApiFactoryProvider.overrideWithValue(
             (config) => config.serverUrl == _config.serverUrl ? oldApi : newApi,
           ),
-          playbackEngineFactoryProvider.overrideWithValue(() {
+          playbackEngineFactoryProvider.overrideWithValue(({httpProxyUrl}) {
             final engine = FakePlaybackEngine();
             engines.add(engine);
             return engine;

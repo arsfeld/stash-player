@@ -192,7 +192,7 @@ _TestHarness _harness({
       ),
       environmentProvider.overrideWithValue(const {}),
       stashApiFactoryProvider.overrideWithValue((config) => api),
-      playbackEngineFactoryProvider.overrideWithValue(() {
+      playbackEngineFactoryProvider.overrideWithValue(({httpProxyUrl}) {
         final engine = FakePlaybackEngine();
         engines.add(engine);
         return wrapEngine == null ? engine : wrapEngine(engine);

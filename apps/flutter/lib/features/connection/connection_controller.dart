@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/connection.dart';
 import '../../domain/failure.dart';
 import '../../services/connection_store.dart';
+import '../../services/socks_forward_proxy.dart';
 import '../../services/stash_api.dart';
 
 enum ConnectionPhase { initial, loading, ready, failed }
@@ -14,6 +15,7 @@ class ConnectionState {
     this.phase = ConnectionPhase.initial,
     this.serverVersion,
     this.fieldError,
+    this.proxyFieldError,
     this.failure,
   });
 
@@ -21,6 +23,11 @@ class ConnectionState {
   final ConnectionPhase phase;
   final String? serverVersion;
   final String? fieldError;
+
+  /// Validation message for the SOCKS proxy field, kept apart from
+  /// [fieldError] so each message lands under the field it is about.
+  final String? proxyFieldError;
+
   final String? failure;
 
   ConnectionState copyWith({
@@ -28,6 +35,7 @@ class ConnectionState {
     ConnectionPhase? phase,
     String? serverVersion,
     String? fieldError,
+    String? proxyFieldError,
     String? failure,
     bool clearServerVersion = false,
     bool clearFieldError = false,
@@ -39,6 +47,9 @@ class ConnectionState {
         ? null
         : serverVersion ?? this.serverVersion,
     fieldError: clearFieldError ? null : fieldError ?? this.fieldError,
+    proxyFieldError: clearFieldError
+        ? null
+        : proxyFieldError ?? this.proxyFieldError,
     failure: clearFailure ? null : failure ?? this.failure,
   );
 }
@@ -95,7 +106,21 @@ class ConnectionController extends ChangeNotifier {
   }
 
   Future<void> testAndSave(ConnectionConfig entered) async {
-    final config = entered.copyWith(serverUrl: entered.serverUrl.trim());
+    final config = entered.copyWith(
+      serverUrl: entered.serverUrl.trim(),
+      socksProxy: entered.socksProxy.trim(),
+    );
+    if (config.socksProxy.isNotEmpty &&
+        SocksEndpoint.tryParse(config.socksProxy) == null) {
+      _setState(
+        ConnectionState(
+          config: config,
+          phase: ConnectionPhase.failed,
+          proxyFieldError: 'Enter the proxy as host or host:port.',
+        ),
+      );
+      return;
+    }
     if (!_validServerUrl(config.serverUrl)) {
       _setState(
         ConnectionState(

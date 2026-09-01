@@ -119,8 +119,20 @@ class _RealMediaKitPlayerPort implements MediaKitPlayerPort {
 class MediaKitPlaybackEngine implements PlaybackEngine {
   /// Builds the production engine: one real [Player] and one
   /// [VideoController] wired to it.
-  factory MediaKitPlaybackEngine() {
+  ///
+  /// [httpProxyUrl] is handed to libmpv as its `http-proxy` option. libmpv
+  /// fetches media itself, in C, so it shares nothing with the app's
+  /// `http.Client` and has to be told separately; `http-proxy` is the only
+  /// proxy control it has, which is why the app's own hop is an HTTP proxy
+  /// rather than a SOCKS client.
+  factory MediaKitPlaybackEngine({String? httpProxyUrl}) {
     final player = Player();
+    final platform = player.platform;
+    if (httpProxyUrl != null && platform is NativePlayer) {
+      // Fire-and-forget: `setProperty` waits for libmpv to finish starting
+      // up, which happens well before the first `open()` can be issued.
+      unawaited(platform.setProperty('http-proxy', httpProxyUrl));
+    }
     final videoController = VideoController(player);
     return MediaKitPlaybackEngine._(
       port: _RealMediaKitPlayerPort(player),

@@ -7,6 +7,10 @@ import 'connection_store.dart';
 const serverUrlPreferenceKey = 'dev.arsfeld.stashplayer.flutter.server_url';
 const apiKeySecureStorageKey = 'dev.arsfeld.stashplayer.flutter.api_key';
 
+/// Plain preferences rather than secure storage: a proxy address is a
+/// routing detail, not a credential.
+const socksProxyPreferenceKey = 'dev.arsfeld.stashplayer.flutter.socks_proxy';
+
 class PlatformConnectionStore implements ConnectionStore {
   PlatformConnectionStore({
     required SharedPreferencesAsync preferences,
@@ -31,10 +35,12 @@ class PlatformConnectionStore implements ConnectionStore {
     final values = await Future.wait<Object?>([
       _preferences.getString(serverUrlPreferenceKey),
       _secureStorage.read(key: apiKeySecureStorageKey),
+      _preferences.getString(socksProxyPreferenceKey),
     ]);
     return ConnectionConfig(
       serverUrl: values[0] as String? ?? '',
       apiKey: values[1] as String? ?? '',
+      socksProxy: values[2] as String? ?? '',
     );
   }
 
@@ -49,5 +55,6 @@ class PlatformConnectionStore implements ConnectionStore {
   Future<void> save(ConnectionConfig config) => Future.wait<void>([
     _preferences.setString(serverUrlPreferenceKey, config.serverUrl),
     _secureStorage.write(key: apiKeySecureStorageKey, value: config.apiKey),
+    _preferences.setString(socksProxyPreferenceKey, config.socksProxy),
   ]);
 }

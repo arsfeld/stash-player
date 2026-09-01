@@ -6,6 +6,8 @@ import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/features/connection/connection_controller.dart';
 
+import 'package:stash_player_flutter/services/socks_forward_proxy.dart';
+
 import '../support/fakes.dart';
 
 void main() {
@@ -13,10 +15,12 @@ void main() {
     ConnectionConfig saved = const ConnectionConfig(),
     Future<ConnectionConfig>? loadFuture,
     Map<String, String> environment = const {},
+    SocksForwardProxy? socksProxy,
   }) {
     final store = FakeConnectionStore(saved: saved, loadFuture: loadFuture);
     final container = ProviderContainer(
       overrides: [
+        socksForwardProxyProvider.overrideWithValue(socksProxy),
         connectionStoreProvider.overrideWithValue(store),
         environmentProvider.overrideWithValue(environment),
         stashApiFactoryProvider.overrideWithValue(
@@ -222,6 +226,77 @@ void main() {
     );
     expect(container.read(connectionGenerationProvider), generationBefore);
     expect(store.saveCalls, isEmpty);
+    expect(container.read(globalNoticeProvider), isNull);
+  });
+
+  test(
+    'bootstrap points the loopback proxy at the stored SOCKS endpoint',
+    () async {
+      final proxy = await SocksForwardProxy.bind();
+      addTearDown(proxy.close);
+      final (:container, store: _) = buildContainer(
+        saved: const ConnectionConfig(
+          serverUrl: 'https://stash.test',
+          socksProxy: '127.0.0.1:1055',
+        ),
+        socksProxy: proxy,
+      );
+
+      await container.read(appControllerProvider.notifier).bootstrap();
+
+      expect(proxy.endpoint?.host, '127.0.0.1');
+      expect(proxy.endpoint?.port, 1055);
+    },
+  );
+
+  test(
+    'replaceConnection repoints the loopback proxy at the new endpoint',
+    () async {
+      final proxy = await SocksForwardProxy.bind();
+      addTearDown(proxy.close);
+      final (:container, store: _) = buildContainer(
+        saved: const ConnectionConfig(
+          serverUrl: 'https://stash.test',
+          socksProxy: '127.0.0.1:1055',
+        ),
+        socksProxy: proxy,
+      );
+      await container.read(appControllerProvider.notifier).bootstrap();
+
+      await container
+          .read(appControllerProvider.notifier)
+          .replaceConnection(
+            const ConnectionConfig(serverUrl: 'https://stash.test'),
+          );
+
+      expect(proxy.endpoint, isNull);
+    },
+  );
+
+  test('warns when a proxy is configured but none could be bound', () async {
+    final (:container, store: _) = buildContainer(
+      saved: const ConnectionConfig(
+        serverUrl: 'https://stash.test',
+        socksProxy: '127.0.0.1:1055',
+      ),
+    );
+
+    await container.read(appControllerProvider.notifier).bootstrap();
+
+    expect(container.read(globalNoticeProvider)?.message, contains('SOCKS'));
+    expect(
+      container.read(globalNoticeProvider)?.severity,
+      AppNoticeSeverity.warning,
+    );
+  });
+
+  test('stays quiet when no proxy is configured and none is bound', () async {
+    final (:container, store: _) = buildContainer(
+      saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+    );
+
+    await container.read(appControllerProvider.notifier).bootstrap();
+
     expect(container.read(globalNoticeProvider), isNull);
   });
 }

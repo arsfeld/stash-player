@@ -110,7 +110,9 @@ void main() {
         ),
         environmentProvider.overrideWithValue(const {}),
         stashApiFactoryProvider.overrideWithValue((config) => stashApi),
-        playbackEngineFactoryProvider.overrideWithValue(FakePlaybackEngine.new),
+        playbackEngineFactoryProvider.overrideWithValue(
+          ({httpProxyUrl}) => FakePlaybackEngine(),
+        ),
       ],
     );
     addTearDown(container.dispose);

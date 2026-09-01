@@ -225,4 +225,40 @@ void main() {
     expect(controller.state.failure, 'Could not save the connection settings.');
     expect(store.saveCalls, isEmpty);
   });
+
+  test('rejects an unparseable SOCKS proxy before contacting Stash', () async {
+    final store = FakeConnectionStore();
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+
+    await controller.testAndSave(
+      const ConnectionConfig(
+        serverUrl: 'https://stash.test',
+        socksProxy: 'not a proxy',
+      ),
+    );
+
+    expect(controller.state.phase, ConnectionPhase.failed);
+    expect(controller.state.proxyFieldError, isNotNull);
+    expect(store.saveCalls, isEmpty);
+  });
+
+  test('accepts a blank SOCKS proxy as meaning no proxy', () async {
+    final store = FakeConnectionStore();
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+
+    await controller.testAndSave(
+      const ConnectionConfig(serverUrl: 'https://stash.test'),
+    );
+
+    expect(controller.state.phase, ConnectionPhase.ready);
+    expect(controller.state.proxyFieldError, isNull);
+  });
 }

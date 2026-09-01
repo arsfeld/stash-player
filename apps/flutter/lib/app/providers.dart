@@ -2,12 +2,14 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../domain/connection.dart';
 import '../features/connection/connection_controller.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
+import '../services/socks_forward_proxy.dart';
 import '../services/stash_api.dart';
 import '../services/thumbnail_repository.dart';
 
@@ -19,9 +21,25 @@ final environmentProvider = Provider<Map<String, String>>(
   (ref) => Platform.environment,
 );
 
+/// The loopback forward proxy every outbound request may be routed
+/// through, or null when the app is running without one.
+///
+/// App bootstrap binds it and overrides this provider with the result;
+/// binding is async, which a synchronous provider body cannot do. Null is
+/// the honest value for a test (and for a bootstrap whose bind failed):
+/// with no proxy to hop through, requests go direct.
+final socksForwardProxyProvider = Provider<SocksForwardProxy?>((ref) => null);
+
 /// A single shared HTTP client for the lifetime of the app.
+///
+/// `findProxy` is consulted per request and reads the proxy's *current*
+/// state, so changing the SOCKS setting takes effect without rebuilding
+/// this client or anything holding it.
 final httpClientProvider = Provider<http.Client>((ref) {
-  final client = http.Client();
+  final proxy = ref.watch(socksForwardProxyProvider);
+  final client = IOClient(
+    HttpClient()..findProxy = (_) => proxy?.proxyDirective ?? 'DIRECT',
+  );
   ref.onDispose(client.close);
   return client;
 });

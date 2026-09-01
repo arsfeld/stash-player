@@ -40,6 +40,12 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   path_provider: ^2.1.6
   crypto: ^3.0.7
+
+  # StreamQueue, for reading a byte-exact protocol preamble off a socket and
+  # then handing the unconsumed remainder to the splice. Already resolved
+  # transitively via flutter; declared directly to satisfy
+  # depend_on_referenced_packages.
+  async: ^2.13.0
   path: ^1.9.1
   url_launcher: ^6.3.2
 
@@ -54,6 +60,12 @@ dev_dependencies:
   # Already resolved transitively via flutter_test; declared directly here
   # to satisfy depend_on_referenced_packages.
   fake_async: ^1.3.3
+
+  # In-memory SharedPreferencesAsync, so platform_connection_store_test can
+  # exercise the real store without a platform channel. Resolved transitively
+  # via shared_preferences; declared directly to satisfy
+  # depend_on_referenced_packages.
+  shared_preferences_platform_interface: ^2.4.2
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

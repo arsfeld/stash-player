@@ -63,6 +63,42 @@ void main() {
     expect(find.textContaining('Could not reach Stash'), findsNothing);
   });
 
+  testWidgets('submits the SOCKS proxy that was typed', (tester) async {
+    final store = FakeConnectionStore();
+    final controller = ConnectionController(
+      store: store,
+      environment: const {},
+      apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+    );
+    await _pump(tester, controller: controller);
+
+    await tester.enterText(_serverUrlField, 'https://stash.test');
+    await tester.enterText(_socksProxyField, '127.0.0.1:1055');
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+
+    expect(store.saveCalls.single.socksProxy, '127.0.0.1:1055');
+  });
+
+  testWidgets('shows proxy validation under the proxy field', (tester) async {
+    final controller = _controller();
+    await _pump(tester, controller: controller);
+
+    await tester.enterText(_serverUrlField, 'https://stash.test');
+    await tester.enterText(_socksProxyField, 'not a proxy');
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(_socksProxyField).decoration!.errorText,
+      'Enter the proxy as host or host:port.',
+    );
+    expect(
+      tester.widget<TextField>(_serverUrlField).decoration!.errorText,
+      isNull,
+    );
+  });
+
   testWidgets('shows server errors and finishes only after a success', (
     tester,
   ) async {
@@ -257,4 +293,5 @@ Future<void> _pump(
 );
 
 final _serverUrlField = find.byKey(const Key('connection-server-url'));
+final _socksProxyField = find.byKey(const Key('connection-socks-proxy'));
 final _apiKeyField = find.byKey(const Key('connection-api-key'));

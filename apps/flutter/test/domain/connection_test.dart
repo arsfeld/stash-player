@@ -59,4 +59,33 @@ void main() {
       expect(result.serverUrl, 'https://env.test');
     });
   });
+
+  group('overlayEnvironment: STASH_SOCKS_PROXY', () {
+    test('an absent key leaves the stored value intact', () {
+      final result = overlayEnvironment(
+        const ConnectionConfig(socksProxy: '127.0.0.1:1055'),
+        const {},
+      );
+
+      expect(result.socksProxy, '127.0.0.1:1055');
+    });
+
+    test('an explicitly empty key overrides the stored value to empty', () {
+      final result = overlayEnvironment(
+        const ConnectionConfig(socksProxy: '127.0.0.1:1055'),
+        const {'STASH_SOCKS_PROXY': ''},
+      );
+
+      expect(result.socksProxy, isEmpty);
+    });
+
+    test('a present non-empty key overrides the stored value', () {
+      final result = overlayEnvironment(
+        const ConnectionConfig(socksProxy: '127.0.0.1:1055'),
+        const {'STASH_SOCKS_PROXY': '10.0.0.1:1080'},
+      );
+
+      expect(result.socksProxy, '10.0.0.1:1080');
+    });
+  });
 }

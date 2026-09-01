@@ -33,6 +33,7 @@ class ConnectionScreen extends ConsumerStatefulWidget {
 class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   late final TextEditingController _urlController;
   late final TextEditingController _apiKeyController;
+  late final TextEditingController _socksProxyController;
   late final FocusNode _urlFocusNode;
   late final FocusNode _apiKeyFocusNode;
   var _showApiKey = false;
@@ -49,6 +50,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
     _seed = widget.initialConfig ?? const ConnectionConfig();
     _urlController = TextEditingController(text: _seed.serverUrl);
     _apiKeyController = TextEditingController(text: _seed.apiKey);
+    _socksProxyController = TextEditingController(text: _seed.socksProxy);
     _urlFocusNode = FocusNode();
     _apiKeyFocusNode = FocusNode();
     if (widget.initialConfig == null) {
@@ -68,6 +70,9 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
     if (_apiKeyController.text == _seed.apiKey) {
       _apiKeyController.text = config.apiKey;
     }
+    if (_socksProxyController.text == _seed.socksProxy) {
+      _socksProxyController.text = config.socksProxy;
+    }
     _seed = config;
   }
 
@@ -75,6 +80,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   void dispose() {
     _urlController.dispose();
     _apiKeyController.dispose();
+    _socksProxyController.dispose();
     _urlFocusNode.dispose();
     _apiKeyFocusNode.dispose();
     super.dispose();
@@ -153,6 +159,22 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                TextField(
+                  key: const Key('connection-socks-proxy'),
+                  controller: _socksProxyController,
+                  enabled: !loading,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: 'SOCKS5 proxy (optional)',
+                    helperText:
+                        'Reach Stash through a SOCKS5 proxy, for a server '
+                        'only routable that way. Tailscale in userspace mode '
+                        'listens on 127.0.0.1:1055.',
+                    helperMaxLines: 3,
+                    errorText: state.proxyFieldError,
+                  ),
+                ),
                 if (state.failure case final String failure) ...[
                   const SizedBox(height: 16),
                   Text(
@@ -181,6 +203,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                                 ConnectionConfig(
                                   serverUrl: _urlController.text,
                                   apiKey: _apiKeyController.text,
+                                  socksProxy: _socksProxyController.text,
                                 ),
                               ),
                         child: loading

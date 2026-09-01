@@ -622,6 +622,10 @@ class PlaybackController extends ChangeNotifier {
   );
 }
 
+/// Builds one [PlaybackEngine], optionally routing its media requests
+/// through an HTTP proxy at [httpProxyUrl].
+typedef PlaybackEngineFactory = PlaybackEngine Function({String? httpProxyUrl});
+
 /// Constructs one concrete [PlaybackEngine] instance. Production's
 /// default is a real [MediaKitPlaybackEngine], which starts native
 /// playback libraries — tests override *this* provider (not
@@ -629,7 +633,7 @@ class PlaybackController extends ChangeNotifier {
 /// with a factory that hands back a `FakePlaybackEngine` instead, the
 /// same way `stashApiFactoryProvider` lets `LibraryController` tests
 /// swap in a `FakeStashApi`.
-final playbackEngineFactoryProvider = Provider<PlaybackEngine Function()>(
+final playbackEngineFactoryProvider = Provider<PlaybackEngineFactory>(
   (ref) => MediaKitPlaybackEngine.new,
 );
 
@@ -654,10 +658,15 @@ final playbackEngineFactoryProvider = Provider<PlaybackEngine Function()>(
 /// this provider's own body — the `ref.watch(connectionGenerationProvider)`
 /// call above — genuinely exercised, rather than replacing it with a
 /// test-authored reimplementation of what the fix is supposed to do.
+/// Also watches [socksForwardProxyProvider] so the engine is built knowing
+/// where to send its own requests. libmpv does its networking in C, outside
+/// the `http.Client` everything else here shares, so the proxy has to be
+/// handed to it explicitly rather than inherited.
 final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
   ref.watch(connectionGenerationProvider);
+  final proxy = ref.watch(socksForwardProxyProvider);
   final factory = ref.watch(playbackEngineFactoryProvider);
-  return factory();
+  return factory(httpProxyUrl: proxy?.httpProxyUrl);
 });
 
 /// [PlaybackController] provider. Rebuilt — a fresh controller, which

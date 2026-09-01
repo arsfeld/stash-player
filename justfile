@@ -23,30 +23,17 @@ app_bundle := flutter_dir / "build/macos/Build/Products/Debug/Stash Player Flutt
 flutter_bin := `command -v flutter 2>/dev/null || true`
 pod_bin := `command -v pod 2>/dev/null || true`
 
-# Where the Flutter client should look for Stash. Defaults to the bridge.
-bridge_port := env("SOCKS_BRIDGE_PORT", "18999")
-stash_url := env("STASH_URL", "http://127.0.0.1:" + bridge_port)
-# Real server behind the SOCKS proxy. No default: nobody else's host belongs
-# in a checked-in file.
-stash_upstream := env("STASH_UPSTREAM", "")
+# Where the Flutter client should look for Stash. Defaults to the mock.
+stash_url := env("STASH_URL", "http://127.0.0.1:9999")
+# SOCKS5 proxy to reach it through, for a server only routable that way.
+# Tailscale in userspace mode listens on 127.0.0.1:1055. Empty means direct.
+socks_proxy := env("STASH_SOCKS_PROXY", "")
 
 [private]
 default:
     @just --list
 
 # ---------------------------------------------------------------- backends
-
-# Front a SOCKS5-only Stash server (Tailscale userspace mode) on localhost.
-bridge upstream=stash_upstream:
-    @if [ -z "{{ upstream }}" ]; then \
-      echo "Pass an upstream or set STASH_UPSTREAM:" >&2; \
-      echo "  just bridge https://stash.example.ts.net" >&2; \
-      exit 2; \
-    fi
-    SOCKS_BRIDGE_UPSTREAM="{{ upstream }}" \
-    SOCKS_BRIDGE_PORT="{{ bridge_port }}" \
-    SOCKS_BRIDGE_VERBOSE="${SOCKS_BRIDGE_VERBOSE:-1}" \
-      python3 tools/socks-bridge/server.py
 
 # Offline mock Stash. Library and metadata work; /stream is a 404 by design.
 mock:
@@ -70,6 +57,7 @@ flutter-env:
     @{{ _clean }} sh -c 'echo "xcrun   : $(command -v xcrun) ($(xcrun --version | head -1))"'
     @{{ _clean }} sh -c 'echo "sdk     : $(xcrun --sdk macosx --show-sdk-path)"'
     @echo "stash   : {{ stash_url }}"
+    @echo "socks   : {{ if socks_proxy == "" { "direct" } else { socks_proxy } }}"
 
 # Everything CI checks, in CI's order.
 flutter-check: _needs-flutter
@@ -107,10 +95,11 @@ flutter-launch:
     else
       key="$(security find-generic-password -s stash-player -a stash-api-key -w 2>/dev/null || true)"
     fi
-    echo "launching against {{ stash_url }}"
+    echo "launching against {{ stash_url }}{{ if socks_proxy == "" { "" } else { " via SOCKS " + socks_proxy } }}"
     exec env -i HOME="$HOME" USER="$USER" TMPDIR=/tmp LANG=en_US.UTF-8 \
       PATH=/usr/bin:/bin:/usr/sbin:/sbin \
       STASH_URL="{{ stash_url }}" STASH_API_KEY="$key" \
+      STASH_SOCKS_PROXY="{{ socks_proxy }}" \
       "{{ app_bundle }}/Contents/MacOS/Stash Player Flutter"
 
 # -------------------------------------------------------------------- rust
