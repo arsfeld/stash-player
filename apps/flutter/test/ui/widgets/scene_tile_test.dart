@@ -83,9 +83,11 @@ void main() {
       // The tile shows a placeholder rather than failing when it has no
       // repository, which is the same path a failed fetch takes. The
       // placeholder's label merges into the tile's single outer button
-      // semantics node on purpose, matching SceneCard's documented
-      // convention, so the widget type rather than a standalone
-      // semantics label is the right thing to assert here.
+      // semantics node on purpose, matching the convention documented in
+      // `library_screen_test.dart`'s "a missing/failed thumbnail falls
+      // back to the shared placeholder" test, so the widget type rather
+      // than a standalone semantics label is the right thing to assert
+      // here.
       expect(find.byType(ScenePlaceholder), findsOneWidget);
     });
 

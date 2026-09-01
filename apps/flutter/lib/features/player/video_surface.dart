@@ -12,8 +12,8 @@ import 'playback_controller.dart';
 /// built, which for the real `MediaKitPlaybackEngine` is a `Video` widget
 /// constructed entirely inside `lib/services/media_kit_playback_engine.dart`
 /// — the only file (besides its own test) allowed to import that
-/// package. This widget, `scene_screen.dart`, and `transport_controls.dart`
-/// stay package-independent.
+/// package. This widget, `scene_screen.dart`, and the player chrome
+/// (`player_top_bar.dart`, `player_bar.dart`) stay package-independent.
 class VideoSurface extends StatelessWidget {
   const VideoSurface({required this.controller, super.key});
 

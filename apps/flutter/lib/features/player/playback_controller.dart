@@ -682,9 +682,13 @@ final playbackEngineProvider = Provider<PlaybackEngine>((ref) {
 /// Linux fullscreen is unverifiable headlessly) — shipping an unverifiable
 /// implementation as "done" would repeat the exact mistake C4 named.
 /// Reporting `false` keeps [setFullscreen] honest: [PlaybackState.fullscreen]
-/// never flips to `true`, so `TransportControls` can disable the fullscreen
-/// button instead of offering a control that lies about window state. A
-/// real [setFullscreenPlatform] (Linux: GTK `gtk_window_fullscreen` via the
+/// never flips to `true`. There is no fullscreen button in the player
+/// chrome to disable — `player_top_bar.dart` and `player_bar.dart` never
+/// shipped one — so the F and Escape shortcuts (`player_shortcuts.dart`,
+/// mapped to [PlayerAction.toggleFullscreen] and
+/// [PlayerAction.exitFullscreen]) stay wired and simply no-op through this
+/// requester instead of pretending fullscreen took effect. A real
+/// [setFullscreenPlatform] (Linux: GTK `gtk_window_fullscreen` via the
 /// runner or a `window_manager`-class dependency; macOS:
 /// `NSWindow.toggleFullScreen(_:)`, as the SwiftUI app already does) is
 /// clearly-scoped follow-up work, not part of this fix.
