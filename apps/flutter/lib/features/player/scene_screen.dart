@@ -54,14 +54,14 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   bool _controlsFocused = false;
   bool _metadataOpen = false;
 
-  /// Fix round 2 of this task's own review: the top bar and the player bar
-  /// live in different `Positioned` subtrees (the failure banner has to sit
-  /// between them in the top bar's own `Column`; see `_buildSceneStack`'s
-  /// own doc), so each needs its own `FadeTransition`. Feeding both from
-  /// this *one* controller (rather than two independent `AnimatedOpacity`s
-  /// each computing `effectiveVisible ? 1 : 0` from the same inputs) is
-  /// what makes "both bars fade as one unit" structurally impossible to
-  /// desync again, rather than merely true today by construction.
+  /// The top bar and the player bar live in different `Positioned`
+  /// subtrees (the failure banner has to sit between them in the top
+  /// bar's own `Column`; see `_buildSceneStack`'s own doc), so each needs
+  /// its own `FadeTransition`. Feeding both from this *one* controller
+  /// (rather than two independent `AnimatedOpacity`s each computing
+  /// `effectiveVisible ? 1 : 0` from the same inputs) is what makes "both
+  /// bars fade as one unit" structurally impossible to desync, rather
+  /// than merely true today by construction.
   late final AnimationController _controlsFadeController;
 
   // `PlaybackController` is a `ChangeNotifier` exposed through a
@@ -400,12 +400,11 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                 onOpenInStash: () => _openInStash(scene.id),
               ),
             // 2. Controls overlay: a top bar pinned to the video's top edge
-            // and a player bar pinned to its bottom edge. Fix round 1 of
-            // this task's own review: the banner below shares the top
-            // bar's `Column` (not a second, independently-`Positioned`
-            // widget guessing a pixel offset) so the two can never
-            // overlap: Flutter measures the top bar's real height and
-            // lays the banner out directly beneath it, at any window
+            // and a player bar pinned to its bottom edge. The banner below
+            // shares the top bar's `Column` (not a second, independently-
+            // `Positioned` widget guessing a pixel offset) so the two can
+            // never overlap: Flutter measures the top bar's real height
+            // and lays the banner out directly beneath it, at any window
             // width or message length, with no hardcoded number anywhere.
             //
             // One shared `FocusScope` wraps both bars (not one each): a
@@ -421,12 +420,12 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
             // opacity only ever applies to a widget's own descendants, so
             // a `Column` sibling of the top bar's fade subtree is the only
             // way for the banner to be laid out relative to it without
-            // inheriting its opacity. Fix round 2 of this task's own
-            // review: both `FadeTransition`s read [_controlsFadeController]
-            // itself (the *same* `Animation<double>` object), not two
-            // independent widgets each computing the same target value, so
-            // "both bars fade as one unit" is structurally guaranteed
-            // rather than merely true by coincidence of matching inputs.
+            // inheriting its opacity. Both `FadeTransition`s read
+            // [_controlsFadeController] itself (the *same*
+            // `Animation<double>` object), not two independent widgets
+            // each computing the same target value, so "both bars fade as
+            // one unit" is structurally guaranteed rather than merely
+            // true by coincidence of matching inputs.
             Positioned.fill(
               child: FocusScope(
                 onFocusChange: (value) => _setControlsFocused(value, playback),
@@ -740,10 +739,10 @@ class _TransientPlaybackFailureBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // No `Positioned` here (fix round 1 of this task's own review): this is
-    // now placed as a `Column` child, immediately below `PlayerTopBar`, by
-    // its caller in `_buildSceneStack`; see that call site's own doc for
-    // why. A `Positioned` is only valid directly under a `Stack`.
+    // No `Positioned` here: this is placed as a `Column` child,
+    // immediately below `PlayerTopBar`, by its caller in
+    // `_buildSceneStack`; see that call site's own doc for why. A
+    // `Positioned` is only valid directly under a `Stack`.
     return SafeArea(
       bottom: false,
       child: Material(
