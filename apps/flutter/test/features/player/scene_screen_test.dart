@@ -219,31 +219,26 @@ _TestHarness _harness({
 /// showed about their appearance would be about the wrong theme. It also
 /// carries no `AppTokens`, which every widget under `lib/ui/` needs.
 ///
-/// [brightness] defaults to light because light is the case that breaks:
-/// the drawer's panel is always dark, so light is where text taken from
-/// the app theme lands on a surface that ignores it.
-Widget _app(
-  ProviderContainer container,
-  String sceneId, {
-  Brightness brightness = Brightness.light,
-}) => UncontrolledProviderScope(
-  container: container,
-  child: MaterialApp(
-    theme: buildAppTheme(brightness),
-    home: SceneScreen(sceneId: sceneId),
-  ),
-);
+/// Light rather than dark because light is the case that breaks: the
+/// drawer's panel is always dark, so light is where text taken from the
+/// app theme lands on a surface that ignores it. Both brightnesses are
+/// covered directly in `scene_metadata_drawer_test.dart`.
+Widget _app(ProviderContainer container, String sceneId) =>
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        theme: buildAppTheme(Brightness.light),
+        home: SceneScreen(sceneId: sceneId),
+      ),
+    );
 
 Future<void> _pumpReadyScene(
   WidgetTester tester,
   _TestHarness harness,
   Scene scene, {
   bool play = true,
-  Brightness brightness = Brightness.light,
 }) async {
-  await tester.pumpWidget(
-    _app(harness.container, scene.id, brightness: brightness),
-  );
+  await tester.pumpWidget(_app(harness.container, scene.id));
   await tester.pump();
   harness.api.calls.single.completer.complete(scene);
   await tester.pumpAndSettle();
