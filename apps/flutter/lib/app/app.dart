@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ui/theme/app_theme.dart';
 import 'app_controller.dart';
 import 'app_router.dart';
 import 'notices.dart';
@@ -54,12 +55,8 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
       title: 'Stash Player Flutter',
       scaffoldMessengerKey: _scaffoldMessengerKey,
       themeMode: ThemeMode.system,
-      theme: ThemeData(colorSchemeSeed: Colors.deepPurple, useMaterial3: true),
-      darkTheme: ThemeData(
-        colorSchemeSeed: Colors.deepPurple,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
       home: const AppRouter(),
     );
   }

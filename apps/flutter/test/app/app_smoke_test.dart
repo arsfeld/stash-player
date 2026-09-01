@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 
 import '../support/fakes.dart';
 
@@ -99,10 +100,11 @@ void main() {
       final expectedColor = Theme.of(themeContext).colorScheme.error;
 
       expect(snackBar.backgroundColor, expectedColor);
-      // Sanity check this isn't just coincidentally matching: the Material
-      // fallback ThemeData's error color (unseeded, default M3 baseline)
-      // differs from this app's deepPurple-seeded one.
-      expect(snackBar.backgroundColor, isNot(ThemeData().colorScheme.error));
+      // Sanity check this isn't just coincidentally matching: AppTokens is
+      // only registered by this app's real theme, never by the Material
+      // fallback ThemeData(), so its presence here proves the SnackBar
+      // resolved through the app's own Theme rather than a default one.
+      expect(Theme.of(themeContext).extension<AppTokens>(), isNotNull);
     },
   );
 }
