@@ -841,7 +841,7 @@ void main() {
   });
 
   group('SceneScreen: transport controls', () {
-    testWidgets('exposes play/pause, seek, volume, mute, fullscreen, and '
+    testWidgets('exposes play/pause, seek, volume, mute, and '
         'metadata controls with tooltips', (tester) async {
       final harness = _harness();
       addTearDown(harness.container.dispose);
@@ -852,12 +852,6 @@ void main() {
       expect(find.byKey(const Key('scene-seek-bar')), findsOneWidget);
       expect(find.byKey(const Key('scene-volume-slider')), findsOneWidget);
       expect(find.byTooltip('Mute'), findsOneWidget);
-      // Not "Fullscreen" — see the C4 fix: the control is disabled and
-      // says so until a real platform hook exists.
-      expect(
-        find.byTooltip('Fullscreen (not yet implemented)'),
-        findsOneWidget,
-      );
       expect(find.byTooltip('Show details'), findsOneWidget);
     });
 
@@ -1056,22 +1050,21 @@ void main() {
     );
 
     testWidgets('focusing a control suppresses auto-hide (fix round 1, item 4: '
-        'previously untested — the fragile one, since FocusScope.onFocusChange '
+        'previously untested, the fragile one, since FocusScope.onFocusChange '
         'depends on the implicit scope node actually reporting focus for a '
-        'descendant IconButton)', (tester) async {
+        'descendant PlayerIconButton)', (tester) async {
       final harness = _harness();
       addTearDown(harness.container.dispose);
       final scene = _scene();
       await _pumpReadyScene(tester, harness, scene);
 
-      // `find.byTooltip` locates the `Tooltip` wrapping the `IconButton`,
-      // and the `IconButton` element itself sits *above* the `Focus`
-      // node its own build method creates (via `InkResponse`) — so
-      // `Focus.of` on the tooltip or the button's own context finds no
-      // ancestor `Focus` at all and throws. The button's `icon` child
-      // ends up nested *inside* that internal `InkResponse`/`Focus`, so
-      // it's the shallowest context that actually has one as an
-      // ancestor. Find that instead.
+      // `find.byTooltip` locates the `Tooltip` wrapping the `PlayerIconButton`,
+      // and the button's own `InkWell` sits *above* the `Focus` node its
+      // build method creates internally, so `Focus.of` on the tooltip or
+      // the button's own context finds no ancestor `Focus` at all and
+      // throws. The button's `icon` child ends up nested *inside* that
+      // internal `InkWell`/`Focus`, so it's the shallowest context that
+      // actually has one as an ancestor. Find that instead.
       final muteButtonContext = tester.element(
         find.descendant(
           of: find.byTooltip('Mute'),
@@ -1283,9 +1276,9 @@ void main() {
     );
   });
 
-  group('SceneScreen: fullscreen (not yet implemented, final review C4)', () {
+  group('SceneScreen: fullscreen (deliberately absent from this chrome)', () {
     testWidgets(
-      'the fullscreen control is disabled and Escape is a harmless no-op',
+      'no fullscreen control is rendered and Escape is a harmless no-op',
       (tester) async {
         final harness = _harness();
         addTearDown(harness.container.dispose);
@@ -1293,28 +1286,22 @@ void main() {
         await _pumpReadyScene(tester, harness, scene);
 
         // No real platform fullscreen hook exists on any target yet, so
-        // the control must not claim it can do anything: disabled, with a
-        // tooltip that says so, rather than an icon that flips and lies.
-        final fullscreenButton = tester.widget<IconButton>(
-          find.descendant(
-            of: find.byTooltip('Fullscreen (not yet implemented)'),
-            matching: find.byType(IconButton),
-          ),
+        // the player bar simply has no fullscreen control at all, rather
+        // than a disabled one that claims a capability the OS was never
+        // asked for.
+        expect(
+          find.byTooltip('Fullscreen (not yet implemented)'),
+          findsNothing,
         );
-        expect(fullscreenButton.onPressed, isNull);
 
         // Escape still routes through `PlayerActionShortcuts` to
         // `PlaybackController.handleAction(PlayerAction.exitFullscreen)`,
-        // which is already a no-op when not fullscreen — confirm the key
-        // binding stays wired (per the C4 ruling) without crashing and
-        // without the tooltip ever claiming fullscreen was entered.
+        // which is already a no-op when not fullscreen: confirm the key
+        // binding stays wired without crashing, even with no fullscreen
+        // control anywhere in the tree to reflect a state change.
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
 
-        expect(
-          find.byTooltip('Fullscreen (not yet implemented)'),
-          findsOneWidget,
-        );
         expect(tester.takeException(), isNull);
         await _tearDownScene(tester, harness);
       },

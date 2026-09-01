@@ -10,10 +10,11 @@ import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
 import 'playback_controller.dart';
 import 'playback_state.dart';
+import 'player_bar.dart';
 import 'player_shortcuts.dart';
+import 'player_top_bar.dart';
 import 'scene_controller.dart';
 import 'scene_metadata_drawer.dart';
-import 'transport_controls.dart';
 import 'video_surface.dart';
 
 /// The video-first scene screen: a full-bleed `Stack` with the video
@@ -369,45 +370,88 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                 onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
                 onOpenInStash: () => _openInStash(scene.id),
               ),
-            if (showTransientFailureBanner)
-              _TransientPlaybackFailureBanner(
-                key: const Key('scene-transient-failure-banner'),
-                message: playback.failure ?? 'Playback ran into a problem.',
-                onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
-              ),
-            // 2. Controls overlay, docked to the bottom, auto-hiding.
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
+            // 2. Controls overlay: a top bar pinned to the video's top edge
+            // and a player bar pinned to its bottom edge, sharing one
+            // `AnimatedOpacity` so both fade together as a single unit (an
+            // unchanged property from the old single-widget transport).
+            // Each bar keeps its own tightly-scoped `MouseRegion`/
+            // `FocusScope` rather than one spanning the whole video: a
+            // `Column`+`Spacer` filling this `Positioned` needs the
+            // Positioned to span the full stack height (top bar at the
+            // top, player bar at the bottom), and a single `MouseRegion`
+            // over that full height would make hovering *anywhere* over
+            // the picture, not just the chrome, suppress auto-hide,
+            // breaking the video-vs-controls distinction this file's own
+            // "hovering the controls suppresses auto-hide" test pins
+            // against. A `Stack` with two independently-`Positioned`,
+            // independently-hover-scoped bars gets the same full-height
+            // layout without that regression.
+            Positioned.fill(
               child: IgnorePointer(
                 ignoring: !effectiveVisible,
                 child: AnimatedOpacity(
                   key: const Key('scene-controls-overlay'),
                   duration: _fadeDuration,
                   opacity: effectiveVisible ? 1 : 0,
-                  child: MouseRegion(
-                    onEnter: (_) => _setHovering(true, playback),
-                    onExit: (_) => _setHovering(false, playback),
-                    child: FocusScope(
-                      onFocusChange: (value) =>
-                          _setControlsFocused(value, playback),
-                      child: TransportControls(
-                        playback: playback,
-                        title: scene.displayTitle,
-                        metadataOpen: _metadataOpen,
-                        onBack: () => Navigator.of(context).maybePop(),
-                        onTogglePlayPause: playbackController.playPause,
-                        onSeek: playbackController.seekAbsolute,
-                        onVolumeChanged: playbackController.setVolume,
-                        onToggleMute: playbackController.toggleMute,
-                        onToggleMetadata: () => _toggleMetadata(playback),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: MouseRegion(
+                          onEnter: (_) => _setHovering(true, playback),
+                          onExit: (_) => _setHovering(false, playback),
+                          child: FocusScope(
+                            onFocusChange: (value) =>
+                                _setControlsFocused(value, playback),
+                            child: PlayerTopBar(
+                              title: scene.displayTitle,
+                              metadataOpen: _metadataOpen,
+                              onBack: () => Navigator.of(context).maybePop(),
+                              onToggleMetadata: () => _toggleMetadata(playback),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: MouseRegion(
+                          onEnter: (_) => _setHovering(true, playback),
+                          onExit: (_) => _setHovering(false, playback),
+                          child: FocusScope(
+                            onFocusChange: (value) =>
+                                _setControlsFocused(value, playback),
+                            child: PlayerBar(
+                              playback: playback,
+                              onTogglePlayPause: playbackController.playPause,
+                              onSeek: playbackController.seekAbsolute,
+                              onVolumeChanged: playbackController.setVolume,
+                              onToggleMute: playbackController.toggleMute,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
+            // Stacked above the controls overlay (not below, as it used to
+            // be listed before Task 8's rewrite): the transient banner is
+            // top-pinned, same as `PlayerTopBar` now is, and must stay
+            // reachable and un-occluded regardless of the controls'
+            // auto-hide fade, rather than sitting underneath a `MouseRegion`
+            // that (per `MouseRegion`'s own default `HitTestBehavior.opaque`)
+            // would otherwise swallow every tap across the whole top strip.
+            if (showTransientFailureBanner)
+              _TransientPlaybackFailureBanner(
+                key: const Key('scene-transient-failure-banner'),
+                message: playback.failure ?? 'Playback ran into a problem.',
+                onRetry: () => ref.read(sceneControllerProvider).load(scene.id),
+              ),
             // 3. Metadata drawer, aligned right, capped at 420 logical
             // pixels, sliding over the video rather than reflowing it. A
             // `Positioned` (top/right/bottom pinned, explicit width) rather
@@ -570,9 +614,9 @@ class _SceneUnavailableView extends StatelessWidget {
 /// Overlay shown over the black video surface when
 /// `_shouldShowBlockingPlaybackFailure` is true: the scene's own title and
 /// metadata toggle stay reachable, per the brief's Step 6 ("leave scene
-/// title and metadata button enabled over the black surface") — but via
-/// `TransportControls`, still rendered beneath this overlay (a failed,
-/// non-playing scene never auto-hides — see `_suppressHide`), rather than
+/// title and metadata button enabled over the black surface"), but via
+/// `PlayerTopBar`, still rendered beneath this overlay (a failed,
+/// non-playing scene never auto-hides, see `_suppressHide`), rather than
 /// a second, duplicate button here.
 class _PlaybackFailureOverlay extends StatelessWidget {
   const _PlaybackFailureOverlay({
