@@ -23,6 +23,9 @@ app_bundle := flutter_dir / "build/macos/Build/Products/Debug/Stash Player Flutt
 flutter_bin := `command -v flutter 2>/dev/null || true`
 pod_bin := `command -v pod 2>/dev/null || true`
 
+# Where the Flutter client should look for Stash. Defaults to the mock.
+stash_url := env("STASH_URL", "http://127.0.0.1:9999")
+
 
 [private]
 default:
@@ -51,8 +54,8 @@ flutter-env:
     @echo "pod     : {{ if pod_bin == "" { "NOT FOUND" } else { pod_bin } }}"
     @{{ _clean }} sh -c 'echo "xcrun   : $(command -v xcrun) ($(xcrun --version | head -1))"'
     @{{ _clean }} sh -c 'echo "sdk     : $(xcrun --sdk macosx --show-sdk-path)"'
-    @echo "stash   : ${STASH_URL-(saved settings)}"
-    @echo "socks   : ${STASH_SOCKS_PROXY-(saved settings)}"
+    @echo "stash   : {{ stash_url }}"
+    @echo "socks   : ${STASH_SOCKS_PROXY-(app setting)}"
 
 # Everything CI checks, in CI's order.
 flutter-check: _needs-flutter
@@ -75,12 +78,6 @@ flutter-run: flutter-build flutter-launch
 
 # Launch the already-built .app. Rebuild with `flutter-build` after Dart edits.
 # Single shell (shebang recipe) because the key lookup has to reach the exec.
-#
-# Each STASH_* variable is forwarded only when it is genuinely set in the
-# calling shell. The app treats a variable that is merely *present* as an
-# override, empty value included, so forwarding a defaulted-to-empty one
-# would silently wipe whatever the connection screen has saved and leave
-# that screen with no effect on a `just` launch.
 [macos]
 flutter-launch:
     #!/usr/bin/env bash
@@ -92,42 +89,35 @@ flutter-launch:
 
     # Seeded with the base environment rather than built up from empty:
     # bash 3.2, which is what /bin/bash still is on macOS, treats
-    # "${array[@]}" as an unbound variable under `set -u` when the array
-    # has no elements, and would abort the launch whenever nothing is
-    # being overridden.
+    # "${array[@]}" as an unbound variable under `set -u` when the array has
+    # no elements.
     launch_env=(HOME="$HOME" USER="$USER" TMPDIR=/tmp LANG=en_US.UTF-8
-                PATH=/usr/bin:/bin:/usr/sbin:/sbin)
-    overridden=""
-    override() {
-      launch_env+=("$1=$2")
-      overridden="$overridden $1"
-    }
+                PATH=/usr/bin:/bin:/usr/sbin:/sbin
+                STASH_URL="{{ stash_url }}")
 
-    if [ -n "${STASH_URL+set}" ]; then
-      override STASH_URL "$STASH_URL"
-    fi
-    if [ -n "${STASH_SOCKS_PROXY+set}" ]; then
-      override STASH_SOCKS_PROXY "$STASH_SOCKS_PROXY"
-    fi
-    # An explicitly empty STASH_API_KEY is a valid override (an
-    # unauthenticated server), so the keychain is consulted only when the
-    # variable is genuinely unset, and only when a server is being
-    # overridden too: a key without one belongs to whichever server the app
-    # already has saved.
+    # An explicitly empty STASH_API_KEY is a valid override (unauthenticated
+    # server), so only fall back to the keychain when it is genuinely unset.
     if [ -n "${STASH_API_KEY+set}" ]; then
-      override STASH_API_KEY "$STASH_API_KEY"
-    elif [ -n "${STASH_URL+set}" ]; then
-      key="$(security find-generic-password -s stash-player -a stash-api-key -w 2>/dev/null || true)"
-      if [ -n "$key" ]; then
-        override STASH_API_KEY "$key"
+      launch_env+=(STASH_API_KEY="$STASH_API_KEY")
+    else
+      launch_env+=(STASH_API_KEY="$(security find-generic-password -s stash-player -a stash-api-key -w 2>/dev/null || true)")
+    fi
+
+    # Unlike the two above, this is forwarded only when the calling shell
+    # actually sets it. The app reads a variable that is merely *present* as
+    # an override, empty value included, so forwarding a defaulted-to-empty
+    # one would wipe whatever proxy the connection screen has saved.
+    route=""
+    if [ -n "${STASH_SOCKS_PROXY+set}" ]; then
+      launch_env+=(STASH_SOCKS_PROXY="$STASH_SOCKS_PROXY")
+      if [ -n "$STASH_SOCKS_PROXY" ]; then
+        route=" via SOCKS $STASH_SOCKS_PROXY"
+      else
+        route=" directly (proxy explicitly disabled)"
       fi
     fi
 
-    if [ -z "$overridden" ]; then
-      echo "launching against the app's saved connection"
-    else
-      echo "launching with$overridden overridden"
-    fi
+    echo "launching against {{ stash_url }}$route"
     exec env -i "${launch_env[@]}" \
       "{{ app_bundle }}/Contents/MacOS/Stash Player Flutter"
 
