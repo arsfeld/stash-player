@@ -106,9 +106,19 @@ class SceneTile extends StatefulWidget {
 }
 
 class _SceneTileState extends State<SceneTile> {
+  /// Hover and press washes over the artwork.
+  ///
+  /// White at low alpha rather than the theme's `controlHover` /
+  /// `controlActive`: those are opaque greys for a control surface, and
+  /// this sits over arbitrary artwork.
+  static const Color _hoverWash = Color(0x1FFFFFFF);
+  static const Color _pressWash = Color(0x38FFFFFF);
+  static const Color _idleWash = Color(0x00FFFFFF);
+
   late final FocusNode _focusNode;
   bool _focused = false;
   bool _hovered = false;
+  bool _pressed = false;
 
   @override
   void initState() {
@@ -137,8 +147,22 @@ class _SceneTileState extends State<SceneTile> {
         child: InkWell(
           focusNode: _focusNode,
           onTap: widget.onOpen,
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) => setState(() => _pressed = false),
+          onTapCancel: () => setState(() => _pressed = false),
           onFocusChange: (focused) => setState(() => _focused = focused),
           borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          // Ink is the wrong mechanism for this tile, so it is turned off
+          // rather than left to paint where nobody can see it. An ink
+          // feature paints immediately above the Material hosting it and
+          // beneath the rest of that Material's subtree, so over an
+          // opaque thumbnail a splash is invisible no matter which
+          // Material hosts it. The wash below is the visible feedback
+          // instead, and unlike the `Card` this tile used to sit in, it
+          // works over artwork.
+          splashFactory: NoSplash.splashFactory,
+          hoverColor: Colors.transparent,
+          highlightColor: Colors.transparent,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
@@ -174,10 +198,17 @@ class _SceneTileState extends State<SceneTile> {
                         source: scene.paths.screenshot,
                         thumbnailRepository: widget.thumbnailRepository,
                       ),
-                      if (_hovered)
-                        const Positioned.fill(
-                          child: ColoredBox(color: Color(0x1FFFFFFF)),
+                      Positioned.fill(
+                        child: AnimatedContainer(
+                          key: const Key('scene-tile-wash'),
+                          duration: AppTokens.hoverDuration,
+                          color: switch ((_pressed, _hovered)) {
+                            (true, _) => _pressWash,
+                            (false, true) => _hoverWash,
+                            (false, false) => _idleWash,
+                          },
                         ),
+                      ),
                       if (scene.effectiveResume != null)
                         const Positioned(
                           left: AppTokens.space2,

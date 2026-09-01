@@ -640,17 +640,55 @@ void main() {
       await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
       await tester.pumpAndSettle();
 
-      for (final toggle in tester.widgetList<AppIconToggle>(
-        find.byType(AppIconToggle),
-      )) {
-        expect(toggle.tooltip, isNotEmpty);
-        expect(toggle.semanticLabel, isNotEmpty);
-      }
-      for (final action in tester.widgetList<AppIconAction>(
-        find.byType(AppIconAction),
-      )) {
-        expect(action.tooltip, isNotEmpty);
-        expect(action.semanticLabel, isNotEmpty);
+      // This test is the stated reason icon-only controls are acceptable
+      // at all, so it has to be able to fail. Asserting only that every
+      // widget found has a non-empty tooltip could not: both
+      // constructors already assert exactly that, so a widget capable of
+      // failing it cannot be constructed, and an empty strip passed the
+      // whole thing vacuously. Pinning the exact set fails instead when
+      // a control is dropped, when one is added without being listed
+      // here, when wording changes silently, and (through
+      // `find.byTooltip`) when the `Tooltip` stops being composed into
+      // the tree even though the field is still set.
+      const expectedToggles = <(String, String)>[
+        ('Sort descending', 'Sort descending'),
+        ('Organized: any', 'Organized filter: any'),
+        ('Hide scenes that have already been played', 'Hide tracked scenes'),
+      ];
+      const expectedActions = <(String, String)>[
+        ('Play random', 'Play a random scene'),
+        ('Connection settings', 'Connection settings'),
+      ];
+      const expectedMenus = ['Sort by', 'Minimum rating'];
+
+      final toggles = tester
+          .widgetList<AppIconToggle>(find.byType(AppIconToggle))
+          .toList();
+      expect(toggles, hasLength(expectedToggles.length));
+      expect(
+        toggles.map((toggle) => (toggle.tooltip, toggle.semanticLabel)),
+        expectedToggles,
+      );
+
+      final actions = tester
+          .widgetList<AppIconAction>(find.byType(AppIconAction))
+          .toList();
+      expect(actions, hasLength(expectedActions.length));
+      expect(
+        actions.map((action) => (action.tooltip, action.semanticLabel)),
+        expectedActions,
+      );
+
+      for (final tooltip in [
+        ...expectedToggles.map((entry) => entry.$1),
+        ...expectedActions.map((entry) => entry.$1),
+        ...expectedMenus,
+      ]) {
+        expect(
+          find.byTooltip(tooltip),
+          findsOneWidget,
+          reason: 'no strip control renders the tooltip "$tooltip"',
+        );
       }
     });
   });
@@ -878,38 +916,40 @@ void main() {
   });
 
   group('keyboard reachability', () {
-    testWidgets(
-      'Tab reaches search, sort, direction, minimum rating, organized, '
-      'hide tracked, random, settings, and the first scene card, in order',
-      (tester) async {
-        final api = FakeStashApi()
-          ..pages.add(ScenePage(total: 2, scenes: _scenes(2)));
-        await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
-        await tester.pumpAndSettle();
+    testWidgets('Tab reaches sort, direction, minimum rating, organized, hide '
+        'tracked, random, search, settings, and the first scene card, in '
+        'the order they render', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 2, scenes: _scenes(2)));
+      await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
+      await tester.pumpAndSettle();
 
-        const expectedOrder = [
-          'library-search',
-          'library-sort',
-          'library-direction',
-          'library-minimum-rating',
-          'library-organized',
-          'library-hide-tracked',
-          'library-random',
-          'library-settings',
-          'scene-tile-0',
-        ];
+      // Focus order follows the wide strip's visual order (WCAG 2.4.3),
+      // so the search field is visited where it renders, seventh,
+      // rather than first. The narrow layout reads in a different
+      // order and pins its own sequence in the test above.
+      const expectedOrder = [
+        'library-sort',
+        'library-direction',
+        'library-minimum-rating',
+        'library-organized',
+        'library-hide-tracked',
+        'library-random',
+        'library-search',
+        'library-settings',
+        'scene-tile-0',
+      ];
 
-        for (final label in expectedOrder) {
-          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-          await tester.pump();
-          expect(
-            FocusManager.instance.primaryFocus?.debugLabel,
-            label,
-            reason: 'expected focus to reach $label next',
-          );
-        }
-      },
-    );
+      for (final label in expectedOrder) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          label,
+          reason: 'expected focus to reach $label next',
+        );
+      }
+    });
 
     testWidgets('Enter activates a focused scene card the same as a tap', (
       tester,

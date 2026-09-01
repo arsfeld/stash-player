@@ -22,34 +22,56 @@ class PlayerIconButton extends StatelessWidget {
   final VoidCallback onPressed;
   final bool filled;
 
+  /// The glyph on the [filled] variant's white pill, dark enough to read
+  /// against it.
+  static const Color _filledGlyph = Color(0xFF16181C);
+
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: tooltip,
-    child: Semantics(
-      button: true,
-      label: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(
-          filled ? 17 : AppTokens.radiusControl,
-        ),
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(filled ? 17 : AppTokens.radiusControl);
+    // Player chrome is always dark, so its hovered and pressed states are
+    // a wash of the glyph colour rather than the theme's controlHover /
+    // controlActive, which follow the app's brightness. The filled
+    // variant inverts: a solid white pill darkens instead of brightening.
+    final overlay = filled ? _filledGlyph : AppTokens.playerText;
+
+    return Tooltip(
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        label: tooltip,
         child: Container(
           width: filled ? 34 : 28,
           height: filled ? 34 : 28,
-          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: filled ? AppTokens.playerText : AppTokens.playerControl,
-            borderRadius: BorderRadius.circular(
-              filled ? 17 : AppTokens.radiusControl,
-            ),
+            borderRadius: radius,
           ),
-          child: Icon(
-            icon,
-            size: filled ? 18 : 15,
-            color: filled ? const Color(0xFF16181C) : AppTokens.playerText,
+          // A Material between the fill and the InkWell. Ink features
+          // paint directly above their host Material and below the rest
+          // of its subtree, so a control whose opaque background sits
+          // under its InkWell hides every splash it produces. The
+          // nearest Material here was the scene screen's Scaffold,
+          // behind the video.
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: onPressed,
+              hoverColor: overlay.withValues(alpha: 0.1),
+              highlightColor: overlay.withValues(alpha: 0.18),
+              splashColor: overlay.withValues(alpha: 0.18),
+              borderRadius: radius,
+              child: Center(
+                child: Icon(
+                  icon,
+                  size: filled ? 18 : 15,
+                  color: filled ? _filledGlyph : AppTokens.playerText,
+                ),
+              ),
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

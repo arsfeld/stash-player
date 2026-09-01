@@ -1,8 +1,10 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
 void main() {
@@ -44,6 +46,91 @@ void main() {
       expect(scaled.columnCount, plain.columnCount);
       expect(scaled.tileWidth, plain.tileWidth);
       expect(scaled.tileHeight, greaterThan(plain.tileHeight));
+    });
+  });
+
+  group('SceneTile pointer feedback', () {
+    // The tile lost its hover and press feedback when the redesign
+    // dropped the `Card` it used to sit in: its `InkWell` had no
+    // `Material` of its own left, so every splash painted under the
+    // `Scaffold`'s. Ink is the wrong mechanism here anyway, because an
+    // ink feature paints beneath the opaque thumbnail no matter which
+    // Material hosts it, so the tile expresses both states as a wash
+    // over the artwork instead. These assertions are what make that wash
+    // more than decoration.
+    Future<void> pumpTile(WidgetTester tester) => tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 240,
+              height: 200,
+              child: SceneTile(
+                scene: Scene(
+                  id: '1',
+                  paths: const ScenePaths(),
+                  title: 'A scene',
+                  files: const [],
+                ),
+                thumbnailRepository: null,
+                onOpen: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // The target colour, read after settling so it is also the rendered
+    // one.
+    Color wash(WidgetTester tester) {
+      final container = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('scene-tile-wash')),
+      );
+      return (container.decoration! as BoxDecoration).color!;
+    }
+
+    testWidgets('is invisible at rest, washes on hover, deepens on press', (
+      tester,
+    ) async {
+      await pumpTile(tester);
+      expect(wash(tester).a, 0, reason: 'an idle tile must not be washed');
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(find.byType(SceneTile)));
+      await tester.pumpAndSettle();
+      final hovered = wash(tester);
+      expect(hovered.a, greaterThan(0), reason: 'hover produces no feedback');
+
+      await gesture.down(tester.getCenter(find.byType(SceneTile)));
+      await tester.pump(kPressTimeout + const Duration(milliseconds: 50));
+      final pressed = wash(tester);
+      expect(
+        pressed.a,
+        greaterThan(hovered.a),
+        reason: 'a press must read as more than a hover',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(wash(tester), hovered);
+    });
+
+    testWidgets('the wash animates over the hover duration', (tester) async {
+      // Otherwise the token has nothing to drive here and the state
+      // change is a hard flip.
+      await pumpTile(tester);
+
+      expect(
+        tester
+            .widget<AnimatedContainer>(find.byKey(const Key('scene-tile-wash')))
+            .duration,
+        AppTokens.hoverDuration,
+      );
     });
   });
 

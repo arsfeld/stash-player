@@ -95,24 +95,45 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
 
     return Tooltip(
       message: widget.tooltip,
-      child: InkWell(
-        focusNode: widget.focusNode,
-        onTap: _open,
-        borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-        child: Container(
-          height: AppTokens.controlBandHeight,
-          padding: const EdgeInsets.symmetric(horizontal: AppTokens.space3),
-          decoration: BoxDecoration(
-            color: tokens.controlSurface,
+      child: Container(
+        height: AppTokens.controlBandHeight,
+        decoration: BoxDecoration(
+          color: tokens.controlSurface,
+          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+        ),
+        // A Material of its own, *between* the fill and the InkWell. An
+        // ink feature paints immediately above the Material hosting it
+        // and beneath the rest of that Material's subtree, so a control
+        // whose opaque background sits under its InkWell buries every
+        // splash and highlight it produces. The nearest Material here
+        // used to be the Scaffold's, two layers down, which left the
+        // whole strip inert under the pointer.
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            focusNode: widget.focusNode,
+            onTap: _open,
+            hoverColor: tokens.controlHover,
+            highlightColor: tokens.controlActive,
+            splashColor: tokens.controlActive,
             borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(label, style: theme.textTheme.labelMedium),
-              const SizedBox(width: AppTokens.space1),
-              Icon(Icons.arrow_drop_down, size: 16, color: tokens.textFaint),
-            ],
+            // Padding inside the InkWell, not on the fill above it, so
+            // hover and press cover the control's whole box.
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppTokens.space3),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: theme.textTheme.labelMedium),
+                  const SizedBox(width: AppTokens.space1),
+                  Icon(
+                    Icons.arrow_drop_down,
+                    size: 16,
+                    color: tokens.textFaint,
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -167,23 +188,45 @@ class AppIconToggle extends StatelessWidget {
       label: semanticLabel,
       child: Tooltip(
         message: tooltip,
-        child: InkWell(
-          focusNode: focusNode,
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-          child: AnimatedContainer(
-            duration: AppTokens.hoverDuration,
-            width: AppTokens.controlBandHeight + 2,
-            height: AppTokens.controlBandHeight,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? scheme.primary : tokens.controlSurface,
+        child: AnimatedContainer(
+          duration: AppTokens.hoverDuration,
+          width: AppTokens.controlBandHeight + 2,
+          height: AppTokens.controlBandHeight,
+          decoration: BoxDecoration(
+            color: selected ? scheme.primary : tokens.controlSurface,
+            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          ),
+          // See the matching note in AppMenuButton.build: this Material
+          // has to sit between the fill and the InkWell for ink to be
+          // visible at all.
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              focusNode: focusNode,
+              onTap: onPressed,
+              // The palette names a hovered and a pressed value for the
+              // control surface but none for the accent, so a selected
+              // control gets what Material gives any filled button
+              // instead: a wash of its own foreground colour. Both
+              // composite over the fill above, which is why the
+              // unselected pair can be the opaque tokens verbatim.
+              hoverColor: selected
+                  ? scheme.onPrimary.withValues(alpha: 0.12)
+                  : tokens.controlHover,
+              highlightColor: selected
+                  ? scheme.onPrimary.withValues(alpha: 0.2)
+                  : tokens.controlActive,
+              splashColor: selected
+                  ? scheme.onPrimary.withValues(alpha: 0.2)
+                  : tokens.controlActive,
               borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-            ),
-            child: Icon(
-              icon,
-              size: 16,
-              color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+              child: Center(
+                child: Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+                ),
+              ),
             ),
           ),
         ),
@@ -226,19 +269,29 @@ class AppIconAction extends StatelessWidget {
       label: semanticLabel,
       child: Tooltip(
         message: tooltip,
-        child: InkWell(
-          focusNode: focusNode,
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-          child: Container(
-            width: AppTokens.controlBandHeight + 2,
-            height: AppTokens.controlBandHeight,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: tokens.controlSurface,
+        child: Container(
+          width: AppTokens.controlBandHeight + 2,
+          height: AppTokens.controlBandHeight,
+          decoration: BoxDecoration(
+            color: tokens.controlSurface,
+            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          ),
+          // See the matching note in AppMenuButton.build: this Material
+          // has to sit between the fill and the InkWell for ink to be
+          // visible at all.
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              focusNode: focusNode,
+              onTap: onPressed,
+              hoverColor: tokens.controlHover,
+              highlightColor: tokens.controlActive,
+              splashColor: tokens.controlActive,
               borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+              child: Center(
+                child: Icon(icon, size: 16, color: scheme.onSurfaceVariant),
+              ),
             ),
-            child: Icon(icon, size: 16, color: scheme.onSurfaceVariant),
           ),
         ),
       ),

@@ -148,8 +148,13 @@ void main() {
     // The library screen no longer renders a title anywhere (the redesign
     // dropped its `AppBar`), so the widget type is what proves the library
     // isn't what's showing, not the absence of a word it used to render.
-    // `LibraryScreen` genuinely isn't built while a scene is on top (not
-    // merely offstage), confirmed empirically rather than assumed.
+    //
+    // What this asserts is that the library is not on screen, which is
+    // the property that matters here. It is not evidence that the screen
+    // was torn down: `find.byType` defaults to `skipOffstage: true`, so
+    // it cannot tell "never built" from "built but offstage", and
+    // `MaterialPage` keeps `maintainState: true`, so `LibraryScreen`
+    // does in fact stay built underneath the scene route.
     expect(find.byType(LibraryScreen), findsNothing);
 
     // `SceneScreen` is video-first with no `AppBar` (so no automatic

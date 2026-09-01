@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +19,10 @@ import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart'
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/services/external_url_launcher.dart';
 import 'package:stash_player_flutter/services/stash_api.dart';
+import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 
+import '../../support/contrast.dart';
 import '../../support/fake_playback_engine.dart';
 import '../../support/fakes.dart';
 
@@ -50,11 +54,10 @@ Scene _scene({
 );
 
 /// One recorded `findScene` call with its own completer, so a test can
-/// resolve or reject requests individually and out of order — mirrors
-/// `FakeStashApi`'s own `FindScenesCall` in `test/support/fakes.dart`, but
-/// kept local to this file (rather than extending the shared fake) since
-/// only `findScene` support is needed here and the brief's own file list
-/// scopes this task's test changes to `scene_screen_test.dart` alone.
+/// resolve or reject requests individually and out of order. Mirrors
+/// `FakeStashApi`'s own `FindScenesCall` in `test/support/fakes.dart`,
+/// but kept local to this file rather than extending the shared fake:
+/// only `findScene` support is needed here.
 class _FindSceneCall {
   _FindSceneCall(this.id);
   final String id;
@@ -208,19 +211,39 @@ _TestHarness _harness({
   );
 }
 
-Widget _app(ProviderContainer container, String sceneId) =>
-    UncontrolledProviderScope(
-      container: container,
-      child: MaterialApp(home: SceneScreen(sceneId: sceneId)),
-    );
+/// The scene screen under the app's own theme.
+///
+/// Not a bare `MaterialApp`: this file exercises the scene screen, the
+/// player bar, the top bar and the metadata drawer, and Flutter's
+/// default `ThemeData` is a theme the app never ships, so anything it
+/// showed about their appearance would be about the wrong theme. It also
+/// carries no `AppTokens`, which every widget under `lib/ui/` needs.
+///
+/// [brightness] defaults to light because light is the case that breaks:
+/// the drawer's panel is always dark, so light is where text taken from
+/// the app theme lands on a surface that ignores it.
+Widget _app(
+  ProviderContainer container,
+  String sceneId, {
+  Brightness brightness = Brightness.light,
+}) => UncontrolledProviderScope(
+  container: container,
+  child: MaterialApp(
+    theme: buildAppTheme(brightness),
+    home: SceneScreen(sceneId: sceneId),
+  ),
+);
 
 Future<void> _pumpReadyScene(
   WidgetTester tester,
   _TestHarness harness,
   Scene scene, {
   bool play = true,
+  Brightness brightness = Brightness.light,
 }) async {
-  await tester.pumpWidget(_app(harness.container, scene.id));
+  await tester.pumpWidget(
+    _app(harness.container, scene.id, brightness: brightness),
+  );
   await tester.pump();
   harness.api.calls.single.completer.complete(scene);
   await tester.pumpAndSettle();
@@ -612,8 +635,7 @@ void main() {
   group('SceneScreen: metadata drawer scrim (fix round 1, item 1)', () {
     testWidgets(
       'shows a scrim behind the drawer when open, and tapping it closes '
-      'the drawer — the brief\'s Step 4 explicitly requires a scrim, '
-      'which the original three-layer Stack omitted entirely',
+      'the drawer, which the original three-layer Stack omitted entirely',
       (tester) async {
         final harness = _harness();
         addTearDown(harness.container.dispose);
@@ -878,6 +900,39 @@ void main() {
       expect(find.textContaining('1920'), findsOneWidget);
       expect(find.textContaining('h264'), findsOneWidget);
       expect(find.textContaining('30'), findsOneWidget);
+      await _tearDownScene(tester, harness);
+    });
+  });
+
+  group('SceneScreen: metadata drawer under the app theme', () {
+    testWidgets('drawer text is legible on its panel in the shipped theme', (
+      tester,
+    ) async {
+      // The end-to-end half of the guard `scene_metadata_drawer_test.dart`
+      // makes in isolation. It belongs here too because this harness is
+      // what missed the defect: pumping a bare `MaterialApp` meant the
+      // largest widget-test file in the suite exercised the drawer under
+      // a theme the app never ships, and the drawer's text is invisible
+      // only under one the app does.
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final scene = _scene(title: 'A Real Title');
+      await _pumpReadyScene(tester, harness, scene);
+
+      await tester.tap(find.byTooltip('Show details'));
+      await tester.pumpAndSettle();
+
+      final title = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.byType(SceneMetadataDrawer),
+          matching: find.text('A Real Title'),
+        ),
+      );
+      expect(title.text.style?.color, AppTokens.playerText);
+      expect(
+        contrastRatio(title.text.style!.color!, SceneMetadataDrawer.panelColor),
+        greaterThan(4.5),
+      );
       await _tearDownScene(tester, harness);
     });
   });

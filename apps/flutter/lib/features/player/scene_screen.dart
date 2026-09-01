@@ -21,7 +21,7 @@ import 'video_surface.dart';
 /// surface behind everything, an auto-hiding transport overlay docked to
 /// the bottom, and a metadata drawer that slides in from the right — see
 /// [_SceneScreenState._buildSceneStack] for the exact three-layer
-/// composition the brief mandates. **Never** a `Row`, `NavigationRail`, or
+/// composition. **Never** a `Row`, `NavigationRail`, or
 /// resizing split pane: opening the drawer must never change the video
 /// surface's measured size (see `scene_screen_test.dart`'s own "does not
 /// resize the video" group).
@@ -510,9 +510,9 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
             // not resize the video" group at two window sizes.
             //
             // 3a. Scrim: dims everything behind the drawer while it's open
-            // and closes it on tap-outside (fix round 1, item 1 — the
-            // brief's Step 4 explicitly requires a scrim, which this
-            // Stack's very first version omitted entirely). `IgnorePointer`
+            // and closes it on tap-outside (fix round 1, item 1: a
+            // drawer over video needs one, and this Stack's very first
+            // version omitted it entirely). `IgnorePointer`
             // keeps it out of the hit-test tree — and so out of the way of
             // every other tap/hover in this Stack — whenever the drawer is
             // closed.
@@ -658,8 +658,7 @@ class _SceneUnavailableView extends StatelessWidget {
 
 /// Overlay shown over the black video surface when
 /// `_shouldShowBlockingPlaybackFailure` is true: the scene's own title and
-/// metadata toggle stay reachable, per the brief's Step 6 ("leave scene
-/// title and metadata button enabled over the black surface"), but via
+/// metadata toggle stay reachable over the black surface, but via
 /// `PlayerTopBar`, still rendered beneath this overlay (a failed,
 /// non-playing scene never auto-hides, see `_suppressHide`), rather than
 /// a second, duplicate button here.

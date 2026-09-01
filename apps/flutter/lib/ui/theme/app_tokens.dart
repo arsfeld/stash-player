@@ -63,8 +63,23 @@ class AppTokens extends ThemeExtension<AppTokens> {
   final Color controlActive;
   final Color textFaint;
 
-  static AppTokens of(BuildContext context) =>
-      Theme.of(context).extension<AppTokens>()!;
+  /// The [AppTokens] registered on the ambient theme.
+  ///
+  /// Asserts rather than letting the bare null check speak for itself: a
+  /// missing extension surfaces as "Null check operator used on a null
+  /// value" pointing into this file, which says nothing about the cause
+  /// or the fix and has already cost several people the time to work it
+  /// out from scratch.
+  static AppTokens of(BuildContext context) {
+    final tokens = Theme.of(context).extension<AppTokens>();
+    assert(
+      tokens != null,
+      'No AppTokens in the ambient Theme. Widgets under lib/ui/ need a '
+      'theme built by buildAppTheme(); a bare MaterialApp or ThemeData() '
+      'does not register the extension.',
+    );
+    return tokens!;
+  }
 
   @override
   AppTokens copyWith({

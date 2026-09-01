@@ -19,6 +19,16 @@ import '../theme/app_tokens.dart';
 ///
 /// Every control placed in [children] should be built to
 /// [AppTokens.controlBandHeight]; the band does not resize to fit.
+///
+/// The children are laid out in a plain [Row] with no overflow
+/// protection, deliberately: the strip cannot know which of them should
+/// give way when the window is narrow. Any child whose intrinsic width
+/// grows with its content (a title, a search field) must therefore
+/// arrive already wrapped in [Flexible] or [Expanded] and carry its own
+/// `overflow` behaviour, or the strip will render a `RenderFlex
+/// overflowed` at a width the rest of the app supports. The library
+/// toolbar flexes its search field; the connection screen flexes its
+/// title.
 class AppWindowChrome extends StatelessWidget {
   const AppWindowChrome({required this.children, super.key});
 

@@ -8,11 +8,11 @@ import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
 
 /// Width, in logical pixels, at and above which every control renders
-/// directly in one [Wrap]. Below it, only search and "Play random" stay
-/// in the primary row; the rest move into a collapsible second row,
-/// toggled by a "Filters" button (the brief's own wording explicitly
-/// allows either "wrap into a second row or Filters popup" — see the
-/// class doc for why this picked the row).
+/// directly in the strip. Below it only search, the filters trigger,
+/// "Play random" and settings stay there; sort, direction, minimum
+/// rating, organized and hide-tracked move into a collapsible second row
+/// underneath, toggled by a "Filters" button. See [LibraryToolbar]'s own
+/// doc for why that row is an ordinary descendant rather than a popup.
 const double libraryToolbarWideBreakpoint = 760;
 
 /// Advances the tristate "organized" filter one step: any, yes, no, any.
@@ -170,32 +170,45 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     },
   );
 
+  /// The strip at [libraryToolbarWideBreakpoint] and above.
+  ///
+  /// Tab order follows the visual order: the filter group, then the
+  /// search field, then settings. That is what WCAG 2.4.3 asks for, and
+  /// the two layouts read in different orders, so the order values
+  /// belong to a layout rather than to a control. See [_narrowControls]
+  /// for the other one.
   List<Widget> _wideControls() => [
-    _ordered(2, _sortMenu()),
+    _ordered(1, _sortMenu()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(3, _directionToggle()),
+    _ordered(2, _directionToggle()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(4, _minimumRatingMenu()),
+    _ordered(3, _minimumRatingMenu()),
     const _StripSeparator(),
-    _ordered(5, _organizedToggle()),
+    _ordered(4, _organizedToggle()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(6, _hideTrackedToggle()),
+    _ordered(5, _hideTrackedToggle()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(7, _playRandomButton()),
+    _ordered(6, _playRandomButton()),
     const SizedBox(width: AppTokens.space3),
-    Expanded(child: _ordered(1, _searchField())),
+    Expanded(child: _ordered(7, _searchField())),
     const SizedBox(width: AppTokens.space3),
     _ordered(8, _settingsButton()),
   ];
 
+  /// The strip below [libraryToolbarWideBreakpoint].
+  ///
+  /// Search leads here, because it is what renders first. The filters
+  /// trigger is followed immediately by the controls it reveals
+  /// ([_secondaryRow]'s 3 to 7) rather than by the rest of this row: Tab
+  /// should walk into the row it has just opened, not step over it.
   List<Widget> _narrowControls() => [
     Expanded(child: _ordered(1, _searchField())),
     const SizedBox(width: AppTokens.space2),
-    _ordered(1.5, _filtersToggleButton()),
+    _ordered(2, _filtersToggleButton()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(7, _playRandomButton()),
+    _ordered(8, _playRandomButton()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(8, _settingsButton()),
+    _ordered(9, _settingsButton()),
   ];
 
   Widget _secondaryRow() => Padding(
@@ -210,11 +223,11 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
       runSpacing: AppTokens.space2,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _ordered(2, _sortMenu()),
-        _ordered(3, _directionToggle()),
-        _ordered(4, _minimumRatingMenu()),
-        _ordered(5, _organizedToggle()),
-        _ordered(6, _hideTrackedToggle()),
+        _ordered(3, _sortMenu()),
+        _ordered(4, _directionToggle()),
+        _ordered(5, _minimumRatingMenu()),
+        _ordered(6, _organizedToggle()),
+        _ordered(7, _hideTrackedToggle()),
       ],
     ),
   );

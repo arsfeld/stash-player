@@ -124,9 +124,19 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                     onPressed: onCancel,
                   ),
                 const SizedBox(width: AppTokens.space3),
-                Text(
-                  'Connection settings',
-                  style: Theme.of(context).textTheme.titleMedium,
+                // Flexible, with its own overflow behaviour: the strip is
+                // a bare Row and cannot decide that for its children (see
+                // AppWindowChrome's doc). Unwrapped, this title takes its
+                // full intrinsic width and overflows a 400px window at a
+                // raised text scale, which on macOS has only
+                // `width - 78 - 12` to render into.
+                Flexible(
+                  child: Text(
+                    'Connection settings',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
               ],
             ),

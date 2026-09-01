@@ -192,6 +192,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the settings strip does not overflow at 400 wide and a raised '
+      'text scale', (tester) async {
+    // `AppWindowChrome` is a bare `Row` with no overflow protection, on
+    // purpose: it cannot know which of its children should give way. The
+    // title is therefore `Flexible` at this call site. Unwrapped, it took
+    // its full intrinsic width and threw `A RenderFlex overflowed` at a
+    // width the app already supports elsewhere (the library toolbar's own
+    // narrow breakpoint is 760). macOS is the worst case, because the
+    // strip has only `width - 78 - 12` to render into once the traffic
+    // lights are cleared.
+    final controller = _controller();
+    await _pump(
+      tester,
+      controller: controller,
+      settingsMode: true,
+      onCancel: () {},
+      size: const Size(400, 900),
+      textScaler: const TextScaler.linear(1.3),
+      platform: TargetPlatform.macOS,
+    );
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('mounts without initialConfig and fills fields from the loaded '
       'config', (tester) async {
     final store = FakeConnectionStore(
@@ -302,6 +326,7 @@ Future<void> _pump(
   ConnectionConfig? initialConfig = const ConnectionConfig(),
   Size? size,
   TextScaler textScaler = TextScaler.noScaling,
+  TargetPlatform? platform,
 }) {
   if (size != null) {
     addTearDown(tester.view.resetPhysicalSize);
@@ -316,7 +341,7 @@ Future<void> _pump(
         connectionControllerProvider.overrideWith((ref) => controller),
       ],
       child: MaterialApp(
-        theme: buildAppTheme(Brightness.light),
+        theme: buildAppTheme(Brightness.light).copyWith(platform: platform),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(textScaler: textScaler),
           child: child!,
