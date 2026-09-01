@@ -6,5 +6,11 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- The app binds a loopback listener to front Stash for libmpv, which
+	     can only be pointed at an HTTP proxy. Without this the sandbox
+	     refuses the bind and a SOCKS-only server becomes unreachable in
+	     release builds, while working fine in debug. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 </dict>
 </plist>

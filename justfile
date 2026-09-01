@@ -117,6 +117,11 @@ flutter-launch:
       fi
     fi
 
+    if [ "{{ stash_url }}" = "http://127.0.0.1:9999" ] && ! nc -z 127.0.0.1 9999 2>/dev/null; then
+      echo "warning: nothing is listening on the mock's port, so the app will" >&2
+      echo "         report that it cannot reach Stash. Start it with 'just mock'," >&2
+      echo "         or point STASH_URL at a real server (see .env)." >&2
+    fi
     echo "launching against {{ stash_url }}$route"
     exec env -i "${launch_env[@]}" \
       "{{ app_bundle }}/Contents/MacOS/Stash Player Flutter"
