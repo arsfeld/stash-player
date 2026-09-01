@@ -63,11 +63,7 @@ class AppEmptyView extends StatelessWidget {
 /// A centred failure state. Callers pass `Failure.userMessage`; the raw
 /// `Failure.message` can carry server text and must never reach here.
 class AppErrorView extends StatelessWidget {
-  const AppErrorView({
-    required this.message,
-    required this.onRetry,
-    super.key,
-  });
+  const AppErrorView({required this.message, required this.onRetry, super.key});
 
   final String message;
   final VoidCallback onRetry;
@@ -125,9 +121,7 @@ class AppInlineBanner extends StatelessWidget {
         children: [
           Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
           const SizedBox(width: AppTokens.space2),
-          Expanded(
-            child: Text(message, style: theme.textTheme.bodySmall),
-          ),
+          Expanded(child: Text(message, style: theme.textTheme.bodySmall)),
           TextButton(onPressed: onAction, child: Text(actionLabel)),
         ],
       ),
