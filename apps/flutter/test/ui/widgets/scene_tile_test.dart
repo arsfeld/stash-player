@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
@@ -80,8 +81,12 @@ void main() {
       expect(title.maxLines, 1);
       expect(title.overflow, TextOverflow.ellipsis);
       // The tile shows a placeholder rather than failing when it has no
-      // repository, which is the same path a failed fetch takes.
-      expect(find.bySemanticsLabel('Thumbnail unavailable'), findsOneWidget);
+      // repository, which is the same path a failed fetch takes. The
+      // placeholder's label merges into the tile's single outer button
+      // semantics node on purpose, matching SceneCard's documented
+      // convention, so the widget type rather than a standalone
+      // semantics label is the right thing to assert here.
+      expect(find.byType(ScenePlaceholder), findsOneWidget);
     });
 
     testWidgets('opens on tap', (tester) async {

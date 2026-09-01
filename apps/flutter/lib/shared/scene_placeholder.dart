@@ -22,14 +22,7 @@ class ScenePlaceholder extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return AspectRatio(
       aspectRatio: sceneThumbnailAspectRatio,
-      // `container: true` makes this placeholder its own semantics
-      // boundary. Its label is information about a failure (no
-      // screenshot, a failed fetch, a failed decode), and folding it into
-      // an enclosing button's merged label would both bury it in a
-      // longer announcement and make it unreachable by an exact-match
-      // lookup such as `find.bySemanticsLabel`.
       child: Semantics(
-        container: true,
         label: semanticLabel,
         image: true,
         child: Material(
