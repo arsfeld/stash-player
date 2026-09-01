@@ -298,15 +298,56 @@ Future<void> _tearDownScene(WidgetTester tester, _TestHarness harness) async {
   );
 }
 
-/// The controls overlay's current opacity — `1.0` fully visible, `0.0`
-/// auto-hidden. The overlay hides via `AnimatedOpacity` (plus
+/// Reduces an [AnimationStatus] to the `1.0`/`0.0` reading
+/// [_controlsOpacity] and [_playerBarOpacity] report, matching what
+/// `AnimatedOpacity.opacity` (the plain target double this test suite read
+/// pre-fix-round-2) always gave: the *target* the fade is driving toward,
+/// flipped synchronously the instant `AnimationController.forward()`/
+/// `.reverse()` is called, not the live interpolated value partway through
+/// a still-running transition. `forward`/`reverse` are set synchronously by
+/// those calls themselves (confirmed empirically: printing `.status`
+/// immediately after calling `.reverse()` already reads
+/// `AnimationStatus.reverse`, before any ticker has run a single frame),
+/// so this needs no `pumpAndSettle` and no change to any of this suite's
+/// pre-existing `expect(_controlsOpacity(tester), 1.0/0.0)` call sites.
+double _fadeTargetOpacity(AnimationStatus status) => switch (status) {
+  AnimationStatus.forward || AnimationStatus.completed => 1.0,
+  AnimationStatus.reverse || AnimationStatus.dismissed => 0.0,
+};
+
+/// The top bar's current fade target: `1.0` fully visible, `0.0`
+/// auto-hidden. The overlay hides via a `FadeTransition` (plus
 /// `IgnorePointer`), never by removing the widget from the tree, so
 /// `find.byTooltip(...)` alone can't distinguish "visible" from
-/// "auto-hidden but still present" — this reads the actual opacity value
-/// instead.
-double _controlsOpacity(WidgetTester tester) => tester
-    .widget<AnimatedOpacity>(find.byKey(const Key('scene-controls-overlay')))
-    .opacity;
+/// "auto-hidden but still present"; this reads the fade state instead.
+///
+/// Fix round 2 of this task's own review: both the top bar's and the
+/// player bar's `FadeTransition`s read the *same* `AnimationController`
+/// (`scene_screen.dart`'s own `_controlsFadeController`), so this value is
+/// exactly [_playerBarOpacity] at every point in time by construction, not
+/// merely by coincidence of matching inputs. See the "both bars fade as
+/// one unit" test below, which is the one place that structural guarantee
+/// is actually asserted rather than assumed.
+double _controlsOpacity(WidgetTester tester) => _fadeTargetOpacity(
+  tester
+      .widget<FadeTransition>(find.byKey(const Key('scene-controls-overlay')))
+      .opacity
+      .status,
+);
+
+/// The player bar's own fade key (fix round 2 of this task's own review):
+/// distinct from [_controlsOpacity]'s key so a test can tell the two
+/// `FadeTransition`s apart, even though both read the same
+/// `AnimationController` and so always agree; see [_controlsOpacity]'s
+/// own doc.
+double _playerBarOpacity(WidgetTester tester) => _fadeTargetOpacity(
+  tester
+      .widget<FadeTransition>(
+        find.byKey(const Key('scene-controls-overlay-player-bar')),
+      )
+      .opacity
+      .status,
+);
 
 void main() {
   group('resolveStashSceneUrl', () {
@@ -940,6 +981,35 @@ void main() {
         await tester.pump(const Duration(seconds: 4));
 
         expect(_controlsOpacity(tester), 0.0);
+        await _tearDownScene(tester, harness);
+      },
+    );
+
+    testWidgets(
+      'both bars fade as one unit (fix round 2 of this task\'s own review: '
+      'the top bar and the player bar share one AnimationController, so '
+      'the player bar\'s own fade can never silently drift from, or be '
+      'deleted without breaking, the top bar\'s)',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
+
+        // Fully visible on mount: both bars agree, not just the top one
+        // `_controlsOpacity` alone has always checked.
+        expect(_controlsOpacity(tester), 1.0);
+        expect(_playerBarOpacity(tester), 1.0);
+
+        await tester.pump(const Duration(seconds: 4));
+
+        // And fully hidden after auto-hide fires: still in lockstep. If
+        // the player bar's own `FadeTransition` (and its key) were ever
+        // deleted, `_playerBarOpacity` would throw here rather than let
+        // this pass: the exact "suite would stay green" gap the review
+        // flagged.
+        expect(_controlsOpacity(tester), 0.0);
+        expect(_playerBarOpacity(tester), 0.0);
         await _tearDownScene(tester, harness);
       },
     );

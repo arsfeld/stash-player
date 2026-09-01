@@ -43,7 +43,8 @@ class SceneScreen extends ConsumerStatefulWidget {
   ConsumerState<SceneScreen> createState() => _SceneScreenState();
 }
 
-class _SceneScreenState extends ConsumerState<SceneScreen> {
+class _SceneScreenState extends ConsumerState<SceneScreen>
+    with SingleTickerProviderStateMixin {
   static const _hideDelay = Duration(seconds: 3);
   static const _fadeDuration = Duration(milliseconds: 200);
 
@@ -52,6 +53,16 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
   bool _hoveringControls = false;
   bool _controlsFocused = false;
   bool _metadataOpen = false;
+
+  /// Fix round 2 of this task's own review: the top bar and the player bar
+  /// live in different `Positioned` subtrees (the failure banner has to sit
+  /// between them in the top bar's own `Column`; see `_buildSceneStack`'s
+  /// own doc), so each needs its own `FadeTransition`. Feeding both from
+  /// this *one* controller (rather than two independent `AnimatedOpacity`s
+  /// each computing `effectiveVisible ? 1 : 0` from the same inputs) is
+  /// what makes "both bars fade as one unit" structurally impossible to
+  /// desync again, rather than merely true today by construction.
+  late final AnimationController _controlsFadeController;
 
   // `PlaybackController` is a `ChangeNotifier` exposed through a
   // `ChangeNotifierProvider`, which always reports the *same* instance as
@@ -80,6 +91,11 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
   @override
   void initState() {
     super.initState();
+    _controlsFadeController = AnimationController(
+      vsync: this,
+      duration: _fadeDuration,
+      value: _controlsVisible ? 1 : 0,
+    );
     // `SceneController.load` mutates state (and calls `notifyListeners()`)
     // synchronously before its first `await` — calling it directly here
     // would modify `sceneControllerProvider` while this very widget tree
@@ -94,6 +110,7 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
 
   @override
   void dispose() {
+    _controlsFadeController.dispose();
     _hideTimer?.cancel();
     // No explicit teardown of `sceneControllerProvider` here: Riverpod
     // forbids using `ref` at all once this element starts unmounting
@@ -127,14 +144,26 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
     if (!mounted) return;
     _hideTimer?.cancel();
     _hideTimer = null;
-    if (!_controlsVisible) {
-      setState(() => _controlsVisible = true);
-    }
+    _setControlsVisible(true);
     if (!_suppressHide(playback)) {
       _hideTimer = Timer(_hideDelay, () {
         if (!mounted) return;
-        setState(() => _controlsVisible = false);
+        _setControlsVisible(false);
       });
+    }
+  }
+
+  /// The only place [_controlsVisible] is ever assigned, and the only
+  /// place [_controlsFadeController] is ever driven; see that field's own
+  /// doc for why both bars' `FadeTransition`s share it rather than each
+  /// running an independent implicit animation from the same inputs.
+  void _setControlsVisible(bool value) {
+    if (_controlsVisible == value) return;
+    setState(() => _controlsVisible = value);
+    if (value) {
+      _controlsFadeController.forward();
+    } else {
+      _controlsFadeController.reverse();
     }
   }
 
@@ -385,15 +414,19 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
             // separate Tab rings for what are, visually, one control strip.
             //
             // The top bar and the player bar each keep their own
-            // `IgnorePointer`/`AnimatedOpacity` pair, both driven by the
-            // same `effectiveVisible`/`_fadeDuration` (so they still fade
-            // in lockstep), rather than one shared instance wrapping both:
-            // the banner must sit *outside* whichever fade wraps the top
-            // bar (it must stay visible and tappable even while the
-            // controls are faded), and Flutter's opacity only ever applies
-            // to a widget's own descendants: a `Column` sibling of the top
-            // bar's fade subtree is the only way for the banner to be laid
-            // out relative to it without inheriting its opacity.
+            // `IgnorePointer`/`FadeTransition` pair, rather than one shared
+            // instance wrapping both: the banner must sit *outside*
+            // whichever fade wraps the top bar (it must stay visible and
+            // tappable even while the controls are faded), and Flutter's
+            // opacity only ever applies to a widget's own descendants, so
+            // a `Column` sibling of the top bar's fade subtree is the only
+            // way for the banner to be laid out relative to it without
+            // inheriting its opacity. Fix round 2 of this task's own
+            // review: both `FadeTransition`s read [_controlsFadeController]
+            // itself (the *same* `Animation<double>` object), not two
+            // independent widgets each computing the same target value, so
+            // "both bars fade as one unit" is structurally guaranteed
+            // rather than merely true by coincidence of matching inputs.
             Positioned.fill(
               child: FocusScope(
                 onFocusChange: (value) => _setControlsFocused(value, playback),
@@ -408,10 +441,9 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                         children: [
                           IgnorePointer(
                             ignoring: !effectiveVisible,
-                            child: AnimatedOpacity(
+                            child: FadeTransition(
                               key: const Key('scene-controls-overlay'),
-                              duration: _fadeDuration,
-                              opacity: effectiveVisible ? 1 : 0,
+                              opacity: _controlsFadeController,
                               child: MouseRegion(
                                 onEnter: (_) => _setHovering(true, playback),
                                 onExit: (_) => _setHovering(false, playback),
@@ -445,9 +477,9 @@ class _SceneScreenState extends ConsumerState<SceneScreen> {
                       bottom: 0,
                       child: IgnorePointer(
                         ignoring: !effectiveVisible,
-                        child: AnimatedOpacity(
-                          duration: _fadeDuration,
-                          opacity: effectiveVisible ? 1 : 0,
+                        child: FadeTransition(
+                          key: const Key('scene-controls-overlay-player-bar'),
+                          opacity: _controlsFadeController,
                           child: MouseRegion(
                             onEnter: (_) => _setHovering(true, playback),
                             onExit: (_) => _setHovering(false, playback),
