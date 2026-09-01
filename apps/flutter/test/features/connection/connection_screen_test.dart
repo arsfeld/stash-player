@@ -7,6 +7,7 @@ import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/features/connection/connection_controller.dart';
 import 'package:stash_player_flutter/features/connection/connection_screen.dart';
+import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
 import '../../support/fakes.dart';
 
@@ -281,7 +282,7 @@ Future<void> _pump(
     key: ValueKey(controller),
     overrides: [connectionControllerProvider.overrideWith((ref) => controller)],
     child: MaterialApp(
-      theme: ThemeData(useMaterial3: false),
+      theme: buildAppTheme(Brightness.light),
       home: ConnectionScreen(
         initialConfig: initialConfig,
         onConnected: onConnected ?? () {},

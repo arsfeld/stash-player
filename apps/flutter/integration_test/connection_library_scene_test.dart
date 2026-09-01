@@ -79,17 +79,17 @@ void main() {
       await _pumpUntilFound(tester, find.text('Retry'));
       expect(find.text('Retry'), findsOneWidget);
 
-      // The metadata-drawer toggle in the transport controls overlay —
-      // present regardless of the blocking failure overlay above, since
-      // it lives in its own layer of the scene screen's stack. Found by
-      // tooltip because the icon button carries no visible text label
-      // and has no dedicated `Key` of its own to prefer instead (see
-      // `TransportControls`). Deviation from this task's brief, which
+      // The metadata-drawer toggle in the top bar overlay — present
+      // regardless of the blocking failure overlay above, since it lives
+      // in its own layer of the scene screen's stack. Found by tooltip
+      // because the icon button carries no visible text label and has no
+      // dedicated `Key` of its own to prefer instead (see
+      // `player_top_bar.dart`). Deviation from this task's brief, which
       // named the tooltip text as "Show scene information": that string
       // does not exist anywhere in this codebase or its history — Task
-      // 11 shipped "Show details"/"Hide details" (`transport_controls.dart`),
+      // 11 shipped "Show details"/"Hide details" (`player_top_bar.dart`),
       // and `scene_screen_test.dart` already asserts that exact string.
-      // Fixed here rather than in the widget: `transport_controls.dart`
+      // Fixed here rather than in the widget: `player_top_bar.dart`
       // isn't in this task's file list, and the shipped string is a
       // legitimate, already-tested finder.
       expect(find.byTooltip('Show details'), findsOneWidget);
