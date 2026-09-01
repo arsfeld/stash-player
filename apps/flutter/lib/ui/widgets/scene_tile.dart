@@ -149,11 +149,11 @@ class _SceneTileState extends State<SceneTile> {
                 // folds a background decoration's border into its layout
                 // padding (`BoxDecoration.padding` returns
                 // `border.dimensions`), which grew this tile by 4px of
-                // height and shrank the thumbnail's width by 4px — both
-                // unaccounted for in `SceneGridGeometry`'s formula.
-                // Painting the ring in the foreground instead keeps it
-                // purely a paint effect over the thumbnail's edge, with no
-                // layout footprint.
+                // height and shrank the thumbnail's width by 4px, neither
+                // accounted for in `SceneGridGeometry`'s formula. Painting
+                // the ring in the foreground instead keeps it purely a
+                // paint effect over the thumbnail's edge, with no layout
+                // footprint.
                 foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(
                     AppTokens.radiusControl + 2,
@@ -231,7 +231,7 @@ class _SceneTileState extends State<SceneTile> {
 /// The library grid is the only place this client shows a rating at all
 /// (the redesign moved it out of the subtitle, which now reads "Studio,
 /// duration" to match the released clients, but never added a rating
-/// display anywhere else) — so this badge is that display, not
+/// display anywhere else), so this badge is that display, not
 /// decoration. White on a translucent dark panel, the same "always dark"
 /// player-chrome colours `AppTokens` reserves for legibility over
 /// arbitrary artwork, mirroring the resume indicator's own quiet weight

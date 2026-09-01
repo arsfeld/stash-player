@@ -126,8 +126,8 @@ void main() {
     // compared the tile's actual rendered height against what
     // `SceneGridGeometry` predicts for it. `SceneGrid` gives every tile a
     // *tight* height instead, via `SliverGridDelegateWithFixedCrossAxisCount`'s
-    // `mainAxisExtent: geometry.tileHeight` — a mismatch there throws a
-    // `RenderFlex overflowed` exception in the real grid, which is
+    // `mainAxisExtent: geometry.tileHeight`, and a mismatch there throws
+    // a `RenderFlex overflowed` exception in the real grid, which is
     // exactly what shipped undetected until the library screen started
     // rendering real data.
     Scene longTitledScene() => Scene(
