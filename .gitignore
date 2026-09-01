@@ -40,3 +40,6 @@ devenv.local.nix
 /apps/macos/StashPlayer/Info.plist
 /build-aux/macos-derived
 **/xcuserdata/
+
+# Agent scratch: brainstorm mockups and subagent-driven-development ledgers.
+.superpowers/
