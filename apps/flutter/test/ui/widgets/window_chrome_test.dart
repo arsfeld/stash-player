@@ -39,7 +39,10 @@ void main() {
       AppWindowChrome.alignmentFor(TargetPlatform.macOS),
       Alignment.topCenter,
     );
-    expect(AppWindowChrome.alignmentFor(TargetPlatform.linux), Alignment.center);
+    expect(
+      AppWindowChrome.alignmentFor(TargetPlatform.linux),
+      Alignment.center,
+    );
   });
 
   testWidgets('on macOS the band starts at the top, inset for the lights', (

@@ -46,19 +46,21 @@ abstract final class AppPalette {
 ThemeData buildAppTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
 
-  final background =
-      dark ? AppPalette.darkBackground : AppPalette.lightBackground;
+  final background = dark
+      ? AppPalette.darkBackground
+      : AppPalette.lightBackground;
   final chrome = dark ? AppPalette.darkChrome : AppPalette.lightChrome;
   final control = dark ? AppPalette.darkControl : AppPalette.lightControl;
-  final controlHover =
-      dark ? AppPalette.darkControlHover : AppPalette.lightControlHover;
-  final controlActive =
-      dark ? AppPalette.darkControlActive : AppPalette.lightControlActive;
+  final controlHover = dark
+      ? AppPalette.darkControlHover
+      : AppPalette.lightControlHover;
+  final controlActive = dark
+      ? AppPalette.darkControlActive
+      : AppPalette.lightControlActive;
   final outline = dark ? AppPalette.darkOutline : AppPalette.lightOutline;
   final text = dark ? AppPalette.darkText : AppPalette.lightText;
   final textDim = dark ? AppPalette.darkTextDim : AppPalette.lightTextDim;
-  final textFaint =
-      dark ? AppPalette.darkTextFaint : AppPalette.lightTextFaint;
+  final textFaint = dark ? AppPalette.darkTextFaint : AppPalette.lightTextFaint;
   final error = dark ? AppPalette.darkError : AppPalette.lightError;
   final onError = dark ? AppPalette.onDarkError : AppPalette.onLightError;
 
@@ -158,9 +160,7 @@ ThemeData buildAppTheme(Brightness brightness) {
       shape: const StadiumBorder(),
     ),
     scrollbarTheme: ScrollbarThemeData(
-      thumbColor: WidgetStatePropertyAll(
-        textFaint.withValues(alpha: 0.5),
-      ),
+      thumbColor: WidgetStatePropertyAll(textFaint.withValues(alpha: 0.5)),
       thickness: const WidgetStatePropertyAll(6),
       radius: const Radius.circular(3),
     ),
