@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../domain/scene_filter.dart';
+import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/filter_controls.dart';
+import '../../ui/widgets/window_chrome.dart';
 
 /// Width, in logical pixels, at and above which every control renders
 /// directly in one [Wrap]. Below it, only search and "Play random" stay
@@ -11,6 +14,17 @@ import '../../domain/scene_filter.dart';
 /// allows either "wrap into a second row or Filters popup" — see the
 /// class doc for why this picked the row).
 const double libraryToolbarWideBreakpoint = 760;
+
+/// Advances the tristate "organized" filter one step: any, yes, no, any.
+///
+/// The filter is tristate because Stash's own `organized` field is, and
+/// the icon shows which of the three is active. Exposed as a top-level
+/// function so the cycle can be tested without pumping a widget.
+bool? cycleOrganized(bool? current) => switch (current) {
+  null => true,
+  true => false,
+  false => null,
+};
 
 /// The library's filter/sort/paging controls.
 ///
@@ -142,189 +156,186 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
       final wide = constraints.maxWidth >= libraryToolbarWideBreakpoint;
       return FocusTraversalGroup(
         policy: OrderedTraversalPolicy(),
-        child: wide ? _wideLayout() : _narrowLayout(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AppWindowChrome(
+              children: wide ? _wideControls() : _narrowControls(),
+            ),
+            if (!wide && _filtersOpen) _secondaryRow(),
+          ],
+        ),
       );
     },
   );
 
-  Widget _wideLayout() => Wrap(
-    spacing: 12,
-    runSpacing: 12,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: [
-      _ordered(1, SizedBox(width: 260, child: _searchField())),
-      _ordered(2, _sortDropdown()),
-      _ordered(3, _directionToggle()),
-      _ordered(4, _minimumRatingDropdown()),
-      _ordered(5, _organizedControl()),
-      _ordered(6, _hideTrackedControl()),
-      _ordered(7, _playRandomButton()),
-      _ordered(8, _settingsButton()),
-    ],
-  );
+  List<Widget> _wideControls() => [
+    _ordered(2, _sortMenu()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(3, _directionToggle()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(4, _minimumRatingMenu()),
+    const _StripSeparator(),
+    _ordered(5, _organizedToggle()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(6, _hideTrackedToggle()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(7, _playRandomButton()),
+    const SizedBox(width: AppTokens.space3),
+    Expanded(child: _ordered(1, _searchField())),
+    const SizedBox(width: AppTokens.space3),
+    _ordered(8, _settingsButton()),
+  ];
 
-  Widget _narrowLayout() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Row(
-        children: [
-          Expanded(child: _ordered(1, _searchField())),
-          const SizedBox(width: 8),
-          _ordered(1.5, _filtersToggleButton()),
-          const SizedBox(width: 8),
-          _ordered(7, _playRandomButton()),
-          const SizedBox(width: 8),
-          _ordered(8, _settingsButton()),
-        ],
-      ),
-      if (_filtersOpen)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _ordered(2, _sortDropdown()),
-              _ordered(3, _directionToggle()),
-              _ordered(4, _minimumRatingDropdown()),
-              _ordered(5, _organizedControl()),
-              _ordered(6, _hideTrackedControl()),
-            ],
-          ),
-        ),
-    ],
-  );
+  List<Widget> _narrowControls() => [
+    Expanded(child: _ordered(1, _searchField())),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(1.5, _filtersToggleButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(7, _playRandomButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(8, _settingsButton()),
+  ];
 
-  /// Pins [child]'s position in the toolbar's [OrderedTraversalPolicy]
-  /// regardless of which visual row it currently renders in — see the
-  /// class doc for why this is necessary at the narrow width.
-  Widget _ordered(double order, Widget child) =>
-      FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
-
-  Widget _searchField() => TextField(
-    key: const Key('library-search'),
-    focusNode: _searchFocusNode,
-    controller: _searchController,
-    onChanged: _onSearchChanged,
-    decoration: const InputDecoration(
-      isDense: true,
-      prefixIcon: Icon(Icons.search),
-      hintText: 'Search scenes',
-      labelText: 'Search',
+  Widget _secondaryRow() => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      AppTokens.space5,
+      AppTokens.space3,
+      AppTokens.space5,
+      0,
+    ),
+    child: Wrap(
+      spacing: AppTokens.space2,
+      runSpacing: AppTokens.space2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _ordered(2, _sortMenu()),
+        _ordered(3, _directionToggle()),
+        _ordered(4, _minimumRatingMenu()),
+        _ordered(5, _organizedToggle()),
+        _ordered(6, _hideTrackedToggle()),
+      ],
     ),
   );
 
-  Widget _sortDropdown() => DropdownButton<SceneSort>(
+  Widget _ordered(double order, Widget child) =>
+      FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
+
+  Widget _searchField() => AppSearchField(
+    fieldKey: const Key('library-search'),
+    focusNode: _searchFocusNode,
+    controller: _searchController,
+    onChanged: _onSearchChanged,
+  );
+
+  Widget _sortMenu() => AppMenuButton<SceneSort>(
     focusNode: _sortFocusNode,
+    tooltip: 'Sort by',
     value: widget.filter.sort,
-    onChanged: (value) {
-      if (value != null) widget.onSortChanged(value);
-    },
-    items: SceneSort.values
-        .map(
-          (sort) =>
-              DropdownMenuItem(value: sort, child: Text(_sortLabel(sort))),
-        )
-        .toList(growable: false),
+    onChanged: widget.onSortChanged,
+    items: [
+      for (final sort in SceneSort.values)
+        AppMenuItem(value: sort, label: _sortLabel(sort)),
+    ],
   );
 
   Widget _directionToggle() {
     final ascending = widget.filter.direction == SortDirection.ascending;
-    return Tooltip(
-      message: ascending ? 'Sort ascending' : 'Sort descending',
-      child: IconButton(
-        focusNode: _directionFocusNode,
-        icon: Icon(ascending ? Icons.arrow_upward : Icons.arrow_downward),
-        onPressed: () => widget.onDirectionChanged(
-          ascending ? SortDirection.descending : SortDirection.ascending,
-        ),
+    return AppIconToggle(
+      focusNode: _directionFocusNode,
+      icon: ascending ? Icons.arrow_upward : Icons.arrow_downward,
+      tooltip: ascending ? 'Sort ascending' : 'Sort descending',
+      semanticLabel: ascending ? 'Sort ascending' : 'Sort descending',
+      selected: false,
+      onPressed: () => widget.onDirectionChanged(
+        ascending ? SortDirection.descending : SortDirection.ascending,
       ),
     );
   }
 
   // `SceneFilter.minimumRating` is a raw `rating100` threshold (20 points
-  // per "star"), not a 1-5 star count — see `http_stash_api.dart`'s
-  // `_findScenesVariables`, which sends it straight through as
-  // `rating100 > (minimumRating - 1)`. These option values mirror the
-  // GTK client's own `pages/library.rs` rating filter for the same
-  // reason.
-  Widget _minimumRatingDropdown() => Tooltip(
-    message: 'Minimum rating',
-    child: DropdownButton<int?>(
-      focusNode: _minimumRatingFocusNode,
-      value: widget.filter.minimumRating,
-      onChanged: widget.onMinimumRatingChanged,
-      items: const [
-        DropdownMenuItem(child: Text('Any rating')),
-        DropdownMenuItem(value: 20, child: Text('1+ stars')),
-        DropdownMenuItem(value: 40, child: Text('2+ stars')),
-        DropdownMenuItem(value: 60, child: Text('3+ stars')),
-        DropdownMenuItem(value: 80, child: Text('4+ stars')),
-        DropdownMenuItem(value: 100, child: Text('5 stars')),
-      ],
-    ),
+  // per "star"), not a 1-5 star count. `http_stash_api.dart`'s
+  // `_findScenesVariables` sends it straight through as
+  // `rating100 > (minimumRating - 1)`. These values mirror the GTK
+  // client's own rating filter for the same reason.
+  //
+  // 0 is the sentinel for "any": `AppMenuButton`'s type parameter is
+  // non-nullable because a menu reports a null selection as a dismissal,
+  // so a nullable "Any rating" entry could never be picked. It is mapped
+  // back to `null` on the way out.
+  Widget _minimumRatingMenu() => AppMenuButton<int>(
+    focusNode: _minimumRatingFocusNode,
+    tooltip: 'Minimum rating',
+    value: widget.filter.minimumRating ?? 0,
+    onChanged: (value) =>
+        widget.onMinimumRatingChanged(value == 0 ? null : value),
+    items: const [
+      AppMenuItem(value: 0, label: 'Any rating'),
+      AppMenuItem(value: 20, label: '1+ stars'),
+      AppMenuItem(value: 40, label: '2+ stars'),
+      AppMenuItem(value: 60, label: '3+ stars'),
+      AppMenuItem(value: 80, label: '4+ stars'),
+      AppMenuItem(value: 100, label: '5 stars'),
+    ],
   );
 
-  Widget _organizedControl() => Tooltip(
-    message: switch (widget.filter.organized) {
-      null => 'Organized: any',
-      true => 'Organized: yes',
-      false => 'Organized: no',
-    },
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Checkbox(
-          focusNode: _organizedFocusNode,
-          tristate: true,
-          value: widget.filter.organized,
-          onChanged: widget.onOrganizedChanged,
-        ),
-        const Text('Organized'),
-      ],
-    ),
+  Widget _organizedToggle() {
+    final organized = widget.filter.organized;
+    return AppIconToggle(
+      focusNode: _organizedFocusNode,
+      icon: switch (organized) {
+        null => Icons.check_circle_outline,
+        true => Icons.check_circle,
+        false => Icons.cancel,
+      },
+      tooltip: switch (organized) {
+        null => 'Organized: any',
+        true => 'Organized: yes',
+        false => 'Organized: no',
+      },
+      semanticLabel: switch (organized) {
+        null => 'Organized filter: any',
+        true => 'Organized filter: organized only',
+        false => 'Organized filter: unorganized only',
+      },
+      selected: organized != null,
+      onPressed: () => widget.onOrganizedChanged(cycleOrganized(organized)),
+    );
+  }
+
+  Widget _hideTrackedToggle() => AppIconToggle(
+    focusNode: _hideTrackedFocusNode,
+    icon: Icons.visibility_off,
+    tooltip: 'Hide scenes that have already been played',
+    semanticLabel: 'Hide tracked scenes',
+    selected: widget.filter.hideTracked,
+    onPressed: () => widget.onHideTrackedChanged(!widget.filter.hideTracked),
   );
 
-  Widget _hideTrackedControl() => Tooltip(
-    message: 'Hide scenes that have already been played',
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text('Hide tracked'),
-        Switch(
-          focusNode: _hideTrackedFocusNode,
-          value: widget.filter.hideTracked,
-          onChanged: widget.onHideTrackedChanged,
-        ),
-      ],
-    ),
-  );
-
-  Widget _playRandomButton() => FilledButton.tonalIcon(
+  Widget _playRandomButton() => AppIconAction(
     focusNode: _randomFocusNode,
+    icon: Icons.shuffle,
+    tooltip: 'Play random',
+    semanticLabel: 'Play a random scene',
     onPressed: widget.onPlayRandom,
-    icon: const Icon(Icons.shuffle),
-    label: const Text('Play random'),
   );
 
-  Widget _settingsButton() => Tooltip(
-    message: 'Connection settings',
-    child: IconButton(
-      focusNode: _settingsFocusNode,
-      icon: const Icon(Icons.settings_outlined),
-      onPressed: widget.onOpenSettings,
-    ),
+  Widget _settingsButton() => AppIconAction(
+    focusNode: _settingsFocusNode,
+    icon: Icons.settings_outlined,
+    tooltip: 'Connection settings',
+    semanticLabel: 'Connection settings',
+    onPressed: widget.onOpenSettings,
   );
 
-  Widget _filtersToggleButton() => Tooltip(
-    message: 'Filters',
-    child: IconButton(
-      focusNode: _filtersFocusNode,
-      isSelected: _filtersOpen,
-      icon: const Icon(Icons.tune),
-      onPressed: () => setState(() => _filtersOpen = !_filtersOpen),
-    ),
+  Widget _filtersToggleButton() => AppIconToggle(
+    focusNode: _filtersFocusNode,
+    icon: Icons.tune,
+    tooltip: 'Filters',
+    semanticLabel: 'Show filters',
+    selected: _filtersOpen,
+    onPressed: () => setState(() => _filtersOpen = !_filtersOpen),
   );
 
   String _sortLabel(SceneSort sort) => switch (sort) {
@@ -337,4 +348,21 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     SceneSort.updatedAt => 'Last updated',
     SceneSort.random => 'Random',
   };
+}
+
+/// A hairline between two groups of strip controls.
+class _StripSeparator extends StatelessWidget {
+  const _StripSeparator();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: AppTokens.space3),
+    child: SizedBox(
+      height: 18,
+      child: VerticalDivider(
+        width: 1,
+        color: Theme.of(context).colorScheme.outlineVariant,
+      ),
+    ),
+  );
 }

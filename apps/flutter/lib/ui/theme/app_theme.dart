@@ -90,7 +90,7 @@ ThemeData buildAppTheme(Brightness brightness) {
       height: 1.3,
     ),
     bodyMedium: TextStyle(fontSize: 13),
-    bodySmall: TextStyle(fontSize: 12),
+    bodySmall: TextStyle(fontSize: 12, height: 1.3),
     labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
     labelSmall: TextStyle(
       fontSize: 10,

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 
 import '../support/fakes.dart';
@@ -43,7 +44,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Library'), findsOneWidget);
+    // The library screen no longer renders a title anywhere (the
+    // redesign dropped its `AppBar`), so the widget type is what proves
+    // we landed there, not a word it used to show.
+    expect(find.byType(LibraryScreen), findsOneWidget);
   });
 
   testWidgets(
@@ -69,8 +73,13 @@ void main() {
         );
         await tester.pump();
 
-        expect(find.text('Library'), findsOneWidget);
-        final context = tester.element(find.text('Library'));
+        // The library screen no longer renders a title anywhere (the
+        // redesign dropped its `AppBar`), so the widget type is what
+        // proves we landed there, not a word it used to show. It also
+        // still gives us a context inside the app's live subtree, which
+        // is all the checks below actually need.
+        expect(find.byType(LibraryScreen), findsOneWidget);
+        final context = tester.element(find.byType(LibraryScreen));
         expect(Theme.of(context).brightness, brightness);
         expect(MediaQuery.platformBrightnessOf(context), brightness);
       }

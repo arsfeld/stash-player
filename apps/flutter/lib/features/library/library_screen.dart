@@ -6,6 +6,8 @@ import '../../app/notices.dart';
 import '../../app/providers.dart';
 import '../../domain/failure.dart';
 import '../../services/thumbnail_repository.dart';
+import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/status_views.dart';
 import 'library_controller.dart';
 import 'library_state.dart';
 import 'library_toolbar.dart';
@@ -105,36 +107,31 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         .valueOrNull;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Library')),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            LibraryToolbar(
-              filter: state.filter,
-              onQueryChanged: controller.setQuery,
-              onSortChanged: controller.setSort,
-              onDirectionChanged: controller.setDirection,
-              onMinimumRatingChanged: controller.setMinimumRating,
-              onOrganizedChanged: controller.setOrganized,
-              onHideTrackedChanged: controller.setHideTracked,
-              onPlayRandom: () => _handlePlayRandom(controller),
-              onOpenSettings: widget.onOpenSettings,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LibraryToolbar(
+            filter: state.filter,
+            onQueryChanged: controller.setQuery,
+            onSortChanged: controller.setSort,
+            onDirectionChanged: controller.setDirection,
+            onMinimumRatingChanged: controller.setMinimumRating,
+            onOrganizedChanged: controller.setOrganized,
+            onHideTrackedChanged: controller.setHideTracked,
+            onPlayRandom: () => _handlePlayRandom(controller),
+            onOpenSettings: widget.onOpenSettings,
+          ),
+          Expanded(
+            child: _LibraryBody(
+              state: state,
+              controller: controller,
+              thumbnailRepository: thumbnailRepository,
+              onClearFilters: controller.clearFilters,
+              onOpenScene: (sceneId) =>
+                  ref.read(appControllerProvider.notifier).openScene(sceneId),
             ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _LibraryBody(
-                state: state,
-                controller: controller,
-                thumbnailRepository: thumbnailRepository,
-                onClearFilters: controller.clearFilters,
-                onOpenScene: (sceneId) =>
-                    ref.read(appControllerProvider.notifier).openScene(sceneId),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -159,12 +156,14 @@ class _LibraryBody extends StatelessWidget {
   Widget build(BuildContext context) {
     if (state.scenes.isEmpty) {
       return switch (state.phase) {
-        LibraryPhase.initial ||
-        LibraryPhase.loading ||
-        LibraryPhase.ready => const _LoadingView(),
-        LibraryPhase.empty => _EmptyView(onClearFilters: onClearFilters),
-        LibraryPhase.failed => _FailedView(
-          // The redaction constraint carried forward from Task 5:
+        LibraryPhase.initial || LibraryPhase.loading || LibraryPhase.ready =>
+          const AppLoadingView(semanticLabel: 'Loading scenes'),
+        LibraryPhase.empty => AppEmptyView(
+          message: 'No scenes match these filters',
+          actionLabel: 'Clear filters',
+          onAction: onClearFilters,
+        ),
+        LibraryPhase.failed => AppErrorView(
           // `Failure.message` can carry raw server text, so only
           // `userMessage` is ever rendered here.
           message: state.failure?.userMessage ?? 'Something went wrong.',
@@ -177,16 +176,18 @@ class _LibraryBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (state.phase == LibraryPhase.failed)
-          MaterialBanner(
-            content: Text(
-              state.failure?.userMessage ?? 'Something went wrong.',
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTokens.space5,
+              AppTokens.space3,
+              AppTokens.space5,
+              0,
             ),
-            actions: [
-              TextButton(
-                onPressed: controller.retry,
-                child: const Text('Retry'),
-              ),
-            ],
+            child: AppInlineBanner(
+              message: state.failure?.userMessage ?? 'Something went wrong.',
+              actionLabel: 'Retry',
+              onAction: controller.retry,
+            ),
           ),
         Expanded(
           child: SceneGrid(
@@ -200,58 +201,4 @@ class _LibraryBody extends StatelessWidget {
       ],
     );
   }
-}
-
-class _LoadingView extends StatelessWidget {
-  const _LoadingView();
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Semantics(
-      label: 'Loading scenes',
-      child: const CircularProgressIndicator(),
-    ),
-  );
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView({required this.onClearFilters});
-
-  final VoidCallback onClearFilters;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text('No scenes match these filters'),
-        const SizedBox(height: 12),
-        OutlinedButton(
-          onPressed: onClearFilters,
-          child: const Text('Clear filters'),
-        ),
-      ],
-    ),
-  );
-}
-
-class _FailedView extends StatelessWidget {
-  const _FailedView({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
-        const SizedBox(height: 12),
-        Text(message, textAlign: TextAlign.center),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: onRetry, child: const Text('Retry')),
-      ],
-    ),
-  );
 }

@@ -119,4 +119,138 @@ void main() {
       expect(opened, 1);
     });
   });
+
+  group('SceneTile height fits SceneGridGeometry', () {
+    // Regression coverage for a real overflow: the two tests above give
+    // the tile a generous `SizedBox(height: 200)`, so neither ever
+    // compared the tile's actual rendered height against what
+    // `SceneGridGeometry` predicts for it. `SceneGrid` gives every tile a
+    // *tight* height instead, via `SliverGridDelegateWithFixedCrossAxisCount`'s
+    // `mainAxisExtent: geometry.tileHeight` — a mismatch there throws a
+    // `RenderFlex overflowed` exception in the real grid, which is
+    // exactly what shipped undetected until the library screen started
+    // rendering real data.
+    Scene longTitledScene() => Scene(
+      id: '1',
+      paths: const ScenePaths(),
+      title: 'A reasonably long scene title for overflow testing',
+      files: const [],
+    );
+
+    Future<Size> measureNaturalHeight(
+      WidgetTester tester, {
+      required double tileWidth,
+      required TextScaler textScaler,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(Brightness.dark),
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: tileWidth,
+                    child: SceneTile(
+                      scene: longTitledScene(),
+                      thumbnailRepository: null,
+                      onOpen: () {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      return tester.getSize(find.byType(SceneTile));
+    }
+
+    Future<void> pumpAtGeometryTightHeight(
+      WidgetTester tester, {
+      required double tileWidth,
+      required double tileHeight,
+      required TextScaler textScaler,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(Brightness.dark),
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: tileWidth,
+                    height: tileHeight,
+                    child: SceneTile(
+                      scene: longTitledScene(),
+                      thumbnailRepository: null,
+                      onOpen: () {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets(
+      'fits within the geometry-predicted height at the default text scale',
+      (tester) async {
+        const textScaler = TextScaler.noScaling;
+        final geometry = SceneGridGeometry.resolve(
+          availableWidth: 1000,
+          textScaler: textScaler,
+        );
+
+        final natural = await measureNaturalHeight(
+          tester,
+          tileWidth: geometry.tileWidth,
+          textScaler: textScaler,
+        );
+        expect(natural.height, lessThanOrEqualTo(geometry.tileHeight));
+
+        // Exercise the exact tight-constraint path `SceneGrid` uses.
+        await pumpAtGeometryTightHeight(
+          tester,
+          tileWidth: geometry.tileWidth,
+          tileHeight: geometry.tileHeight,
+          textScaler: textScaler,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'fits within the geometry-predicted height at a raised text scale',
+      (tester) async {
+        const textScaler = TextScaler.linear(1.3);
+        final geometry = SceneGridGeometry.resolve(
+          availableWidth: 1000,
+          textScaler: textScaler,
+        );
+
+        final natural = await measureNaturalHeight(
+          tester,
+          tileWidth: geometry.tileWidth,
+          textScaler: textScaler,
+        );
+        expect(natural.height, lessThanOrEqualTo(geometry.tileHeight));
+
+        await pumpAtGeometryTightHeight(
+          tester,
+          tileWidth: geometry.tileWidth,
+          tileHeight: geometry.tileHeight,
+          textScaler: textScaler,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 }

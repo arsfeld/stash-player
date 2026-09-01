@@ -13,9 +13,12 @@ import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/library/library_controller.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/library/library_state.dart';
-import 'package:stash_player_flutter/features/library/scene_card.dart';
+import 'package:stash_player_flutter/features/library/library_toolbar.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
+import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
+import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
 import '../../support/fakes.dart';
 
@@ -149,6 +152,7 @@ Future<_Harness> _pumpLibrary(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
+        theme: buildAppTheme(Brightness.light),
         home: LibraryScreen(onOpenSettings: onOpenSettings ?? () {}),
       ),
     ),
@@ -375,7 +379,7 @@ void main() {
 
       expect(
         find.descendant(
-          of: find.byType(SceneCard),
+          of: find.byType(SceneTile),
           matching: find.byType(Image),
         ),
         findsOneWidget,
@@ -402,7 +406,7 @@ void main() {
         expect(find.byType(ScenePlaceholder), findsOneWidget);
         expect(
           find.descendant(
-            of: find.byType(SceneCard),
+            of: find.byType(SceneTile),
             matching: find.byType(Image),
           ),
           findsNothing,
@@ -486,13 +490,6 @@ void main() {
   });
 
   group('card metadata overflow', () {
-    // The grid delegate's `childAspectRatio` (16/12) leaves only
-    // `0.1875 * tileWidth` below the 16:9 thumbnail for the title +
-    // metadata row. `tileWidth = gridWidth / ceil(gridWidth / 320)` dips
-    // below the ~245px that budget needs at some common window widths
-    // (e.g. 384-554) and at any width once the system text scale grows
-    // — `SceneCard`'s `Expanded` + `FittedBox` (see that file) is meant
-    // to shrink to fit instead of overflowing in either case.
     Scene longTitledScene() => _scene(
       id: '1',
       title: 'A reasonably long scene title for overflow testing',
@@ -534,11 +531,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('library-search')), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Play random'), findsOneWidget);
+      expect(find.byTooltip('Play random'), findsOneWidget);
       expect(find.byTooltip('Filters'), findsNothing);
-      expect(find.byType(DropdownButton<SceneSort>), findsOneWidget);
-      expect(find.byType(Checkbox), findsOneWidget);
-      expect(find.byType(Switch), findsOneWidget);
+      expect(find.byType(AppMenuButton<SceneSort>), findsOneWidget);
+      expect(find.byTooltip('Organized: any'), findsOneWidget);
+      expect(
+        find.byTooltip('Hide scenes that have already been played'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('at 620 search / Play random stay visible and secondary '
@@ -551,14 +551,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('library-search')), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Play random'), findsOneWidget);
+      expect(find.byTooltip('Play random'), findsOneWidget);
       expect(find.byTooltip('Filters'), findsOneWidget);
-      expect(find.byType(DropdownButton<SceneSort>), findsNothing);
+      expect(find.byType(AppMenuButton<SceneSort>), findsNothing);
 
       await tester.tap(find.byTooltip('Filters'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(DropdownButton<SceneSort>), findsOneWidget);
+      expect(find.byType(AppMenuButton<SceneSort>), findsOneWidget);
     });
 
     testWidgets(
@@ -594,7 +594,7 @@ void main() {
 
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
-        expect(find.byType(DropdownButton<SceneSort>), findsOneWidget);
+        expect(find.byType(AppMenuButton<SceneSort>), findsOneWidget);
 
         await tester.sendKeyEvent(LogicalKeyboardKey.tab); // sort
         await tester.pump();
@@ -633,6 +633,26 @@ void main() {
         );
       },
     );
+
+    testWidgets('every strip control carries a tooltip', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
+      await tester.pumpAndSettle();
+
+      for (final toggle in tester.widgetList<AppIconToggle>(
+        find.byType(AppIconToggle),
+      )) {
+        expect(toggle.tooltip, isNotEmpty);
+        expect(toggle.semanticLabel, isNotEmpty);
+      }
+      for (final action in tester.widgetList<AppIconAction>(
+        find.byType(AppIconAction),
+      )) {
+        expect(action.tooltip, isNotEmpty);
+        expect(action.semanticLabel, isNotEmpty);
+      }
+    });
   });
 
   group('sort labels', () {
@@ -642,7 +662,7 @@ void main() {
       await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(DropdownButton<SceneSort>));
+      await tester.tap(find.byType(AppMenuButton<SceneSort>));
       await tester.pumpAndSettle();
 
       for (final label in [
@@ -693,7 +713,7 @@ void main() {
         };
 
         for (final entry in labelToSort.entries) {
-          await tester.tap(find.byType(DropdownButton<SceneSort>));
+          await tester.tap(find.byType(AppMenuButton<SceneSort>));
           await tester.pumpAndSettle();
           await tester.tap(find.text(entry.key).last);
           await tester.pumpAndSettle();
@@ -808,7 +828,7 @@ void main() {
       await tester.pumpAndSettle();
 
       api.pages.add(ScenePage(total: 1, scenes: _scenes(1, start: 99)));
-      await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+      await tester.tap(find.byTooltip('Play random'));
       await tester.pumpAndSettle();
 
       expect(
@@ -824,7 +844,7 @@ void main() {
       await tester.pumpAndSettle();
 
       api.pages.add(ScenePage(total: 0, scenes: const []));
-      await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+      await tester.tap(find.byTooltip('Play random'));
       await tester.pumpAndSettle();
 
       final notice = harness.container.read(globalNoticeProvider);
@@ -842,7 +862,7 @@ void main() {
         await tester.pumpAndSettle();
 
         api.pageFailures.add(const TransportFailure());
-        await tester.tap(find.widgetWithText(FilledButton, 'Play random'));
+        await tester.tap(find.byTooltip('Play random'));
         await tester.pumpAndSettle();
 
         final notice = harness.container.read(globalNoticeProvider);
@@ -876,7 +896,7 @@ void main() {
           'library-hide-tracked',
           'library-random',
           'library-settings',
-          'scene-card-0',
+          'scene-tile-0',
         ];
 
         for (final label in expectedOrder) {
@@ -907,7 +927,7 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
       }
-      expect(FocusManager.instance.primaryFocus?.debugLabel, 'scene-card-0');
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'scene-tile-0');
 
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -1041,5 +1061,13 @@ void main() {
         expect(api.requestedPages, containsAllInOrder([1, 2]));
       },
     );
+  });
+
+  group('organized cycle', () {
+    test('cycles any, yes, no, back to any', () {
+      expect(cycleOrganized(null), isTrue);
+      expect(cycleOrganized(true), isFalse);
+      expect(cycleOrganized(false), isNull);
+    });
   });
 }

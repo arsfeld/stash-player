@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene.dart';
 import '../../services/thumbnail_repository.dart';
-import 'scene_card.dart';
+import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/scene_tile.dart';
 
 /// Signature of [LibraryController.ensureViewportFilled], threaded through
 /// as a plain callback so this widget stays ignorant of Riverpod/the
@@ -13,7 +14,7 @@ typedef EnsureViewportFilled =
       required double viewportExtent,
     });
 
-/// The library's scrollable grid of [SceneCard]s, plus the two triggers
+/// The library's scrollable grid of [SceneTile]s, plus the two triggers
 /// that keep paging moving:
 ///
 /// - A scroll listener that asks for another page once the user scrolls
@@ -126,22 +127,35 @@ class _SceneGridState extends State<SceneGrid> {
   Widget build(BuildContext context) => Column(
     children: [
       Expanded(
-        child: GridView.builder(
-          key: const Key('library-scene-grid'),
-          controller: _scrollController,
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 320,
-            childAspectRatio: 16 / 12,
-          ),
-          itemCount: widget.scenes.length,
-          itemBuilder: (context, index) {
-            final scene = widget.scenes[index];
-            return SceneCard(
-              key: ValueKey(scene.id),
-              scene: scene,
-              thumbnailRepository: widget.thumbnailRepository,
-              onOpen: () => widget.onOpenScene(scene.id),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final geometry = SceneGridGeometry.resolve(
+              availableWidth: constraints.maxWidth - AppTokens.space5 * 2,
+              textScaler: MediaQuery.textScalerOf(context),
+            );
+            return GridView.builder(
+              key: const Key('library-scene-grid'),
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTokens.space5,
+                vertical: AppTokens.space4,
+              ),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: geometry.columnCount,
+                crossAxisSpacing: SceneGridGeometry.crossAxisSpacing,
+                mainAxisSpacing: SceneGridGeometry.mainAxisSpacing,
+                mainAxisExtent: geometry.tileHeight,
+              ),
+              itemCount: widget.scenes.length,
+              itemBuilder: (context, index) {
+                final scene = widget.scenes[index];
+                return SceneTile(
+                  key: ValueKey(scene.id),
+                  scene: scene,
+                  thumbnailRepository: widget.thumbnailRepository,
+                  onOpen: () => widget.onOpenScene(scene.id),
+                );
+              },
             );
           },
         ),

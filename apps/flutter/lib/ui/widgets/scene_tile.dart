@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene.dart';
 import '../../services/thumbnail_repository.dart';
+import '../../shared/formatters.dart';
 import '../../shared/scene_labels.dart';
 import '../../shared/scene_placeholder.dart';
 import '../theme/app_tokens.dart';
@@ -40,11 +41,19 @@ class SceneGridGeometry {
 
   /// Height of the text block beneath a thumbnail: the gap under the
   /// image, a title line, a small gap, and a subtitle line.
+  ///
+  /// Each line height is ceiled to a whole logical pixel: Flutter's text
+  /// layout rounds a paragraph's height up to the device pixel grid, so
+  /// the raw `fontSize * lineHeight` product (e.g. 12 * 1.3 = 15.6)
+  /// under-predicts the actual rendered height (16.0 at a 1x device pixel
+  /// ratio) by a fraction of a pixel per line. Ceiling to the nearest
+  /// logical pixel is a safe upper bound at any device pixel ratio, since
+  /// a higher ratio only rounds to a *finer* grid.
   static double textBlockHeight(TextScaler textScaler) =>
       AppTokens.space2 +
-      textScaler.scale(titleFontSize) * lineHeight +
+      (textScaler.scale(titleFontSize) * lineHeight).ceilToDouble() +
       AppTokens.space1 / 2 +
-      textScaler.scale(subtitleFontSize) * lineHeight;
+      (textScaler.scale(subtitleFontSize) * lineHeight).ceilToDouble();
 
   static SceneGridGeometry resolve({
     required double availableWidth,
@@ -136,7 +145,16 @@ class _SceneTileState extends State<SceneTile> {
             children: [
               AnimatedContainer(
                 duration: AppTokens.hoverDuration,
-                decoration: BoxDecoration(
+                // `foregroundDecoration`, not `decoration`: a `Container`
+                // folds a background decoration's border into its layout
+                // padding (`BoxDecoration.padding` returns
+                // `border.dimensions`), which grew this tile by 4px of
+                // height and shrank the thumbnail's width by 4px — both
+                // unaccounted for in `SceneGridGeometry`'s formula.
+                // Painting the ring in the foreground instead keeps it
+                // purely a paint effect over the thumbnail's edge, with no
+                // layout footprint.
+                foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(
                     AppTokens.radiusControl + 2,
                   ),
@@ -174,6 +192,12 @@ class _SceneTileState extends State<SceneTile> {
                             ),
                           ),
                         ),
+                      if (scene.rating100 != null)
+                        Positioned(
+                          right: AppTokens.space2,
+                          bottom: AppTokens.space2,
+                          child: _RatingBadge(rating100: scene.rating100!),
+                        ),
                     ],
                   ),
                 ),
@@ -200,6 +224,54 @@ class _SceneTileState extends State<SceneTile> {
       ),
     );
   }
+}
+
+/// The tile's bottom-right badge: a star glyph plus the scene's rating.
+///
+/// The library grid is the only place this client shows a rating at all
+/// (the redesign moved it out of the subtitle, which now reads "Studio,
+/// duration" to match the released clients, but never added a rating
+/// display anywhere else) — so this badge is that display, not
+/// decoration. White on a translucent dark panel, the same "always dark"
+/// player-chrome colours `AppTokens` reserves for legibility over
+/// arbitrary artwork, mirroring the resume indicator's own quiet weight
+/// rather than reading as a call to action.
+class _RatingBadge extends StatelessWidget {
+  const _RatingBadge({required this.rating100});
+
+  final int rating100;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Rated ${formatRating(rating100)}',
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppTokens.playerPanel,
+        borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTokens.space1,
+          vertical: 1,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.star, size: 12, color: AppTokens.playerText),
+            const SizedBox(width: 2),
+            Text(
+              formatRating(rating100),
+              style: const TextStyle(
+                color: AppTokens.playerText,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 /// Loads (and caches) the thumbnail for [source] via [thumbnailRepository].

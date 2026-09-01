@@ -6,8 +6,10 @@ import 'package:stash_player_flutter/app/app_router.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
 import '../support/fake_playback_engine.dart';
 import '../support/fakes.dart';
@@ -36,7 +38,10 @@ void main() {
         container.read(appControllerProvider),
         const AppDestination.library(),
       );
-      expect(find.text('Library'), findsOneWidget);
+      // The library screen no longer renders a title anywhere (the
+      // redesign dropped its `AppBar`), so the widget type is what proves
+      // we landed there, not a word it used to show.
+      expect(find.byType(LibraryScreen), findsOneWidget);
       expect(find.text('Connect to Stash'), findsNothing);
     },
   );
@@ -53,7 +58,10 @@ void main() {
 
       await tester.pumpWidget(_app(container));
       await tester.pumpAndSettle();
-      expect(find.text('Library'), findsOneWidget);
+      // The library screen no longer renders a title anywhere (the
+      // redesign dropped its `AppBar`), so the widget type is what proves
+      // we landed there, not a word it used to show.
+      expect(find.byType(LibraryScreen), findsOneWidget);
 
       await tester.tap(find.byTooltip('Connection settings'));
       await tester.pumpAndSettle();
@@ -72,7 +80,10 @@ void main() {
       // carried-forward item 2 (dismiss promptly on success rather than
       // leaving the settings screen mounted).
       expect(find.text('Connection settings'), findsNothing);
-      expect(find.text('Library'), findsOneWidget);
+      // The library screen no longer renders a title anywhere (the
+      // redesign dropped its `AppBar`), so the widget type is what proves
+      // we landed there, not a word it used to show.
+      expect(find.byType(LibraryScreen), findsOneWidget);
       expect(
         container.read(appControllerProvider),
         const AppDestination.library(),
@@ -120,7 +131,10 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: AppRouter()),
+        child: MaterialApp(
+          theme: buildAppTheme(Brightness.light),
+          home: const AppRouter(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -131,7 +145,12 @@ void main() {
     // present in the tree even while the drawer itself is slid off-screen
     // — hence `findsWidgets`, not `findsOneWidget`).
     expect(find.text('Scene 42'), findsWidgets);
-    expect(find.text('Library'), findsNothing);
+    // The library screen no longer renders a title anywhere (the redesign
+    // dropped its `AppBar`), so the widget type is what proves the library
+    // isn't what's showing, not the absence of a word it used to render.
+    // `LibraryScreen` genuinely isn't built while a scene is on top (not
+    // merely offstage), confirmed empirically rather than assumed.
+    expect(find.byType(LibraryScreen), findsNothing);
 
     // `SceneScreen` is video-first with no `AppBar` (so no automatic
     // Material `BackButton`) — its own back control is the transport
@@ -155,7 +174,10 @@ void main() {
     await tester.pump();
     await tester.pump(disposeFlushTimeout + const Duration(seconds: 1));
 
-    expect(find.text('Library'), findsOneWidget);
+    // The library screen no longer renders a title anywhere (the redesign
+    // dropped its `AppBar`), so the widget type is what proves we landed
+    // there, not a word it used to show.
+    expect(find.byType(LibraryScreen), findsOneWidget);
     expect(find.text('Scene 42'), findsNothing);
     expect(
       container.read(appControllerProvider),
@@ -198,5 +220,8 @@ ProviderContainer _container({
 
 Widget _app(ProviderContainer container) => UncontrolledProviderScope(
   container: container,
-  child: const MaterialApp(home: AppRouter()),
+  child: MaterialApp(
+    theme: buildAppTheme(Brightness.light),
+    home: const AppRouter(),
+  ),
 );
