@@ -6,14 +6,12 @@ import '../theme/app_tokens.dart';
 class _StatusColumn extends StatelessWidget {
   const _StatusColumn({
     required this.icon,
-    required this.iconColor,
     required this.message,
     required this.messageStyle,
     required this.actionWidget,
   });
 
   final Widget icon;
-  final Color iconColor;
   final String message;
   final TextStyle? messageStyle;
   final Widget actionWidget;
@@ -76,7 +74,6 @@ class AppEmptyView extends StatelessWidget {
         size: 32,
         color: tokens.textFaint,
       ),
-      iconColor: tokens.textFaint,
       message: message,
       messageStyle: theme.textTheme.bodyMedium?.copyWith(
         color: theme.colorScheme.onSurfaceVariant,
@@ -102,7 +99,6 @@ class AppErrorView extends StatelessWidget {
     final theme = Theme.of(context);
     return _StatusColumn(
       icon: Icon(Icons.error_outline, size: 32, color: theme.colorScheme.error),
-      iconColor: theme.colorScheme.error,
       message: message,
       messageStyle: theme.textTheme.bodyMedium,
       actionWidget: FilledButton(
