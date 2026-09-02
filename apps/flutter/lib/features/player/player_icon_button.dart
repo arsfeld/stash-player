@@ -19,7 +19,7 @@ class PlayerIconButton extends StatelessWidget {
 
   final IconData icon;
   final String tooltip;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool filled;
 
   /// The glyph on the [filled] variant's white pill, dark enough to read
@@ -28,6 +28,7 @@ class PlayerIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onPressed != null;
     final radius = BorderRadius.circular(filled ? 17 : AppTokens.radiusControl);
     // Player chrome is always dark, so its hovered and pressed states are
     // a wash of the glyph colour rather than the theme's controlHover /
@@ -65,7 +66,11 @@ class PlayerIconButton extends StatelessWidget {
                 child: Icon(
                   icon,
                   size: filled ? 18 : 15,
-                  color: filled ? _filledGlyph : AppTokens.playerText,
+                  color: filled
+                      ? _filledGlyph
+                      : AppTokens.playerText.withValues(
+                          alpha: enabled ? 1 : 0.38,
+                        ),
                 ),
               ),
             ),

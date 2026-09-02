@@ -15,6 +15,7 @@ import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
+import 'package:stash_player_flutter/features/player/player_icon_button.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
@@ -1385,6 +1386,50 @@ void main() {
         expect(harness.engine.commands.whereType<SeekCommand>(), hasLength(1));
       },
     );
+
+    testWidgets('prev and next are dead until a browse context arrives', (
+      tester,
+    ) async {
+      final harness = _harness();
+      await _pumpReadyScene(tester, harness, _scene());
+
+      // `find.byTooltip` resolves to the `RawTooltip` this Flutter SDK
+      // composes underneath `Tooltip` (not `PlayerIconButton` itself), so
+      // this climbs to the enclosing `PlayerIconButton` rather than
+      // casting the tooltip finder's own widget directly.
+      PlayerIconButton button(String tooltip) =>
+          tester.widget<PlayerIconButton>(
+            find.ancestor(
+              of: find.byTooltip(tooltip),
+              matching: find.byType(PlayerIconButton),
+            ),
+          );
+
+      expect(button('Previous scene').onPressed, isNull);
+      expect(button('Next scene').onPressed, isNull);
+
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('skipping forward seeks ten seconds on the engine', (
+      tester,
+    ) async {
+      final harness = _harness();
+      await _pumpReadyScene(tester, harness, _scene());
+
+      await tester.tap(find.byTooltip('Forward 10 seconds'));
+      await tester.pump();
+
+      // Asserts against the engine, not the controller: the button exists
+      // to move playback, and a callback-only check would still pass if it
+      // fired without ever seeking.
+      expect(
+        harness.engine.commands.whereType<SeekCommand>().last.position,
+        const Duration(seconds: 10),
+      );
+
+      await _tearDownScene(tester, harness);
+    });
   });
 
   group('SceneScreen: auto-hide', () {

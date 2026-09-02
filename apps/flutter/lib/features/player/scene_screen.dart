@@ -94,6 +94,15 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   /// consecutive failures with the identical message.
   int _lastControlFailureSequence = 0;
 
+  /// Same technique, applied to `SceneState.oFailureSequence` and
+  /// `SceneState.browseFailureSequence`: the O-counter mutation and the
+  /// prev/next step each fail through their own monotonically-increasing
+  /// counter rather than a `phase`/`failure` transition, for the same
+  /// "never silently swallow a second identical failure" reason
+  /// [_lastControlFailureSequence] documents.
+  int _lastOFailureSequence = 0;
+  int _lastBrowseFailureSequence = 0;
+
   @override
   void initState() {
     super.initState();
@@ -346,9 +355,41 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
       }
     });
 
+    ref.listen<SceneController>(sceneControllerProvider, (previous, next) {
+      final state = next.state;
+      if (state.oFailureSequence != _lastOFailureSequence) {
+        _lastOFailureSequence = state.oFailureSequence;
+        ref
+            .read(globalNoticeProvider.notifier)
+            .show(
+              AppNotice(
+                message: 'Could not update the O-counter.',
+                severity: AppNoticeSeverity.warning,
+              ),
+            );
+      }
+      if (state.browseFailureSequence != _lastBrowseFailureSequence) {
+        _lastBrowseFailureSequence = state.browseFailureSequence;
+        ref
+            .read(globalNoticeProvider.notifier)
+            .show(
+              AppNotice(
+                message: 'There is no scene there any more.',
+                severity: AppNoticeSeverity.info,
+              ),
+            );
+      }
+    });
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: _buildSceneStack(scene, playback, playbackController),
+      body: _buildSceneStack(
+        scene,
+        playback,
+        playbackController,
+        sceneState,
+        sceneController,
+      ),
     );
   }
 
@@ -356,6 +397,8 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
     Scene scene,
     PlaybackState playback,
     PlaybackController playbackController,
+    SceneState sceneState,
+    SceneController sceneController,
   ) {
     final showBlockingFailure = _shouldShowBlockingPlaybackFailure(playback);
     // Fix round 1, item 5 (scenario 1): a `phase == failed` that isn't
@@ -492,10 +535,27 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                             onExit: (_) => _setHovering(false, playback),
                             child: PlayerBar(
                               playback: playback,
+                              actions: SceneActionState(
+                                canGoPrevious:
+                                    !sceneState.navigating &&
+                                    (sceneState.browse?.canGoPrevious ?? false),
+                                canGoNext:
+                                    !sceneState.navigating &&
+                                    (sceneState.browse?.canGoNext ?? false),
+                                oCount: sceneState.oCount,
+                              ),
                               onTogglePlayPause: playbackController.playPause,
                               onSeek: playbackController.seekAbsolute,
                               onVolumeChanged: playbackController.setVolume,
                               onToggleMute: playbackController.toggleMute,
+                              onPrevious: sceneController.goPrevious,
+                              onNext: sceneController.goNext,
+                              onSkipBackward: () => playbackController
+                                  .seekRelative(const Duration(seconds: -10)),
+                              onSkipForward: () => playbackController
+                                  .seekRelative(const Duration(seconds: 10)),
+                              onIncrementO: sceneController.bumpO,
+                              onResetO: sceneController.clearO,
                             ),
                           ),
                         ),
