@@ -205,6 +205,38 @@ class FakeStashApi implements StashApi {
       throw saveActivityFailures.removeAt(0);
     }
   }
+
+  /// Every `incrementO`/`resetO` call, in the order received.
+  final List<OMutationCall> oCalls = [];
+
+  /// New counts consumed in call order. Empty means the next call
+  /// returns `0`.
+  final List<int> oResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [oResults].
+  final List<Object> oFailures = [];
+
+  @override
+  Future<int> incrementO(String id) => _mutateO(id, isReset: false);
+
+  @override
+  Future<int> resetO(String id) => _mutateO(id, isReset: true);
+
+  Future<int> _mutateO(String id, {required bool isReset}) async {
+    oCalls.add(OMutationCall(id: id, isReset: isReset));
+    if (oFailures.isNotEmpty) throw oFailures.removeAt(0);
+    return oResults.isNotEmpty ? oResults.removeAt(0) : 0;
+  }
+}
+
+/// One recorded `incrementO`/`resetO` call. [isReset] rather than two
+/// separate lists so a test can assert the *order* the two mutations
+/// were issued in, not just their counts.
+class OMutationCall {
+  OMutationCall({required this.id, required this.isReset});
+
+  final String id;
+  final bool isReset;
 }
 
 /// One recorded `saveSceneActivity` call.

@@ -368,6 +368,48 @@ void main() {
 
     expect(page.scenes.single.oCounter, isNull);
   });
+
+  test('incrementO posts the mutation and returns the new count', () async {
+    final transport = RecordingClient('{"data":{"sceneIncrementO":4}}');
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: 'SECRET',
+      client: transport,
+    );
+
+    final count = await api.incrementO('1001');
+
+    expect(count, 4);
+    expect(transport.lastVariables, {'id': '1001'});
+    expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+    expect(transport.lastQuery, contains('sceneIncrementO(id: \$id)'));
+  });
+
+  test('resetO posts the mutation and returns the new count', () async {
+    final transport = RecordingClient('{"data":{"sceneResetO":0}}');
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    final count = await api.resetO('1001');
+
+    expect(count, 0);
+    expect(transport.lastVariables, {'id': '1001'});
+    expect(transport.lastQuery, contains('sceneResetO(id: \$id)'));
+  });
+
+  test('a non-integer O-counter response is a FormatFailure', () async {
+    final transport = RecordingClient('{"data":{"sceneIncrementO":null}}');
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    expect(() => api.incrementO('1001'), throwsA(isA<FormatFailure>()));
+  });
 }
 
 String fixture(String name) => File('test/fixtures/$name').readAsStringSync();

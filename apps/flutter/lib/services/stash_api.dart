@@ -17,4 +17,13 @@ abstract interface class StashApi {
     required double resumeTime,
     required double playDuration,
   });
+
+  /// Bumps the scene's O counter by one and returns the server's new
+  /// count. The count is server-owned, so callers display what comes
+  /// back rather than incrementing a local copy.
+  Future<int> incrementO(String id);
+
+  /// Sets the scene's O counter back to zero and returns the new count,
+  /// which Stash reports rather than the caller assuming it.
+  Future<int> resetO(String id);
 }

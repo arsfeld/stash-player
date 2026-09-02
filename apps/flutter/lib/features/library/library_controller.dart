@@ -319,6 +319,12 @@ class _DeferredStashApi implements StashApi {
     resumeTime: resumeTime,
     playDuration: playDuration,
   );
+
+  @override
+  Future<int> incrementO(String id) async => (await _resolved).incrementO(id);
+
+  @override
+  Future<int> resetO(String id) async => (await _resolved).resetO(id);
 }
 
 /// The library's controller. Rebuilt from scratch — a fresh

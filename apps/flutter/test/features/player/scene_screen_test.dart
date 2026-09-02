@@ -112,6 +112,12 @@ class _TestStashApi implements StashApi {
     required double resumeTime,
     required double playDuration,
   }) async {}
+
+  @override
+  Future<int> incrementO(String id) async => 0;
+
+  @override
+  Future<int> resetO(String id) async => 0;
 }
 
 class _RecordingUrlLauncher implements ExternalUrlLauncher {

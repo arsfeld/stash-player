@@ -54,6 +54,18 @@ mutation SceneSaveActivity($id: ID!, $resume_time: Float, $playDuration: Float) 
 }
 ''';
 
+const String sceneIncrementODocument = r'''
+mutation SceneIncrementO($id: ID!) {
+  sceneIncrementO(id: $id)
+}
+''';
+
+const String sceneResetODocument = r'''
+mutation SceneResetO($id: ID!) {
+  sceneResetO(id: $id)
+}
+''';
+
 const String _versionDocument = 'query Version { version { version } }';
 
 class HttpStashApi implements StashApi {
@@ -112,6 +124,26 @@ class HttpStashApi implements StashApi {
       throw const FormatFailure('Stash did not save scene activity.');
     }
   }
+
+  @override
+  Future<int> incrementO(String id) =>
+      _mutateO(sceneIncrementODocument, 'sceneIncrementO', id);
+
+  @override
+  Future<int> resetO(String id) =>
+      _mutateO(sceneResetODocument, 'sceneResetO', id);
+
+  /// Both O-counter mutations have the same shape: one `ID!`, one
+  /// integer back. Shared so the two can never disagree about how a
+  /// malformed response is reported.
+  Future<int> _mutateO(String document, String field, String id) =>
+      _post(document, {'id': id}, (data) {
+        final count = data[field];
+        if (count is! int) {
+          throw const FormatFailure('Stash returned no O-counter value.');
+        }
+        return count;
+      });
 
   Future<T> _post<T>(
     String document,
