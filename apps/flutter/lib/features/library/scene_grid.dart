@@ -32,6 +32,7 @@ typedef EnsureViewportFilled =
 class SceneGrid extends StatefulWidget {
   const SceneGrid({
     required this.scenes,
+    required this.ordinals,
     required this.isLoadingMore,
     required this.thumbnailRepository,
     required this.onOpenScene,
@@ -40,12 +41,18 @@ class SceneGrid extends StatefulWidget {
   });
 
   final List<Scene> scenes;
+
+  /// [scenes]' 0-based positions in the active filter's ordering, same
+  /// order, one per entry. See [LibraryState.ordinals]'s own doc for why
+  /// this can diverge from plain list index and must be threaded through
+  /// rather than derived here from `index`.
+  final List<int> ordinals;
   final bool isLoadingMore;
   final ThumbnailRepository? thumbnailRepository;
 
-  /// Called with the tapped scene's id and its 0-based position in the
-  /// grid, which is its ordinal in the active filter's ordering. The
-  /// scene screen needs the position to step through that ordering.
+  /// Called with the tapped scene's id and its ordinal (from [ordinals])
+  /// in the active filter's ordering. The scene screen needs that
+  /// ordinal to step through the ordering.
   final void Function(String sceneId, int index) onOpenScene;
   final EnsureViewportFilled ensureViewportFilled;
 
@@ -157,7 +164,8 @@ class _SceneGridState extends State<SceneGrid> {
                   key: ValueKey(scene.id),
                   scene: scene,
                   thumbnailRepository: widget.thumbnailRepository,
-                  onOpen: () => widget.onOpenScene(scene.id, index),
+                  onOpen: () =>
+                      widget.onOpenScene(scene.id, widget.ordinals[index]),
                 );
               },
             );

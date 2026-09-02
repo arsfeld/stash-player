@@ -306,6 +306,21 @@ void main() {
       final ids = controller.state.scenes.map((s) => s.id).toList();
       expect(ids, List.generate(95, (i) => '$i'));
       expect(api.requestedPerPage, [48, 48]);
+
+      // Scene "48" (id) lands at list index 48, but its true position in
+      // the server's ordering is 49: page 2 started at ordinal 48 and
+      // scene "47" (the duplicate) occupied that ordinal before being
+      // dropped, so every scene page 2 actually contributed sits one
+      // ordinal ahead of its list index. A `BrowseContext` built from
+      // list index instead of `ordinals` would send prev/next to the
+      // wrong scene the moment it stepped past this point.
+      expect(controller.state.ordinals[48], 49);
+      // The dropped duplicate itself never appears in `ordinals` either:
+      // only its first, page-1 copy (ordinal 47) does.
+      expect(controller.state.ordinals[47], 47);
+      // The last accepted scene ("94") sits at list index 94 but ordinal
+      // 95, for the same reason.
+      expect(controller.state.ordinals.last, 95);
     });
 
     test(

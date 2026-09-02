@@ -203,6 +203,7 @@ class _LibraryBody extends StatelessWidget {
         Expanded(
           child: SceneGrid(
             scenes: state.scenes,
+            ordinals: state.ordinals,
             isLoadingMore: state.isLoading,
             thumbnailRepository: thumbnailRepository,
             onOpenScene: onOpenScene,

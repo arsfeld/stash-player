@@ -218,15 +218,21 @@ class LibraryController extends ChangeNotifier {
       // comment) — `notifyListeners()` on a disposed notifier throws.
       if (_disposed || generation != _state.generation) return;
 
-      final merged = _dedupeAppend(_state.scenes, result.scenes);
+      final merged = _dedupeMerge(
+        _state.scenes,
+        _state.ordinals,
+        result.scenes,
+        firstOrdinal: (requestedPage - 1) * libraryPageSize,
+      );
       final shortPage = result.scenes.length < libraryPageSize;
-      final reachedTotal = merged.length >= result.total;
+      final reachedTotal = merged.scenes.length >= result.total;
       _state = _state.copyWith(
-        scenes: merged,
+        scenes: merged.scenes,
+        ordinals: merged.ordinals,
         page: requestedPage,
         total: result.total,
         hasMore: !shortPage && !reachedTotal,
-        phase: merged.isEmpty ? LibraryPhase.empty : LibraryPhase.ready,
+        phase: merged.scenes.isEmpty ? LibraryPhase.empty : LibraryPhase.ready,
         clearFailure: true,
       );
       notifyListeners();
@@ -273,13 +279,36 @@ class LibraryController extends ChangeNotifier {
 
   int _nextSeed() => _seedGenerator() & 0x7fffffff;
 
-  List<Scene> _dedupeAppend(List<Scene> existing, List<Scene> incoming) {
-    final seen = existing.map((scene) => scene.id).toSet();
-    final merged = <Scene>[...existing];
-    for (final scene in incoming) {
-      if (seen.add(scene.id)) merged.add(scene);
+  /// Appends [incoming] to [existingScenes], dropping any scene whose id
+  /// is already present (the underlying result set can shift between
+  /// page requests, a scene entering or leaving the filter, which
+  /// otherwise duplicates ids across pages). [existingOrdinals] and the
+  /// returned `ordinals` carry each accepted scene's true 0-based
+  /// position in [filter]'s ordering (`firstOrdinal` plus its position
+  /// within [incoming]) in lockstep with `scenes`, so a drop here never
+  /// throws the two lists out of sync. See [LibraryState.ordinals]'s own
+  /// doc for why deriving that position from list index instead would be
+  /// wrong.
+  ({List<Scene> scenes, List<int> ordinals}) _dedupeMerge(
+    List<Scene> existingScenes,
+    List<int> existingOrdinals,
+    List<Scene> incoming, {
+    required int firstOrdinal,
+  }) {
+    final seen = existingScenes.map((scene) => scene.id).toSet();
+    final scenes = <Scene>[...existingScenes];
+    final ordinals = <int>[...existingOrdinals];
+    for (var i = 0; i < incoming.length; i++) {
+      final scene = incoming[i];
+      if (seen.add(scene.id)) {
+        scenes.add(scene);
+        ordinals.add(firstOrdinal + i);
+      }
     }
-    return List.unmodifiable(merged);
+    return (
+      scenes: List.unmodifiable(scenes),
+      ordinals: List.unmodifiable(ordinals),
+    );
   }
 }
 

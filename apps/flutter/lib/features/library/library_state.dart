@@ -23,6 +23,7 @@ class LibraryState {
   const LibraryState({
     this.filter = const SceneFilter(),
     this.scenes = const [],
+    this.ordinals = const [],
     this.page = 0,
     this.total = 0,
     this.phase = LibraryPhase.initial,
@@ -33,6 +34,15 @@ class LibraryState {
 
   final SceneFilter filter;
   final List<Scene> scenes;
+
+  /// [scenes]' 0-based positions in [filter]'s ordering, one per entry,
+  /// same order. Not the same as each scene's index in [scenes] itself:
+  /// deduping a page that overlaps one already accepted
+  /// (`LibraryController._dedupeMerge`) drops entries, which would leave
+  /// list position undercounting how far into the server's ordering a
+  /// later scene actually sits. This is what lets a card's tap handler
+  /// hand `SceneScreen` the scene's true ordinal instead.
+  final List<int> ordinals;
   final int page;
   final int total;
   final LibraryPhase phase;
@@ -45,6 +55,7 @@ class LibraryState {
   LibraryState copyWith({
     SceneFilter? filter,
     List<Scene>? scenes,
+    List<int>? ordinals,
     int? page,
     int? total,
     LibraryPhase? phase,
@@ -55,6 +66,7 @@ class LibraryState {
   }) => LibraryState(
     filter: filter ?? this.filter,
     scenes: scenes ?? this.scenes,
+    ordinals: ordinals ?? this.ordinals,
     page: page ?? this.page,
     total: total ?? this.total,
     phase: phase ?? this.phase,

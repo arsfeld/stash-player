@@ -346,6 +346,55 @@ void main() {
       );
     });
 
+    testWidgets('a scene from a page that deduped an overlap carries its true '
+        'ordinal, not its position in the merged list', (tester) async {
+      final api = FakeStashApi()
+        ..pages.addAll([
+          ScenePage(total: 100, scenes: _scenes(48)),
+          // Overlaps page 1 by one id ("47") -- the underlying result
+          // set shifting between requests, which `_dedupeMerge` drops.
+          ScenePage(total: 100, scenes: _scenes(48, start: 47)),
+        ]);
+      final harness = await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      await harness.controller.ensureViewportFilled(
+        contentExtent: 100,
+        viewportExtent: 900,
+      );
+      await tester.pumpAndSettle();
+
+      // Scene "48" sits at list index 48 (the page-2 copy of "47" that
+      // occupied that index was dropped as a duplicate), but its true
+      // position in the server's ordering is 49. Scroll it into view:
+      // `GridView.builder` doesn't build (or hit-test) off-screen tiles.
+      await tester.scrollUntilVisible(
+        find.text('Scene 48'),
+        200,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('library-scene-grid')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      // `scrollUntilVisible` stops dragging the moment the tile is merely
+      // built (which the grid's own cache extent can do before it is
+      // actually scrolled into the viewport), then kicks off one
+      // `Scrollable.ensureVisible` scroll animation with no settle of its
+      // own -- this is what lets that animation actually land before the
+      // tap below.
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Scene 48'));
+      await tester.pump();
+
+      final destination = harness.container.read(appControllerProvider);
+      expect(destination, isA<SceneDestination>());
+      final scene = destination as SceneDestination;
+      expect(scene.sceneId, '48');
+      expect(scene.browse?.index, 49);
+      expect(scene.browse?.total, 100);
+    });
+
     testWidgets('a missing/failed thumbnail falls back to the shared '
         'placeholder', (tester) async {
       final api = FakeStashApi()
