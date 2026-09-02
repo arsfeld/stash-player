@@ -315,10 +315,22 @@ class SceneController extends ChangeNotifier {
     if (offset > 0 && !browse.canGoNext) return;
 
     final targetIndex = browse.index + offset;
-    // Captured before the count is cleared, so abandoning the step puts
-    // back what was actually on screen. Restoring from `scene.oCounter`
-    // instead would silently undo every bump made since this scene
-    // loaded.
+    // Snapshotted before anything about the outgoing scene changes, so
+    // abandoning the step puts back exactly what was on screen: not just
+    // the O count, but the scene, its id, its phase, and its position in
+    // the ordering. `load`'s own top-of-function reset only keeps `scene`
+    // (not `sceneId`/`browse`/`phase`) while a step is in flight, so a
+    // step whose nested `load` lands on `notFound`/`failed` would
+    // otherwise leave `sceneId` pointing at the bad target while `scene`
+    // still held the old one: an incoherent mix no phase/id pairing
+    // anywhere else in this controller produces. Restoring `oCount` from
+    // this snapshot rather than re-reading `scene.oCounter` matters for
+    // the same reason it already did before this fix: it must not undo a
+    // bump made since the scene loaded.
+    final restorePhase = _state.phase;
+    final restoreSceneId = _state.sceneId;
+    final restoreScene = _state.scene;
+    final restoreFailure = _state.failure;
     final restoreCount = _state.oCount ?? _state.scene?.oCounter ?? 0;
     // Claimed synchronously, before the first await, exactly as `load`
     // does. Two presses issued back to back would otherwise compute the
@@ -331,6 +343,15 @@ class SceneController extends ChangeNotifier {
     );
     notifyListeners();
 
+    void abandon() => _abandonStep(
+      browse: browse,
+      phase: restorePhase,
+      sceneId: restoreSceneId,
+      scene: restoreScene,
+      failure: restoreFailure,
+      oCount: restoreCount,
+    );
+
     try {
       final page = await _findScenes(
         browse.filter,
@@ -340,25 +361,53 @@ class SceneController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
 
       if (page.scenes.isEmpty) {
-        _abandonStep(restoreCount);
+        abandon();
         return;
       }
 
       await load(page.scenes.first.id, browse: browse.at(targetIndex));
+      // `load` bumps `_state.generation` again as part of its own guard
+      // discipline, so the check here is against `generation + 1`, not
+      // `generation`: that is the value this step's own nested `load`
+      // call set, if and only if nothing else superseded it while it was
+      // in flight. If something else did (a fresh `load`/`_step` issued
+      // from outside this one), `_state.generation` will be higher than
+      // that, and this step must leave state alone, exactly like every
+      // other generation check in this class.
+      if (_disposed || _state.generation != generation + 1) return;
+      // `load` never throws (it catches its own failures), so a step
+      // whose target scene came back notFound/failed reaches here rather
+      // than the `catch` below. The controller must still end up either
+      // fully on the new scene or exactly back on the outgoing one, so a
+      // step that didn't land on `ScenePhase.ready` reverts too.
+      if (_state.phase != ScenePhase.ready) abandon();
     } catch (_) {
       if (_disposed || generation != _state.generation) return;
-      _abandonStep(restoreCount);
+      abandon();
     }
   }
 
   /// Puts the controller back where it was before a step that could not
-  /// complete: the current scene stays on screen and playable, the count
-  /// it was showing comes back, and the screen is told so it can say
-  /// something.
-  void _abandonStep(int restoreCount) {
+  /// complete: the outgoing scene (with its own id, phase, and position
+  /// in the ordering) stays exactly as it was, the count it was showing
+  /// comes back, and the screen is told so it can say something.
+  void _abandonStep({
+    required BrowseContext browse,
+    required ScenePhase phase,
+    required String? sceneId,
+    required Scene? scene,
+    required Failure? failure,
+    required int oCount,
+  }) {
     _state = _state.copyWith(
+      phase: phase,
+      sceneId: sceneId,
+      scene: scene,
+      browse: browse,
+      failure: failure,
+      clearFailure: failure == null,
       navigating: false,
-      oCount: restoreCount,
+      oCount: oCount,
       browseFailureSequence: _state.browseFailureSequence + 1,
     );
     notifyListeners();

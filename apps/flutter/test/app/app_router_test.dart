@@ -210,7 +210,7 @@ void main() {
     expect(tester.widget<SceneScreen>(find.byType(SceneScreen)).browse, browse);
     // The constructor field alone would still pass this test even if
     // `SceneScreen.initState` dropped `browse: widget.browse` from its
-    // `load(...)` call — asserting on the controller's own state is what
+    // `load(...)` call. Asserting on the controller's own state is what
     // actually proves the context reached `SceneController`, not just the
     // widget that carries it past the router.
     expect(container.read(sceneControllerProvider).state.browse, browse);

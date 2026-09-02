@@ -832,12 +832,15 @@ void main() {
     });
 
     test(
-      'a step landing on a since-deleted scene still clears navigating',
+      'a step whose target scene is gone reverts to the outgoing scene',
       () async {
-        // `_step` sets `navigating` true before delegating to `load`.
-        // Every terminal state `load` can reach has to clear it back, not
-        // just the ready/failed paths, or prev/next and the O-counter
-        // stay dead for the rest of the visit.
+        // `_step`'s nested `load` call sets the new (bad) sceneId and
+        // browse position before that call discovers the target scene no
+        // longer exists. Reverting has to undo all of that together, not
+        // just `navigating`, or the controller ends up with `sceneId`
+        // pointing at a scene it never actually reached while `scene`
+        // still shows the one before it, a mix no other state in this
+        // controller ever produces.
         final controller = _makeSceneController(
           findScene: (id) async => id == 's1' ? _scene(id: id) : null,
           findScenes: (filter, {required page, required perPage}) async =>
@@ -854,10 +857,41 @@ void main() {
         );
         await controller.goNext();
 
-        expect(controller.state.phase, ScenePhase.notFound);
+        expect(controller.state.phase, ScenePhase.ready);
+        expect(controller.state.sceneId, 's1');
+        expect(controller.state.scene!.id, 's1');
+        expect(controller.state.browse!.index, 0);
         expect(controller.state.navigating, isFalse);
+        expect(controller.state.browseFailureSequence, 1);
       },
     );
+
+    test('a step whose target scene lookup throws reverts to the outgoing '
+        'scene', () async {
+      // Same coherence requirement as the since-deleted case above, for
+      // the other way a nested `load` can fail to reach `ready`.
+      final controller = _makeSceneController(
+        findScene: (id) async {
+          if (id == 's1') return _scene(id: id);
+          throw const TransportFailure('down');
+        },
+        findScenes: (filter, {required page, required perPage}) async =>
+            ScenePage(total: 5, scenes: [_scene(id: 's2')]),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+      await controller.goNext();
+
+      expect(controller.state.phase, ScenePhase.ready);
+      expect(controller.state.sceneId, 's1');
+      expect(controller.state.scene!.id, 's1');
+      expect(controller.state.browse!.index, 0);
+      expect(controller.state.navigating, isFalse);
+      expect(controller.state.browseFailureSequence, 1);
+    });
 
     test(
       'mid-navigation the O-counter is unavailable and cannot be bumped',
