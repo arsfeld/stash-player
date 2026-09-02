@@ -406,11 +406,21 @@ class _OCounterGroup extends StatelessWidget {
           message: 'Bump O-counter',
           child: Semantics(
             button: true,
+            enabled: enabled,
             label: 'Bump O-counter',
             child: Material(
               type: MaterialType.transparency,
               child: InkWell(
                 onTap: enabled ? onIncrement : null,
+                // Same wash `PlayerIconButton` uses, for the same reason
+                // (see that widget's own comment): the panel is always
+                // dark, so the theme's own hover/highlight/splash colours
+                // (which follow app brightness) would be dark-on-dark in
+                // the light theme. This is the one player control that
+                // isn't built from `PlayerIconButton` itself.
+                hoverColor: AppTokens.playerText.withValues(alpha: 0.1),
+                highlightColor: AppTokens.playerText.withValues(alpha: 0.18),
+                splashColor: AppTokens.playerText.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(AppTokens.radiusControl),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -424,7 +434,16 @@ class _OCounterGroup extends StatelessWidget {
                       if (showCount) ...[
                         const SizedBox(width: AppTokens.space1),
                         Text(
-                          '${count ?? 0}',
+                          // A dimmed "0" would assert a count the server
+                          // never reported: `count` is `null` for every
+                          // prev/next fetch and the initial load, not
+                          // just "zero and uncounted". A single narrow
+                          // placeholder glyph keeps the width budget
+                          // honest too: the reflow above derives
+                          // `digitCount` from `oCount ?? 0`, i.e. one
+                          // digit, so whatever renders here must not be
+                          // wider than that.
+                          count == null ? '-' : '$count',
                           style: TextStyle(
                             color: glyph,
                             fontSize: 12,

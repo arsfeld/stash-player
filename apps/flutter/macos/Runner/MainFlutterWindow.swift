@@ -28,7 +28,6 @@ class MainFlutterWindow: NSWindow {
     // draws them. Accepted: the strip stays usable and nothing overlaps.
     if #available(macOS 11.0, *) {
       let toolbar = NSToolbar(identifier: "stash-player-titlebar-spacer")
-      toolbar.showsBaselineSeparator = false
       self.toolbar = toolbar
       self.toolbarStyle = .unified
     }
@@ -37,6 +36,10 @@ class MainFlutterWindow: NSWindow {
     // strip. The cost is that a drag starting anywhere on a
     // non-interactive background also moves the window.
     self.isMovableByWindowBackground = true
+    // Below this, the app's own top strip and the player bar are not even
+    // the first things to break -- AppWindowChrome is a bare Row with no
+    // overflow protection of its own, and the library toolbar goes first.
+    self.minSize = NSSize(width: 480, height: 400)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

@@ -40,6 +40,7 @@ class PlayerIconButton extends StatelessWidget {
       message: tooltip,
       child: Semantics(
         button: true,
+        enabled: enabled,
         label: tooltip,
         child: Container(
           width: filled ? 34 : 28,

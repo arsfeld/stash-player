@@ -172,6 +172,17 @@ void main() {
     await tester.pump();
 
     expect(fired, isEmpty);
+
+    // Dead must also mean announced as disabled, not as a button with
+    // nothing behind it -- this is the first time these two controls
+    // have a disabled state at all.
+    Semantics semanticsFor(String tooltip) => tester.widget<Semantics>(
+      find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == tooltip,
+      ),
+    );
+    expect(semanticsFor('Previous scene').properties.enabled, isFalse);
+    expect(semanticsFor('Next scene').properties.enabled, isFalse);
   });
 
   testWidgets('the reset button is absent at zero', (tester) async {
@@ -201,6 +212,20 @@ void main() {
     );
 
     expect(find.byTooltip('Bump O-counter'), findsOneWidget);
+    // A dimmed "0" would assert a count the server never reported; a
+    // narrow placeholder glyph says "unavailable" without claiming a
+    // number.
+    expect(find.text('0'), findsNothing);
+    expect(find.text('-'), findsOneWidget);
+    // A disabled control must be announced as disabled, not as a button
+    // with nothing behind it.
+    final semanticsWidget = tester.widget<Semantics>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics && widget.properties.label == 'Bump O-counter',
+      ),
+    );
+    expect(semanticsWidget.properties.enabled, isFalse);
 
     await tester.tap(find.byTooltip('Bump O-counter'));
     await tester.pump();
@@ -254,6 +279,18 @@ void main() {
         expect(sizeOf('Pause'), const Size(34, 34));
         expect(sizeOf('Forward 10 seconds'), const Size(28, 28));
         expect(sizeOf('Next scene'), const Size(28, 28));
+
+        // `tester.getSize` reports unscaled layout size, so it would
+        // pass even if a `FittedBox` were scaling the whole cluster down
+        // (see the comment above), ruling that out directly rather than
+        // only by its symptom.
+        expect(
+          find.descendant(
+            of: find.byType(PlayerBar),
+            matching: find.byType(FittedBox),
+          ),
+          findsNothing,
+        );
 
         // `tester.pumpWidget`/`pump` above would already have thrown on a
         // `RenderFlex` overflow (a real regression this same width once

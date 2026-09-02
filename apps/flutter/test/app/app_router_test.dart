@@ -117,7 +117,9 @@ void main() {
       );
     final container = ProviderContainer(
       overrides: [
-        appControllerProvider.overrideWith(_SceneFirstController.new),
+        appControllerProvider.overrideWith(
+          () => _FixedDestinationController(const AppDestination.scene('42')),
+        ),
         connectionStoreProvider.overrideWithValue(
           FakeConnectionStore(
             saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
@@ -275,16 +277,6 @@ class _FixedDestinationController extends AppController {
 
   @override
   AppDestination build() => _destination;
-}
-
-/// A test-only `AppController` whose initial destination is a scene, so
-/// [AppRouter]'s `scene(sceneId)` branch — and the "popping it returns to
-/// the library" back-navigation it wires up — can be exercised without
-/// anything from Task 5+'s library/scene features. `showLibrary()` and
-/// every other method is inherited unchanged from the real controller.
-class _SceneFirstController extends AppController {
-  @override
-  AppDestination build() => const AppDestination.scene('42');
 }
 
 ProviderContainer _container({
