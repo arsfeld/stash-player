@@ -370,13 +370,25 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
       }
       if (state.browseFailureSequence != _lastBrowseFailureSequence) {
         _lastBrowseFailureSequence = state.browseFailureSequence;
+        // `state.browseFailure` distinguishes an actual error (a network
+        // outage, most often) from the library's ordering having simply
+        // changed underneath the browse (an empty page, or the target
+        // scene itself gone). See `SceneState.browseFailure`'s own doc.
+        // The two are not the same event and must not share a message:
+        // an outage is not "no scene there any more."
+        final cause = state.browseFailure;
         ref
             .read(globalNoticeProvider.notifier)
             .show(
-              AppNotice(
-                message: 'There is no scene there any more.',
-                severity: AppNoticeSeverity.info,
-              ),
+              cause == null
+                  ? AppNotice(
+                      message: 'There is no scene there any more.',
+                      severity: AppNoticeSeverity.info,
+                    )
+                  : AppNotice(
+                      message: cause.userMessage,
+                      severity: AppNoticeSeverity.warning,
+                    ),
             );
       }
     });
@@ -436,9 +448,23 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
             Positioned.fill(
               child: MouseRegion(
                 onHover: (_) => _registerActivity(playback),
+                // `media_kit`'s own `MaterialDesktopVideoControls` (now
+                // replaced by this chrome, see `NoVideoControls` at the
+                // engine layer) also gave click-to-play/pause and
+                // double-click-to-fullscreen on the video itself; nothing
+                // else took over those two gestures when that transport
+                // was disabled, so they are restored here directly rather
+                // than left unreachable by mouse.
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onTap: () => _registerActivity(playback),
+                  onTap: () {
+                    _registerActivity(playback);
+                    playbackController.playPause();
+                  },
+                  onDoubleTap: () {
+                    _registerActivity(playback);
+                    playbackController.setFullscreen(!playback.fullscreen);
+                  },
                   child: VideoSurface(controller: playbackController),
                 ),
               ),
@@ -554,8 +580,8 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                                   .seekRelative(const Duration(seconds: -10)),
                               onSkipForward: () => playbackController
                                   .seekRelative(const Duration(seconds: 10)),
-                              onIncrementO: sceneController.bumpO,
-                              onResetO: sceneController.clearO,
+                              onIncrementO: sceneController.incrementO,
+                              onResetO: sceneController.resetO,
                             ),
                           ),
                         ),

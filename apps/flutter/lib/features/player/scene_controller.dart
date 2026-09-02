@@ -68,6 +68,7 @@ class SceneState {
     this.oCount,
     this.oFailureSequence = 0,
     this.browseFailureSequence = 0,
+    this.browseFailure,
   });
 
   final ScenePhase phase;
@@ -105,6 +106,18 @@ class SceneState {
   /// Bumped every time a prev/next step finds nothing to move to.
   final int browseFailureSequence;
 
+  /// The reason behind the most recent [browseFailureSequence] bump, when
+  /// there is one to show. `null` covers both "nothing has failed yet"
+  /// and the two causes that aren't really failures at all: the target
+  /// page came back empty, or the target scene itself is gone: both mean
+  /// the library's ordering changed under the browse, which is exactly
+  /// what "There is no scene there any more." (`scene_screen.dart`)
+  /// already says. Only set when a step was abandoned because
+  /// `_findScenes` or the target's own `findScene` genuinely threw (a
+  /// network outage, most often). That cause must not be reported with
+  /// the same message as an ordinary library change.
+  final Failure? browseFailure;
+
   SceneState copyWith({
     ScenePhase? phase,
     String? sceneId,
@@ -118,6 +131,8 @@ class SceneState {
     bool clearOCount = false,
     int? oFailureSequence,
     int? browseFailureSequence,
+    Failure? browseFailure,
+    bool clearBrowseFailure = false,
   }) => SceneState(
     phase: phase ?? this.phase,
     sceneId: sceneId ?? this.sceneId,
@@ -129,6 +144,9 @@ class SceneState {
     oCount: clearOCount ? null : (oCount ?? this.oCount),
     oFailureSequence: oFailureSequence ?? this.oFailureSequence,
     browseFailureSequence: browseFailureSequence ?? this.browseFailureSequence,
+    browseFailure: clearBrowseFailure
+        ? null
+        : (browseFailure ?? this.browseFailure),
   );
 }
 
@@ -203,10 +221,18 @@ class SceneController extends ChangeNotifier {
   ///
   /// [browse] is where the caller says this scene sits in an ordering,
   /// if any. `null` keeps whatever ordering was already in place
-  /// (unchanged by a bare [retry], for instance). Seeds [SceneState.oCount]
-  /// from [Scene.oCounter] on success, defaulting an unreported count to
-  /// zero so the player's O-counter controls always have something
-  /// actionable to show.
+  /// (unchanged by a bare [retry], for instance). Applied only once
+  /// [id]'s metadata actually lands (the ready branch below), never at
+  /// the top-of-function reset: a step (`_step`) calls this with the
+  /// *target* scene's already-advanced [BrowseContext] while the target
+  /// is still loading, and applying it immediately would let a second,
+  /// unrelated `load` issued for a different scene while that fetch is
+  /// still in flight (the transient failure banner's Retry is reachable
+  /// this way, see `scene_screen.dart`) inherit the in-progress step's
+  /// advanced index instead of the ordering position it actually reached.
+  /// Seeds [SceneState.oCount] from [Scene.oCounter] on success,
+  /// defaulting an unreported count to zero so the player's O-counter
+  /// controls always have something actionable to show.
   Future<void> load(String id, {BrowseContext? browse}) async {
     if (_disposed) return;
     // Claimed synchronously, before any `await` below — see class doc.
@@ -224,7 +250,10 @@ class SceneController extends ChangeNotifier {
       // video surface), while a fresh `load`/[retry] genuinely should
       // drop whatever scene came before.
       scene: _state.navigating ? _state.scene : null,
-      browse: browse ?? _state.browse,
+      // Deliberately not `browse ?? _state.browse` here. See this
+      // method's own doc for why [browse] itself waits for the ready
+      // branch below.
+      browse: _state.browse,
       navigating: _state.navigating,
       oFailureSequence: _state.oFailureSequence,
       browseFailureSequence: _state.browseFailureSequence,
@@ -248,6 +277,7 @@ class SceneController extends ChangeNotifier {
       _state = _state.copyWith(
         phase: ScenePhase.ready,
         scene: scene,
+        browse: browse,
         oCount: scene.oCounter ?? 0,
         navigating: false,
         clearFailure: true,
@@ -301,8 +331,13 @@ class SceneController extends ChangeNotifier {
   ///
   /// Reads exactly one scene at the target position rather than paging
   /// through: Stash's pages are 1-indexed, so `perPage: 1` makes page
-  /// number and index interchangeable, and the fetch stays correct
-  /// however far past the library's loaded pages the user has browsed.
+  /// number and index interchangeable, and the fetch works however far
+  /// past the library's loaded pages the user has browsed -- as long as
+  /// [SceneState.browse]'s ordering hasn't changed since its `index` was
+  /// set. This method has no way to tell whether it has: it walks the
+  /// position [BrowseContext.index] hands it, full stop. See that
+  /// field's own doc for the concrete way the app's own O-counter
+  /// mutations, under the default filter, invalidate it.
   ///
   /// Refuses while [SceneState.navigating] is already true, which is
   /// what stops a held-down next button issuing a fetch per frame, each
@@ -343,13 +378,19 @@ class SceneController extends ChangeNotifier {
     );
     notifyListeners();
 
-    void abandon() => _abandonStep(
+    // [cause] is the genuine error behind this abandonment, when there is
+    // one. See [SceneState.browseFailure]'s own doc for why an empty
+    // page or a not-found target (both `null` at every call site below)
+    // are deliberately excluded: those mean the library's ordering
+    // changed, not that anything actually failed.
+    void abandon({Failure? cause}) => _abandonStep(
       browse: browse,
       phase: restorePhase,
       sceneId: restoreSceneId,
       scene: restoreScene,
       failure: restoreFailure,
       oCount: restoreCount,
+      cause: cause,
     );
 
     try {
@@ -365,7 +406,14 @@ class SceneController extends ChangeNotifier {
         return;
       }
 
-      await load(page.scenes.first.id, browse: browse.at(targetIndex));
+      // `page.total` is fresher than `browse.total`: this response is the
+      // most recent word the server has given on how many scenes
+      // currently match, so `canGoNext` should run on it rather than on
+      // whatever `total` the context was originally built with.
+      await load(
+        page.scenes.first.id,
+        browse: browse.at(targetIndex, total: page.total),
+      );
       // `load` bumps `_state.generation` again as part of its own guard
       // discipline, so the check here is against `generation + 1`, not
       // `generation`: that is the value this step's own nested `load`
@@ -380,17 +428,36 @@ class SceneController extends ChangeNotifier {
       // than the `catch` below. The controller must still end up either
       // fully on the new scene or exactly back on the outgoing one, so a
       // step that didn't land on `ScenePhase.ready` reverts too.
-      if (_state.phase != ScenePhase.ready) abandon();
-    } catch (_) {
+      //
+      // Only `ScenePhase.failed` carries a genuine [cause]: `notFound`
+      // means the target scene itself is gone, which is the same
+      // "ordering changed" story as an empty page above, not a failure.
+      if (_state.phase != ScenePhase.ready) {
+        abandon(
+          cause: _state.phase == ScenePhase.failed ? _state.failure : null,
+        );
+      }
+    } on Failure catch (failure) {
       if (_disposed || generation != _state.generation) return;
-      abandon();
+      abandon(cause: failure);
+    } catch (_) {
+      // Mirrors `load`'s own fallback: `_findScenes` (by way of
+      // `StashApi`) always normalizes to a `Failure`, but the deferred
+      // adapter this controller is built with can throw a bare platform
+      // exception first. See `load`'s own doc for the concrete case.
+      if (_disposed || generation != _state.generation) return;
+      abandon(cause: const TransportFailure());
     }
   }
 
   /// Puts the controller back where it was before a step that could not
   /// complete: the outgoing scene (with its own id, phase, and position
   /// in the ordering) stays exactly as it was, the count it was showing
-  /// comes back, and the screen is told so it can say something.
+  /// comes back, and the screen is told so it can say something. [cause],
+  /// when set, is the genuine [Failure] behind the abandonment (as
+  /// opposed to the library's ordering having simply changed), and is
+  /// what lets it say the right thing. See [SceneState.browseFailure]'s
+  /// own doc.
   void _abandonStep({
     required BrowseContext browse,
     required ScenePhase phase,
@@ -398,6 +465,7 @@ class SceneController extends ChangeNotifier {
     required Scene? scene,
     required Failure? failure,
     required int oCount,
+    Failure? cause,
   }) {
     _state = _state.copyWith(
       phase: phase,
@@ -409,15 +477,17 @@ class SceneController extends ChangeNotifier {
       navigating: false,
       oCount: oCount,
       browseFailureSequence: _state.browseFailureSequence + 1,
+      browseFailure: cause,
+      clearBrowseFailure: cause == null,
     );
     notifyListeners();
   }
 
-  /// Bumps the current scene's O counter.
-  Future<void> bumpO() => _runOMutation(OMutation.increment);
+  /// Increments the current scene's O counter.
+  Future<void> incrementO() => _runOMutation(OMutation.increment);
 
   /// Resets the current scene's O counter to zero.
-  Future<void> clearO() => _runOMutation(OMutation.reset);
+  Future<void> resetO() => _runOMutation(OMutation.reset);
 
   /// Runs [mutation] against the scene that is actually on screen and
   /// stable.
@@ -433,7 +503,16 @@ class SceneController extends ChangeNotifier {
     final scene = _state.scene;
     if (scene == null || _state.phase != ScenePhase.ready) return;
 
-    final generation = _state.generation;
+    // Claimed synchronously, before the first `await`, exactly as `load`
+    // and `_step` do: two mutations issued back to back (e.g. a bump
+    // pressed twice before the first response lands) must claim two
+    // distinct generations, or the guard below can never tell the two
+    // responses apart, and whichever happens to land last wins the
+    // display regardless of which the server actually applied last. No
+    // `notifyListeners()` here (unlike `load`/`_step`): nothing
+    // observable changes yet, only the generation counter itself.
+    final generation = _state.generation + 1;
+    _state = _state.copyWith(generation: generation);
     try {
       final count = await _mutateO(scene.id, mutation);
       if (_disposed || generation != _state.generation) return;

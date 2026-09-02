@@ -161,6 +161,15 @@ class AppController extends Notifier<AppDestination> {
 
   /// Navigates to a scene by id, optionally carrying [browse] so the
   /// scene screen can step to the neighbouring scenes.
+  ///
+  /// Deliberately not called by a prev/next step once already on a scene
+  /// screen (`SceneController.goPrevious`/`goNext` update that
+  /// controller's own state directly instead): this state change flows
+  /// into `AppRouter`'s page list, and `app_router.dart` keys the scene
+  /// page by `ValueKey('scene-$sceneId')`, so pushing a step's target id
+  /// through here would change that key, remount `SceneScreen`, and kill
+  /// playback -- exactly what `SceneState.navigating` exists to keep from
+  /// happening mid-browse.
   void openScene(String sceneId, {BrowseContext? browse}) {
     state = AppDestination.scene(sceneId, browse: browse);
   }

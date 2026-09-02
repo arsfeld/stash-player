@@ -69,7 +69,8 @@ class _FindSceneCall {
 }
 
 /// A [StashApi] test double supporting a controllable `findScene` (via
-/// [calls]) plus harmless no-op successes for the other members —
+/// [calls]) and `findScenes` (via [pages]/[findScenesCalls]) plus
+/// harmless no-op successes for the other members:
 /// `PlaybackController`'s own `ActivitySync` resolves `stashApiProvider`
 /// for `saveSceneActivity` on every flush/dispose, so that member must
 /// succeed rather than throw `UnimplementedError` for these widget tests.
@@ -77,6 +78,18 @@ class _TestStashApi implements StashApi {
   final List<_FindSceneCall> calls = [];
   final List<Failure> findSceneFailures = [];
   final List<Object> findSceneRawErrors = [];
+
+  /// `findScenes` results consumed in call order, for the prev/next page
+  /// fetches `SceneController._step` issues. Mirrors `findScene`'s own
+  /// "no landmine" default this class already documents above: a call
+  /// made with nothing queued never settles rather than throwing, so a
+  /// test that doesn't need paging never has to stub it.
+  final List<ScenePage> pages = [];
+  final List<Failure> pageFailures = [];
+  final List<FindScenesCall> findScenesCalls = [];
+
+  List<int> get requestedPages =>
+      findScenesCalls.map((call) => call.page).toList();
 
   /// Deliberately always manual, unlike `FakeStashApi.findScenes`
   /// (`test/support/fakes.dart`), which defaults to failing loudly on a
@@ -108,7 +121,16 @@ class _TestStashApi implements StashApi {
     SceneFilter filter, {
     required int page,
     required int perPage,
-  }) async => ScenePage(total: 0, scenes: const []);
+  }) {
+    final call = FindScenesCall(filter: filter, page: page, perPage: perPage);
+    findScenesCalls.add(call);
+    if (pageFailures.isNotEmpty) {
+      call.completer.completeError(pageFailures.removeAt(0));
+    } else if (pages.isNotEmpty) {
+      call.completer.complete(pages.removeAt(0));
+    }
+    return call.completer.future;
+  }
 
   @override
   Future<void> saveSceneActivity({
@@ -233,22 +255,26 @@ _TestHarness _harness({
 /// drawer's panel is always dark, so light is where text taken from the
 /// app theme lands on a surface that ignores it. Both brightnesses are
 /// covered directly in `scene_metadata_drawer_test.dart`.
-Widget _app(ProviderContainer container, String sceneId) =>
-    UncontrolledProviderScope(
-      container: container,
-      child: MaterialApp(
-        theme: buildAppTheme(Brightness.light),
-        home: SceneScreen(sceneId: sceneId),
-      ),
-    );
+Widget _app(
+  ProviderContainer container,
+  String sceneId, {
+  BrowseContext? browse,
+}) => UncontrolledProviderScope(
+  container: container,
+  child: MaterialApp(
+    theme: buildAppTheme(Brightness.light),
+    home: SceneScreen(sceneId: sceneId, browse: browse),
+  ),
+);
 
 Future<void> _pumpReadyScene(
   WidgetTester tester,
   _TestHarness harness,
   Scene scene, {
   bool play = true,
+  BrowseContext? browse,
 }) async {
-  await tester.pumpWidget(_app(harness.container, scene.id));
+  await tester.pumpWidget(_app(harness.container, scene.id, browse: browse));
   await tester.pump();
   harness.api.calls.single.completer.complete(scene);
   await tester.pumpAndSettle();
@@ -638,6 +664,31 @@ void main() {
       expect(controller.state.browse!.index, 8);
     });
 
+    test('a step adopts the fresher total the same response reported, not the '
+        'context it started from', () async {
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async =>
+            // The ordering shrank to 300 since the browse context below
+            // was built with 412 -- the exact shape of an O-counter
+            // mutation dropping scenes out of the filter underneath an
+            // in-progress browse.
+            ScenePage(total: 300, scenes: [_scene(id: 's-$page')]),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(
+          filter: SceneFilter(),
+          index: 7,
+          total: 412,
+        ),
+      );
+      await controller.goNext();
+
+      expect(controller.state.browse!.total, 300);
+    });
+
     test('goPrevious refuses at the start of the ordering', () async {
       var fetches = 0;
       final controller = _makeSceneController(
@@ -692,7 +743,7 @@ void main() {
       // `_abandonStep` restores can only be the value the controller was
       // actually showing, not a re-read of `scene.oCounter` (which would
       // silently undo this bump).
-      await controller.bumpO();
+      await controller.incrementO();
       expect(controller.state.oCount, 9);
 
       await controller.goNext();
@@ -703,6 +754,10 @@ void main() {
       expect(controller.state.navigating, isFalse);
       expect(controller.state.browseFailureSequence, 1);
       expect(controller.state.oCount, 9);
+      // An empty page means the library's ordering changed, not that
+      // anything actually failed -- the screen must not report this the
+      // same way it would report a network outage.
+      expect(controller.state.browseFailure, isNull);
     });
 
     test('oCount is seeded from the loaded scene', () async {
@@ -727,7 +782,7 @@ void main() {
       expect(controller.state.oCount, 0);
     });
 
-    test('bumpO shows the server count, never a local guess', () async {
+    test('incrementO shows the server count, never a local guess', () async {
       final calls = <(String, OMutation)>[];
       final controller = _makeSceneController(
         findScene: (id) async => _scene(id: id, oCounter: 3),
@@ -741,13 +796,13 @@ void main() {
       );
 
       await controller.load('s1');
-      await controller.bumpO();
+      await controller.incrementO();
 
       expect(calls, [('s1', OMutation.increment)]);
       expect(controller.state.oCount, 9);
     });
 
-    test('clearO resets through the server', () async {
+    test('resetO resets through the server', () async {
       final calls = <(String, OMutation)>[];
       final controller = _makeSceneController(
         findScene: (id) async => _scene(id: id, oCounter: 3),
@@ -758,7 +813,7 @@ void main() {
       );
 
       await controller.load('s1');
-      await controller.clearO();
+      await controller.resetO();
 
       expect(calls, [('s1', OMutation.reset)]);
       expect(controller.state.oCount, 0);
@@ -771,7 +826,7 @@ void main() {
       );
 
       await controller.load('s1');
-      await controller.bumpO();
+      await controller.incrementO();
 
       expect(controller.state.oCount, 3);
       expect(controller.state.oFailureSequence, 1);
@@ -786,10 +841,38 @@ void main() {
       );
 
       await controller.load('s1');
-      await controller.bumpO();
-      await controller.bumpO();
+      await controller.incrementO();
+      await controller.incrementO();
 
       expect(controller.state.oFailureSequence, 2);
+    });
+
+    test('two rapid increments: only the later call is ever applied, '
+        'regardless of which response lands first', () async {
+      final responses = [Completer<int>(), Completer<int>()];
+      var mutationCalls = 0;
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+        mutateO: (id, mutation) => responses[mutationCalls++].future,
+      );
+
+      await controller.load('s1');
+
+      final first = controller.incrementO();
+      final second = controller.incrementO();
+
+      // The first call's own response lands, but the second call
+      // already claimed a newer generation the instant it started
+      // (before its own response ever arrived) -- without that claim,
+      // both calls would share the same generation and this response
+      // would be accepted.
+      responses[0].complete(10);
+      await first;
+      expect(controller.state.oCount, 3);
+
+      responses[1].complete(20);
+      await second;
+      expect(controller.state.oCount, 20);
     });
 
     test('a step in flight keeps the outgoing scene mapped while the target '
@@ -864,13 +947,20 @@ void main() {
         expect(controller.state.browse!.index, 0);
         expect(controller.state.navigating, isFalse);
         expect(controller.state.browseFailureSequence, 1);
+        // The target scene being gone is the same "ordering changed"
+        // story as an empty page, not a genuine failure -- it must not
+        // be reported as a network outage.
+        expect(controller.state.browseFailure, isNull);
       },
     );
 
     test('a step whose target scene lookup throws reverts to the outgoing '
-        'scene', () async {
+        'scene, carrying the real failure rather than reporting a library '
+        'change', () async {
       // Same coherence requirement as the since-deleted case above, for
-      // the other way a nested `load` can fail to reach `ready`.
+      // the other way a nested `load` can fail to reach `ready` -- plus
+      // the failure this abandonment must actually carry (M1): a network
+      // outage is not "there is no scene there any more."
       final controller = _makeSceneController(
         findScene: (id) async {
           if (id == 's1') return _scene(id: id);
@@ -892,6 +982,45 @@ void main() {
       expect(controller.state.browse!.index, 0);
       expect(controller.state.navigating, isFalse);
       expect(controller.state.browseFailureSequence, 1);
+      expect(controller.state.browseFailure, isA<TransportFailure>());
+    });
+
+    test("_findScenes itself throwing carries that failure into the "
+        'abandonment too', () async {
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async =>
+            throw const TransportFailure('down'),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+      await controller.goNext();
+
+      expect(controller.state.scene!.id, 's1');
+      expect(controller.state.navigating, isFalse);
+      expect(controller.state.browseFailureSequence, 1);
+      expect(controller.state.browseFailure, isA<TransportFailure>());
+    });
+
+    test('_findScenes throwing a bare, non-Failure error still carries a '
+        'usable failure into the abandonment', () async {
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async =>
+            throw StateError('boom'),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+      await controller.goNext();
+
+      expect(controller.state.browseFailureSequence, 1);
+      expect(controller.state.browseFailure, isA<TransportFailure>());
     });
 
     test(
@@ -925,7 +1054,7 @@ void main() {
         expect(controller.state.navigating, isTrue);
         expect(controller.state.oCount, isNull);
 
-        await controller.bumpO();
+        await controller.incrementO();
         expect(mutations, 0);
 
         pending.complete(ScenePage(total: 5, scenes: [_scene(id: 's2')]));
@@ -991,6 +1120,51 @@ void main() {
         expect(controller.state.scene!.id, 's9');
       },
     );
+
+    test("a load issued directly for the outgoing scene while a step's nested "
+        "load is already in flight does not inherit the step's already-"
+        'advanced browse position', () async {
+      // Reproduces `scene_screen.dart`'s reachable retry-during-step
+      // path: the transient playback-failure banner sits outside the
+      // controls' `IgnorePointer`, deliberately, so its Retry stays
+      // tappable while `navigating` is true, and Retry calls `load`
+      // for whatever scene is still on screen -- which, mid-step, is
+      // the *outgoing* scene, since `navigating` keeps `scene`
+      // pointing at it.
+      final nestedLoadPending = Completer<Scene?>();
+      final controller = _makeSceneController(
+        findScene: (id) async =>
+            id == 's2' ? nestedLoadPending.future : _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async =>
+            ScenePage(total: 5, scenes: [_scene(id: 's2')]),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+
+      final step = controller.goNext();
+      // Lets `_step`'s own `findScenes` resolve and the nested `load`'s
+      // synchronous top-of-function reset run, leaving that nested
+      // `load` suspended on `findScene('s2')`.
+      await pumpEventQueue();
+      expect(controller.state.navigating, isTrue);
+
+      await controller.load('s1'); // the banner's Retry, same id
+
+      // Must still carry "s1"'s own position (0), not the in-flight
+      // step's already-advanced target index (1).
+      expect(controller.state.scene!.id, 's1');
+      expect(controller.state.browse!.index, 0);
+
+      // The now-superseded step must not clobber the retry's result
+      // once its own nested load finally resolves.
+      nestedLoadPending.complete(_scene(id: 's2'));
+      await step;
+      expect(controller.state.scene!.id, 's1');
+      expect(controller.state.browse!.index, 0);
+    });
   });
 
   group('SceneScreen: metadata drawer does not resize the video', () {
@@ -1361,6 +1535,34 @@ void main() {
     });
 
     testWidgets(
+      'tapping the video itself toggles play/pause too (M7: the gesture '
+      'media_kit\'s own controls used to provide)',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene, play: false);
+
+        harness.engine.commands.clear();
+        // `warnIfMissed: false`: the fake video surface these tests use
+        // renders zero-sized, so this coordinate doesn't land on the
+        // 'player-video' widget itself, only on the full-screen
+        // `GestureDetector` behind it -- which is exactly what this test
+        // means to tap.
+        await tester.tap(
+          find.byKey(const Key('player-video')),
+          warnIfMissed: false,
+        );
+        // A `GestureDetector` with both `onTap` and `onDoubleTap` holds
+        // the single tap until the double-tap window has passed, to see
+        // whether a second tap follows.
+        await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 50));
+
+        expect(harness.engine.commands.whereType<PlayCommand>(), isNotEmpty);
+      },
+    );
+
+    testWidgets(
       'dragging the seek bar commits exactly one seek, on release — not '
       'one per pointer sample (final review I2)',
       (tester) async {
@@ -1410,6 +1612,86 @@ void main() {
 
       await _tearDownScene(tester, harness);
     });
+
+    testWidgets('tapping Next steps forward through a real browse context, not '
+        'backward', (tester) async {
+      // The only end-to-end coverage that `onPrevious`/`onNext` are
+      // wired to `goPrevious`/`goNext` in the right direction: a swap
+      // between the two at the `PlayerBar` call site would still pass
+      // every `SceneController`-level test (those call `goNext`
+      // directly) and every other widget test here (browse is `null`,
+      // so both buttons are simply dead).
+      final harness = _harness();
+      await _pumpReadyScene(
+        tester,
+        harness,
+        _scene(id: 's5'),
+        browse: const BrowseContext(filter: SceneFilter(), index: 4, total: 10),
+      );
+
+      harness.api.pages.add(
+        ScenePage(
+          total: 10,
+          scenes: [_scene(id: 's6', stream: 'six.mp4')],
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Next scene'));
+      await tester.pump();
+      // The step's nested `load` fetches "s6"'s own metadata next --
+      // `_TestStashApi.calls` now holds the initial "s5" call (already
+      // completed by `_pumpReadyScene`) plus this new one.
+      harness.api.calls.last.completer.complete(
+        _scene(id: 's6', stream: 'six.mp4'),
+      );
+      await tester.pumpAndSettle();
+
+      // Index 4 stepping forward reads page 6 (Stash pages are
+      // 1-indexed: target index 5, so page index + 1 = 6). Landing on
+      // page 4 instead would mean this tap actually called
+      // `goPrevious`.
+      expect(harness.api.requestedPages, [6]);
+      final state = harness.container.read(sceneControllerProvider).state;
+      expect(state.scene!.id, 's6');
+      expect(state.browse!.index, 5);
+
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets(
+      'a network failure during a step is reported as a failure, not as '
+      'a library change (M1)',
+      (tester) async {
+        final harness = _harness();
+        await _pumpReadyScene(
+          tester,
+          harness,
+          _scene(id: 's5'),
+          browse: const BrowseContext(
+            filter: SceneFilter(),
+            index: 4,
+            total: 10,
+          ),
+        );
+
+        harness.api.pageFailures.add(const TransportFailure());
+
+        await tester.tap(find.byTooltip('Next scene'));
+        await tester.pumpAndSettle();
+
+        // Still on the outgoing scene -- the step was abandoned.
+        final state = harness.container.read(sceneControllerProvider).state;
+        expect(state.scene!.id, 's5');
+
+        final notice = harness.container.read(globalNoticeProvider);
+        expect(notice, isNotNull);
+        expect(notice!.severity, AppNoticeSeverity.warning);
+        expect(notice.message, 'Could not reach the Stash server.');
+        expect(notice.message, isNot('There is no scene there any more.'));
+
+        await _tearDownScene(tester, harness);
+      },
+    );
 
     testWidgets('skipping forward seeks ten seconds on the engine', (
       tester,

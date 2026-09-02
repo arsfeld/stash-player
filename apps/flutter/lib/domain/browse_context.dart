@@ -24,7 +24,19 @@ class BrowseContext {
   /// random sort must carry its seed for the walk to stay stable.
   final SceneFilter filter;
 
-  /// 0-based position of the current scene within [filter]'s ordering.
+  /// 0-based position of the current scene within [filter]'s ordering, as
+  /// of the moment this context was built or last advanced.
+  ///
+  /// Not a live invariant: [filter]'s ordering can change out from under
+  /// a context that already points into it, and prev/next has no way to
+  /// detect that when it happens. Concretely, the app's own default
+  /// filter (`hideTracked: true`, which `_findScenesVariables` in
+  /// `http_stash_api.dart` maps to `o_counter EQUALS 0`) does this to
+  /// itself: incrementing or resetting the O counter of the scene
+  /// currently sitting at [index] removes it from (or returns it to)
+  /// that very ordering, shifting every later position by one. Stepping
+  /// from [index] stays correct exactly as long as nothing has changed
+  /// the ordering since it was set.
   final int index;
 
   /// How many scenes [filter] matches.
@@ -34,8 +46,16 @@ class BrowseContext {
 
   bool get canGoNext => index + 1 < total;
 
-  BrowseContext at(int newIndex) =>
-      BrowseContext(filter: filter, index: newIndex, total: total);
+  /// A copy pointing at [newIndex], optionally also replacing [total]
+  /// with a fresher count a caller just received alongside it (a step
+  /// that just fetched [newIndex]'s scene knows [total] as of that same
+  /// response, which can already be stale by the time [at] is called
+  /// otherwise (see [index]'s own doc for why it drifts).
+  BrowseContext at(int newIndex, {int? total}) => BrowseContext(
+    filter: filter,
+    index: newIndex,
+    total: total ?? this.total,
+  );
 
   @override
   bool operator ==(Object other) =>
