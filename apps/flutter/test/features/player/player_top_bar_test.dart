@@ -46,6 +46,17 @@ void main() {
     expect(tester.getTopLeft(_backButton).dx, AppTokens.stripInset);
   });
 
+  // Clearing the lights horizontally is only half of it: the bar also has
+  // to put its controls on the lights' centre line, or the back button
+  // reads as floating above them.
+  testWidgets('on macOS the back button sits on the lights centre line', (
+    tester,
+  ) async {
+    await _pump(tester, TargetPlatform.macOS, _topBar);
+
+    expect(tester.getCenter(_backButton).dy, closeTo(25.5, 1));
+  });
+
   testWidgets('the back button responds to the pointer', (tester) async {
     // Player chrome is always dark, so its hovered state is a wash of the
     // glyph colour rather than the theme's control tokens. Before the

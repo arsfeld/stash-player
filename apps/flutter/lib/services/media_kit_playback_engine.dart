@@ -136,8 +136,18 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
     final videoController = VideoController(player);
     return MediaKitPlaybackEngine._(
       port: _RealMediaKitPlayerPort(player),
-      buildVideoSurface: ({Key? key}) =>
-          Video(key: key, controller: videoController, fit: BoxFit.contain),
+      // `controls: NoVideoControls` is load-bearing, not a default being
+      // restated. `Video`'s own default is `AdaptiveVideoControls`, which
+      // on macOS resolves to `MaterialDesktopVideoControls`: a second
+      // transport bar, with its own 3s hover timer and its own 150ms
+      // fade, drawn over the app's chrome and hiding on a different
+      // schedule from it.
+      buildVideoSurface: ({Key? key}) => Video(
+        key: key,
+        controller: videoController,
+        fit: BoxFit.contain,
+        controls: NoVideoControls,
+      ),
     );
   }
 

@@ -33,14 +33,37 @@ class AppTokens extends ThemeExtension<AppTokens> {
   static const double radiusPlayerBar = 13;
 
   /// The top strip's total height, and the control band inside it. The
-  /// band is 28 because that is the height of the macOS system titlebar
-  /// the traffic lights are centred in. See [AppWindowChrome].
+  /// band is 28 because that is the height a compact control reads well
+  /// at; the strip is what surrounds it with padding. See
+  /// [AppWindowChrome].
   static const double stripHeight = 44;
   static const double controlBandHeight = 28;
 
-  /// Horizontal space reserved before the strip's first control: enough
-  /// to clear the macOS traffic lights, or ordinary padding elsewhere.
-  static const double trafficLightInset = 78;
+  /// The strip's height on macOS, where it doubles as the window's
+  /// titlebar.
+  ///
+  /// `MainFlutterWindow` gives the window an empty toolbar in the unified
+  /// style, which makes AppKit treat the titlebar as a taller band and
+  /// re-centre the traffic lights inside it. Measured from a screenshot
+  /// of that window rather than derived from a published constant, since
+  /// AppKit publishes none: the lights occupy rows 19 to 32, so their
+  /// centre line is 25.5. A 28px band centred in 52 puts our controls at
+  /// 26, half a pixel off the lights and with 12px of clearance above and
+  /// below.
+  ///
+  /// If this ever drifts, re-measure rather than nudging it: the whole
+  /// point is that the number describes where the system actually draws
+  /// the lights.
+  static const double macOSStripHeight = 52;
+
+  /// Horizontal space reserved before the strip's first control.
+  ///
+  /// On macOS the traffic lights end at x=78 (measured the same way as
+  /// [macOSStripHeight]), so the first control clears them by the same
+  /// [stripInset] every other edge of the strip uses. Butting it up
+  /// against 78 exactly, which is what this was, left the lights and the
+  /// first control visibly touching.
+  static const double trafficLightInset = 78 + stripInset;
   static const double stripInset = space3;
 
   static const double sceneTileMaxWidth = 280;

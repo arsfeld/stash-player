@@ -11,11 +11,15 @@ import '../theme/app_tokens.dart';
 /// `Platform.isMacOS` so a widget test can pin either layout:
 ///
 /// - A leading inset clears the traffic lights.
-/// - The control band is pinned to the top. The system centres the lights
-///   in a 28pt band at the very top of the window, so a 28px band pinned
-///   to the top puts our controls on the same centre line as the lights.
-///   Centring the band in the full 44px strip instead would sit them
-///   visibly lower than the lights.
+/// - The strip is taller, because `MainFlutterWindow` gives the window an
+///   empty unified toolbar and AppKit re-centres the lights in the taller
+///   titlebar that produces. The control band is centred in the strip on
+///   every platform; on macOS that lands it on the lights' own centre
+///   line (see [AppTokens.macOSStripHeight]) *and* leaves it padding above
+///   and below. An earlier version pinned the band to the very top of a
+///   44px strip, which was the only way to meet the lights while they
+///   still sat in a 28pt titlebar, and it left every control touching the
+///   window's top edge.
 ///
 /// Every control placed in [children] should be built to
 /// [AppTokens.controlBandHeight]; the band does not resize to fit.
@@ -40,9 +44,12 @@ class AppWindowChrome extends StatelessWidget {
       ? AppTokens.trafficLightInset
       : AppTokens.stripInset;
 
-  /// Where the control band sits within the strip.
-  static Alignment alignmentFor(TargetPlatform platform) =>
-      platform == TargetPlatform.macOS ? Alignment.topCenter : Alignment.center;
+  /// The strip's total height. Taller on macOS, where it has a titlebar's
+  /// worth of traffic lights to sit around.
+  static double stripHeightFor(TargetPlatform platform) =>
+      platform == TargetPlatform.macOS
+      ? AppTokens.macOSStripHeight
+      : AppTokens.stripHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -55,9 +62,8 @@ class AppWindowChrome extends StatelessWidget {
         ),
       ),
       child: SizedBox(
-        height: AppTokens.stripHeight,
+        height: stripHeightFor(theme.platform),
         child: Align(
-          alignment: alignmentFor(theme.platform),
           child: Padding(
             padding: EdgeInsets.only(
               left: leadingInsetFor(theme.platform),
