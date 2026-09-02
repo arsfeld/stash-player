@@ -207,4 +207,114 @@ void main() {
 
     expect(fired, isEmpty);
   });
+
+  group('narrow-width reflow', () {
+    // The pre-existing metadata-drawer test window this task's own fix
+    // round found overflowing (`scene_screen_test.dart`'s "below 420
+    // logical pixels" case): 300 logical pixels wide, which leaves 244
+    // for this bar's own bottom row once its 56px of padding is
+    // subtracted (see `_playerBarCountBreakpoint`'s own doc for that
+    // arithmetic). Below every breakpoint the bar defines, so both the
+    // volume slider and the O-counter's digits/reset are gone here.
+    Future<void> pumpNarrow(
+      WidgetTester tester, {
+      required int oCount,
+      VoidCallback? onIncrementO,
+    }) {
+      tester.view.physicalSize = const Size(300, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      return _pumpBar(
+        tester,
+        playback: const PlaybackState(playing: true),
+        actions: SceneActionState(
+          canGoPrevious: true,
+          canGoNext: true,
+          oCount: oCount,
+        ),
+        onIncrementO: onIncrementO,
+      );
+    }
+
+    testWidgets(
+      'the transport cluster stays full size at 300 logical pixels wide, '
+      'with no overflow',
+      (tester) async {
+        await pumpNarrow(tester, oCount: 12);
+
+        // Asserts the actual rendered size, not just presence: a shrunk
+        // control (this task's own first attempt used a `FittedBox` that
+        // scaled the whole cluster down to about a quarter size) would
+        // still be found by these finders.
+        Size sizeOf(String tooltip) => tester.getSize(find.byTooltip(tooltip));
+
+        expect(sizeOf('Previous scene'), const Size(28, 28));
+        expect(sizeOf('Back 10 seconds'), const Size(28, 28));
+        expect(sizeOf('Pause'), const Size(34, 34));
+        expect(sizeOf('Forward 10 seconds'), const Size(28, 28));
+        expect(sizeOf('Next scene'), const Size(28, 28));
+
+        // `tester.pumpWidget`/`pump` above would already have thrown on a
+        // `RenderFlex` overflow (a real regression this same width once
+        // hit through `scene_screen_test.dart`), so reaching this point
+        // is itself part of what this test proves; TestWidgetsFlutterBinding
+        // also records such rendering exceptions, so an explicit check
+        // makes that assertion visible here rather than only implicit.
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'the volume slider drops first, before the O-counter loses anything',
+      (tester) async {
+        // 396 logical pixels leaves 340 of content width: below
+        // `_playerBarVolumeBreakpoint` (393.5) so the slider is gone, but
+        // above `_playerBarResetBreakpoint` (297.5) so the O-counter
+        // still shows its reset button and its digits.
+        tester.view.physicalSize = const Size(396, 700);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await _pumpBar(
+          tester,
+          playback: const PlaybackState(playing: true),
+          actions: const SceneActionState(
+            canGoPrevious: true,
+            canGoNext: true,
+            oCount: 12,
+          ),
+        );
+
+        expect(find.byKey(const Key('scene-volume-slider')), findsNothing);
+        expect(find.text('12'), findsOneWidget);
+        expect(find.byTooltip('Reset O-counter to 0'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'at 300 logical pixels wide the O-counter is icon-only: no digits, '
+      'no reset button, but the bump control still works',
+      (tester) async {
+        final fired = <String>[];
+        await pumpNarrow(
+          tester,
+          oCount: 12,
+          onIncrementO: () => fired.add('bump'),
+        );
+
+        expect(find.byKey(const Key('scene-volume-slider')), findsNothing);
+        expect(find.text('12'), findsNothing);
+        expect(find.byTooltip('Reset O-counter to 0'), findsNothing);
+        expect(find.byTooltip('Bump O-counter'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Bump O-counter'));
+        await tester.pump();
+
+        expect(fired, ['bump']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 }

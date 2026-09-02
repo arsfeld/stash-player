@@ -5,6 +5,49 @@ import '../../ui/theme/app_tokens.dart';
 import 'playback_state.dart';
 import 'player_icon_button.dart';
 
+// The three breakpoints below are all measured against the same fixed
+// baseline: the mute button (28) plus the five-button transport cluster
+// (four 8px gaps plus one filled play/pause button at 34 instead of 28,
+// which never shrinks or drops at any width) is 206. Every width below
+// comes from `tester.getSize` against the real rendered widgets, not a
+// guess, using a representative two-digit O-count (e.g. "12") for the
+// O-counter's own variable digit width: its bump button (icon, one 4px
+// gap, the digits, and its own padding) is 59.5 alone, and 91.5 including
+// the 4px gap plus its 28px reset button when that is also showing.
+const double _playerBarBaseWidth = 206;
+
+/// Width, in logical pixels available to the bar's bottom control row
+/// (inside its own padding and border, so this is directly comparable to
+/// the `LayoutBuilder` constraints in [_PlayerBarState.build]), at and
+/// above which the volume slider renders alongside everything else.
+///
+/// Below it the slider drops and only the mute button remains, which
+/// already covers the urgent case. [_playerBarBaseWidth] (206) + the
+/// fixed 96px volume slider + 91.5 (a full O-counter, reset button
+/// included) = 393.5.
+const double _playerBarVolumeBreakpoint = _playerBarBaseWidth + 96 + 91.5;
+
+/// Below [_playerBarVolumeBreakpoint] the volume slider is already gone.
+/// Below this second, lower threshold the O-counter's reset button drops
+/// too, leaving only its count and bump icon. [_playerBarBaseWidth] (206)
+/// + 91.5 (O-counter with its reset button) = 297.5.
+const double _playerBarResetBreakpoint = _playerBarBaseWidth + 91.5;
+
+/// Below [_playerBarResetBreakpoint] the reset button is already gone.
+/// Below this third, lowest threshold the O-counter's own digit count
+/// drops too, leaving a bare icon-only bump button (measured at a fixed
+/// 31: its padding plus one 15px icon, independent of the digit count
+/// that no longer renders). [_playerBarBaseWidth] (206) + 59.5 (the bump
+/// button alone, digits shown but no reset) = 265.5. This is the tier
+/// the pre-existing 300px-wide drawer test (`scene_screen_test.dart`)
+/// lands in: the bar's own padding takes 56 of that 300 (32 from the
+/// panel's own `Padding`, 24 from the inner one; the `DecoratedBox`
+/// border is paint-only and costs no layout width), leaving 244 of
+/// content width, which fits the transport cluster plus the compact
+/// O-counter (206 + 31 = 237) but not one still showing its digits
+/// (206 + 59.5 = 265.5, over budget by 21.5).
+const double _playerBarCountBreakpoint = _playerBarBaseWidth + 59.5;
+
 /// The scene-level controls' state: what prev/next and the O-counter
 /// should show, decided by whoever owns the scene and handed to this bar
 /// already resolved.
@@ -177,43 +220,52 @@ class _PlayerBarState extends State<PlayerBar> {
                 ],
               ),
               const SizedBox(height: AppTokens.space2),
-              Row(
-                children: [
-                  PlayerIconButton(
-                    icon: playback.muted ? Icons.volume_off : Icons.volume_up,
-                    tooltip: playback.muted ? 'Unmute' : 'Mute',
-                    onPressed: widget.onToggleMute,
-                  ),
-                  SizedBox(
-                    width: 96,
-                    child: Tooltip(
-                      message: 'Volume',
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: AppTokens.playerText,
-                          thumbColor: AppTokens.playerText,
-                          inactiveTrackColor: AppTokens.playerTrack,
-                        ),
-                        child: Slider(
-                          key: const Key('scene-volume-slider'),
-                          value: playback.volume.clamp(0.0, 1.0),
-                          onChanged: widget.onVolumeChanged,
-                        ),
+              // A `LayoutBuilder` rather than a fixed row: at a narrow
+              // window (the metadata drawer's own width tests go down to
+              // 300px) the mute button, volume slider, transport cluster
+              // and O-counter no longer fit their natural size together.
+              // The transport cluster is the reason this bar exists and
+              // never shrinks or drops; everything else yields, in
+              // priority order, before it would ever overflow. See
+              // [_playerBarVolumeBreakpoint] and its neighbours for the
+              // measured widths this is built from.
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final available = constraints.maxWidth;
+                  final showVolume = available >= _playerBarVolumeBreakpoint;
+                  final allowReset = available >= _playerBarResetBreakpoint;
+                  final showCount = available >= _playerBarCountBreakpoint;
+                  return Row(
+                    children: [
+                      PlayerIconButton(
+                        icon: playback.muted
+                            ? Icons.volume_off
+                            : Icons.volume_up,
+                        tooltip: playback.muted ? 'Unmute' : 'Mute',
+                        onPressed: widget.onToggleMute,
                       ),
-                    ),
-                  ),
-                  Expanded(
-                    // `FittedBox` rather than a bare centred `Row`: at a
-                    // narrow window (the metadata drawer's own width
-                    // tests go down to 300px) five buttons plus the
-                    // volume control and O-counter no longer fit their
-                    // natural size. Scaling the cluster down keeps it
-                    // whole and centred instead of overflowing the panel.
-                    child: Center(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
+                      if (showVolume)
+                        SizedBox(
+                          width: 96,
+                          child: Tooltip(
+                            message: 'Volume',
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                activeTrackColor: AppTokens.playerText,
+                                thumbColor: AppTokens.playerText,
+                                inactiveTrackColor: AppTokens.playerTrack,
+                              ),
+                              child: Slider(
+                                key: const Key('scene-volume-slider'),
+                                value: playback.volume.clamp(0.0, 1.0),
+                                onChanged: widget.onVolumeChanged,
+                              ),
+                            ),
+                          ),
+                        ),
+                      Expanded(
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             PlayerIconButton(
                               icon: Icons.skip_previous,
@@ -254,14 +306,16 @@ class _PlayerBarState extends State<PlayerBar> {
                           ],
                         ),
                       ),
-                    ),
-                  ),
-                  _OCounterGroup(
-                    count: actions.oCount,
-                    onIncrement: widget.onIncrementO,
-                    onReset: widget.onResetO,
-                  ),
-                ],
+                      _OCounterGroup(
+                        count: actions.oCount,
+                        onIncrement: widget.onIncrementO,
+                        onReset: widget.onResetO,
+                        allowReset: allowReset,
+                        showCount: showCount,
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -276,16 +330,28 @@ class _PlayerBarState extends State<PlayerBar> {
 ///
 /// A `null` [count] renders the group dead rather than hiding it, so the
 /// bar does not reflow every time a prev/next fetch is in flight.
+///
+/// [allowReset] and [showCount] are the bar's own narrow-width
+/// concessions (see [_playerBarResetBreakpoint] and
+/// [_playerBarCountBreakpoint]), applied on top of the data-driven
+/// `count! > 0` check below: a reset only ever shows when both the width
+/// allows it and there is something to reset, and the digit count itself
+/// is the last thing dropped, leaving a bare icon-only bump button that
+/// still works, just without a number on it.
 class _OCounterGroup extends StatelessWidget {
   const _OCounterGroup({
     required this.count,
     required this.onIncrement,
     required this.onReset,
+    required this.allowReset,
+    required this.showCount,
   });
 
   final int? count;
   final VoidCallback onIncrement;
   final VoidCallback onReset;
+  final bool allowReset;
+  final bool showCount;
 
   @override
   Widget build(BuildContext context) {
@@ -313,16 +379,18 @@ class _OCounterGroup extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.water_drop_outlined, size: 15, color: glyph),
-                      const SizedBox(width: AppTokens.space1),
-                      Text(
-                        '${count ?? 0}',
-                        style: TextStyle(
-                          color: glyph,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()],
+                      if (showCount) ...[
+                        const SizedBox(width: AppTokens.space1),
+                        Text(
+                          '${count ?? 0}',
+                          style: TextStyle(
+                            color: glyph,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -330,7 +398,7 @@ class _OCounterGroup extends StatelessWidget {
             ),
           ),
         ),
-        if (enabled && count! > 0) ...[
+        if (allowReset && enabled && count! > 0) ...[
           const SizedBox(width: AppTokens.space1),
           PlayerIconButton(
             icon: Icons.backspace_outlined,
