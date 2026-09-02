@@ -202,7 +202,7 @@ class SceneController extends ChangeNotifier {
   /// contract.
   ///
   /// [browse] is where the caller says this scene sits in an ordering,
-  /// if any — `null` keeps whatever ordering was already in place
+  /// if any. `null` keeps whatever ordering was already in place
   /// (unchanged by a bare [retry], for instance). Seeds [SceneState.oCount]
   /// from [Scene.oCounter] on success, defaulting an unreported count to
   /// zero so the player's O-counter controls always have something
@@ -215,6 +215,15 @@ class SceneController extends ChangeNotifier {
       phase: ScenePhase.loading,
       sceneId: id,
       generation: generation,
+      // A step (`_step`) sets `navigating` true and calls this method
+      // while it is still true, precisely so the outgoing scene keeps
+      // the video surface mapped for the whole fetch. See
+      // [SceneState.navigating]'s own doc. Carrying [Scene] forward here
+      // only in that case is what makes that true: a step's nested
+      // `load` must never let `scene` go null (that is what un-maps the
+      // video surface), while a fresh `load`/[retry] genuinely should
+      // drop whatever scene came before.
+      scene: _state.navigating ? _state.scene : null,
       browse: browse ?? _state.browse,
       navigating: _state.navigating,
       oFailureSequence: _state.oFailureSequence,
@@ -230,6 +239,7 @@ class SceneController extends ChangeNotifier {
         _state = _state.copyWith(
           phase: ScenePhase.notFound,
           failure: const NotFoundFailure(),
+          navigating: false,
         );
         notifyListeners();
         return;

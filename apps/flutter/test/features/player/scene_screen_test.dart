@@ -677,15 +677,23 @@ void main() {
       // The library changed underneath, or total was stale. Staying on a
       // scene that works beats blanking the screen.
       final controller = _makeSceneController(
-        findScene: (id) async => _scene(id: id),
+        findScene: (id) async => _scene(id: id, oCounter: 3),
         findScenes: (filter, {required page, required perPage}) async =>
             ScenePage(total: 5, scenes: const []),
+        mutateO: (id, mutation) async => 9,
       );
 
       await controller.load(
         's1',
         browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
       );
+      // Bumped past the scene's own reported count of 3, so what
+      // `_abandonStep` restores can only be the value the controller was
+      // actually showing, not a re-read of `scene.oCounter` (which would
+      // silently undo this bump).
+      await controller.bumpO();
+      expect(controller.state.oCount, 9);
+
       await controller.goNext();
 
       expect(controller.state.scene!.id, 's1');
@@ -693,6 +701,7 @@ void main() {
       expect(controller.state.phase, ScenePhase.ready);
       expect(controller.state.navigating, isFalse);
       expect(controller.state.browseFailureSequence, 1);
+      expect(controller.state.oCount, 9);
     });
 
     test('oCount is seeded from the loaded scene', () async {
@@ -781,6 +790,74 @@ void main() {
 
       expect(controller.state.oFailureSequence, 2);
     });
+
+    test('a step in flight keeps the outgoing scene mapped while the target '
+        'scene metadata is still loading', () async {
+      // `_step` delegates to `load` for the target scene, and `load`'s
+      // own top-of-function reset would otherwise null out `scene` for
+      // the whole round trip, tearing down the video-first stack (see
+      // `scene_screen.dart`'s `scene == null` gate) for exactly the
+      // window `navigating` exists to cover.
+      var findSceneCalls = 0;
+      final findScenePending = Completer<Scene?>();
+      final controller = _makeSceneController(
+        findScene: (id) async {
+          findSceneCalls++;
+          if (findSceneCalls == 1) return _scene(id: id);
+          return findScenePending.future;
+        },
+        findScenes: (filter, {required page, required perPage}) async =>
+            ScenePage(total: 5, scenes: [_scene(id: 's2')]),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+
+      final navigation = controller.goNext();
+      // Lets the already-resolved `findScenes` call and the nested
+      // `load`'s own synchronous prefix run, up to where it suspends
+      // on the still-pending `findScene` call.
+      await pumpEventQueue();
+
+      expect(controller.state.navigating, isTrue);
+      expect(controller.state.scene!.id, 's1');
+
+      findScenePending.complete(_scene(id: 's2'));
+      await navigation;
+
+      expect(controller.state.navigating, isFalse);
+      expect(controller.state.scene!.id, 's2');
+    });
+
+    test(
+      'a step landing on a since-deleted scene still clears navigating',
+      () async {
+        // `_step` sets `navigating` true before delegating to `load`.
+        // Every terminal state `load` can reach has to clear it back, not
+        // just the ready/failed paths, or prev/next and the O-counter
+        // stay dead for the rest of the visit.
+        final controller = _makeSceneController(
+          findScene: (id) async => id == 's1' ? _scene(id: id) : null,
+          findScenes: (filter, {required page, required perPage}) async =>
+              ScenePage(total: 5, scenes: [_scene(id: 's2')]),
+        );
+
+        await controller.load(
+          's1',
+          browse: const BrowseContext(
+            filter: SceneFilter(),
+            index: 0,
+            total: 5,
+          ),
+        );
+        await controller.goNext();
+
+        expect(controller.state.phase, ScenePhase.notFound);
+        expect(controller.state.navigating, isFalse);
+      },
+    );
 
     test(
       'mid-navigation the O-counter is unavailable and cannot be bumped',

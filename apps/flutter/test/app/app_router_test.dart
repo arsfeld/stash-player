@@ -11,6 +11,7 @@ import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
@@ -201,17 +202,27 @@ void main() {
     // every unit test still passed.
     const browse = BrowseContext(filter: SceneFilter(), index: 7, total: 412);
 
-    await pumpRouterAt(tester, const SceneDestination('1001', browse: browse));
+    final container = await pumpRouterAt(
+      tester,
+      const SceneDestination('1001', browse: browse),
+    );
 
     expect(tester.widget<SceneScreen>(find.byType(SceneScreen)).browse, browse);
+    // The constructor field alone would still pass this test even if
+    // `SceneScreen.initState` dropped `browse: widget.browse` from its
+    // `load(...)` call — asserting on the controller's own state is what
+    // actually proves the context reached `SceneController`, not just the
+    // widget that carries it past the router.
+    expect(container.read(sceneControllerProvider).state.browse, browse);
   });
 }
 
 /// Drives [AppRouter] straight to [destination], with the same
 /// scene/playback overrides `popping the scene page returns to the
 /// library` uses to reach the scene route without starting real playback
-/// or network code.
-Future<void> pumpRouterAt(
+/// or network code. Returns the [ProviderContainer] so a caller can
+/// inspect provider state past what the widget tree alone can prove.
+Future<ProviderContainer> pumpRouterAt(
   WidgetTester tester,
   AppDestination destination,
 ) async {
@@ -251,6 +262,7 @@ Future<void> pumpRouterAt(
     ),
   );
   await tester.pumpAndSettle();
+  return container;
 }
 
 /// A test-only `AppController` that always starts at whatever
