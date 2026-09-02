@@ -338,6 +338,36 @@ void main() {
       throwsUnsupportedError,
     );
   });
+
+  test('findScene decodes o_counter', () async {
+    final transport = RecordingClient(fixture('find_scene.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: 'SECRET',
+      client: transport,
+    );
+
+    final scene = await api.findScene('1001');
+
+    expect(scene!.oCounter, 3);
+  });
+
+  test('a scene with no o_counter decodes as null, not zero', () async {
+    final transport = RecordingClient(fixture('find_scenes_partial.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    final page = await api.findScenes(
+      const SceneFilter(),
+      page: 1,
+      perPage: 48,
+    );
+
+    expect(page.scenes.single.oCounter, isNull);
+  });
 }
 
 String fixture(String name) => File('test/fixtures/$name').readAsStringSync();

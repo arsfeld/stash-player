@@ -17,6 +17,7 @@ class Scene {
     this.resumeTime,
     this.playCount,
     this.playDuration,
+    this.oCounter,
     List<SceneFile> files = const [],
     this.studio,
     List<PerformerRef> performers = const [],
@@ -32,6 +33,13 @@ class Scene {
   final double? resumeTime;
   final int? playCount;
   final double? playDuration;
+
+  /// Stash's per-scene "O counter". `null` means the server reported no
+  /// count at all, which is a different state from a real `0`: the first
+  /// is an absence, the second is a scene nobody has counted yet. The
+  /// player's O-counter controls key their sensitivity off that
+  /// distinction.
+  final int? oCounter;
   final List<SceneFile> files;
   final StudioRef? studio;
   final List<PerformerRef> performers;

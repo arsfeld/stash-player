@@ -212,6 +212,7 @@ Scene _decodeScene(Map<String, Object?> source) => Scene(
   resumeTime: _optionalDouble(source, 'resume_time'),
   playCount: _optionalInt(source, 'play_count'),
   playDuration: _optionalDouble(source, 'play_duration'),
+  oCounter: _optionalInt(source, 'o_counter'),
   files:
       (source['files'] == null
               ? const <Object?>[]
