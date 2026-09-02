@@ -316,5 +316,43 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'a three-digit O-count does not overflow the reset-button band a '
+      'two-digit budget would wrongly clear',
+      (tester) async {
+        // 354 logical pixels leaves 298 of content width: at or just
+        // above the fixed, two-digit-budgeted reset threshold this fix
+        // round's first draft used (206 base + 59.5 two-digit bump + 32
+        // reset = 297.5), so that draft would already have allowed the
+        // reset button here. A three-digit count's own bump button is
+        // wider (71.75, not 59.5), so the real reset threshold for three
+        // digits is 206 + 71.75 + 32 = 309.75, above 298 by about 12
+        // pixels: exactly the band a fixed, representative-count budget
+        // cannot see coming.
+        tester.view.physicalSize = const Size(354, 700);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await _pumpBar(
+          tester,
+          playback: const PlaybackState(playing: true),
+          actions: const SceneActionState(
+            canGoPrevious: true,
+            canGoNext: true,
+            oCount: 123,
+          ),
+        );
+
+        Size sizeOf(String tooltip) => tester.getSize(find.byTooltip(tooltip));
+
+        expect(sizeOf('Previous scene'), const Size(28, 28));
+        expect(sizeOf('Back 10 seconds'), const Size(28, 28));
+        expect(sizeOf('Pause'), const Size(34, 34));
+        expect(sizeOf('Forward 10 seconds'), const Size(28, 28));
+        expect(sizeOf('Next scene'), const Size(28, 28));
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }

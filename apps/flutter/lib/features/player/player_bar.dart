@@ -5,48 +5,79 @@ import '../../ui/theme/app_tokens.dart';
 import 'playback_state.dart';
 import 'player_icon_button.dart';
 
-// The three breakpoints below are all measured against the same fixed
-// baseline: the mute button (28) plus the five-button transport cluster
-// (four 8px gaps plus one filled play/pause button at 34 instead of 28,
-// which never shrinks or drops at any width) is 206. Every width below
-// comes from `tester.getSize` against the real rendered widgets, not a
-// guess, using a representative two-digit O-count (e.g. "12") for the
-// O-counter's own variable digit width: its bump button (icon, one 4px
-// gap, the digits, and its own padding) is 59.5 alone, and 91.5 including
-// the 4px gap plus its 28px reset button when that is also showing.
+// The breakpoints below share one fixed baseline: the mute button (28)
+// plus the five-button transport cluster (four 8px gaps plus one filled
+// play/pause button at 34 instead of 28, which never shrinks or drops at
+// any width) is 206. This part is genuinely count-independent.
 const double _playerBarBaseWidth = 206;
+
+// The O-counter's own bump button is not fixed-width: `oCount` is an
+// unbounded `int?` straight from Stash's mutation, and its digits render
+// with tabular figures, so every digit costs the same and the button's
+// width is an exact linear function of the digit count rather than a
+// single representative number. Measured via `tester.getSize` against
+// the real rendered widget at 1, 2, 3, 4 and 5-digit counts ("0", "12",
+// "123", "1000", "12345"): 47.25, 59.5, 71.75, 84.0, 96.25, each exactly
+// 12.25 more than the last. `_oCounterFixedWidth` (35) is that series'
+// own zero-digit intercept, and independently equals the padding (16)
+// plus the icon (15) plus the one 4px gap before the digits: the parts
+// of the button that do not depend on the count at all.
+const double _oCounterPerDigitWidth = 12.25;
+const double _oCounterFixedWidth = 35;
+
+/// The O-counter bump button's own width at [digitCount] digits, with no
+/// reset button attached.
+double _oCounterBumpWidth(int digitCount) =>
+    _oCounterFixedWidth + digitCount * _oCounterPerDigitWidth;
+
+/// The reset button (28) plus the one 4px gap before it, added on top of
+/// [_oCounterBumpWidth] when the reset button also shows. Digit-count
+/// independent: the reset button itself never changes size.
+const double _oCounterResetWidth = 32;
 
 /// Width, in logical pixels available to the bar's bottom control row
 /// (inside its own padding and border, so this is directly comparable to
 /// the `LayoutBuilder` constraints in [_PlayerBarState.build]), at and
-/// above which the volume slider renders alongside everything else.
+/// above which the volume slider renders alongside everything else, for
+/// an O-counter showing [digitCount] digits.
 ///
 /// Below it the slider drops and only the mute button remains, which
 /// already covers the urgent case. [_playerBarBaseWidth] (206) + the
-/// fixed 96px volume slider + 91.5 (a full O-counter, reset button
-/// included) = 393.5.
-const double _playerBarVolumeBreakpoint = _playerBarBaseWidth + 96 + 91.5;
+/// fixed 96px volume slider + a full O-counter (bump button plus reset
+/// button) at [digitCount] digits.
+double _playerBarVolumeBreakpoint(int digitCount) =>
+    _playerBarBaseWidth +
+    96 +
+    _oCounterBumpWidth(digitCount) +
+    _oCounterResetWidth;
 
 /// Below [_playerBarVolumeBreakpoint] the volume slider is already gone.
-/// Below this second, lower threshold the O-counter's reset button drops
-/// too, leaving only its count and bump icon. [_playerBarBaseWidth] (206)
-/// + 91.5 (O-counter with its reset button) = 297.5.
-const double _playerBarResetBreakpoint = _playerBarBaseWidth + 91.5;
+/// Below this second, lower threshold (for the same [digitCount]) the
+/// O-counter's reset button drops too, leaving only its count and bump
+/// icon. [_playerBarBaseWidth] (206) + a full O-counter (bump button
+/// plus reset button) at [digitCount] digits.
+double _playerBarResetBreakpoint(int digitCount) =>
+    _playerBarBaseWidth + _oCounterBumpWidth(digitCount) + _oCounterResetWidth;
 
 /// Below [_playerBarResetBreakpoint] the reset button is already gone.
-/// Below this third, lowest threshold the O-counter's own digit count
-/// drops too, leaving a bare icon-only bump button (measured at a fixed
-/// 31: its padding plus one 15px icon, independent of the digit count
-/// that no longer renders). [_playerBarBaseWidth] (206) + 59.5 (the bump
-/// button alone, digits shown but no reset) = 265.5. This is the tier
-/// the pre-existing 300px-wide drawer test (`scene_screen_test.dart`)
-/// lands in: the bar's own padding takes 56 of that 300 (32 from the
-/// panel's own `Padding`, 24 from the inner one; the `DecoratedBox`
-/// border is paint-only and costs no layout width), leaving 244 of
-/// content width, which fits the transport cluster plus the compact
-/// O-counter (206 + 31 = 237) but not one still showing its digits
-/// (206 + 59.5 = 265.5, over budget by 21.5).
-const double _playerBarCountBreakpoint = _playerBarBaseWidth + 59.5;
+/// Below this third, lowest threshold (for the same [digitCount]) the
+/// O-counter's own digit count drops too, leaving a bare icon-only bump
+/// button (a fixed 31: [_oCounterFixedWidth] minus the one 4px gap that
+/// only exists to lead into digits that are no longer there, since that
+/// gap is itself conditional on `showCount` in [_OCounterGroup]).
+/// [_playerBarBaseWidth] (206) + the bump button alone (digits shown but
+/// no reset) at [digitCount] digits.
+///
+/// This is the tier the pre-existing 300px-wide drawer test
+/// (`scene_screen_test.dart`) lands in at any digit count: the bar's own
+/// padding takes 56 of that 300 (32 from the panel's own `Padding`, 24
+/// from the inner one; the `DecoratedBox` border is paint-only and costs
+/// no layout width), leaving 244 of content width, which fits the
+/// transport cluster plus the compact O-counter (206 + 31 = 237 at any
+/// digit count, since the icon-only tier never renders a digit) but not
+/// one still showing even a single digit (206 + 47.25 = 253.25).
+double _playerBarCountBreakpoint(int digitCount) =>
+    _playerBarBaseWidth + _oCounterBumpWidth(digitCount);
 
 /// The scene-level controls' state: what prev/next and the O-counter
 /// should show, decided by whoever owns the scene and handed to this bar
@@ -232,9 +263,20 @@ class _PlayerBarState extends State<PlayerBar> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final available = constraints.maxWidth;
-                  final showVolume = available >= _playerBarVolumeBreakpoint;
-                  final allowReset = available >= _playerBarResetBreakpoint;
-                  final showCount = available >= _playerBarCountBreakpoint;
+                  // The O-counter's own width (and so every breakpoint
+                  // downstream of it) depends on how many digits it is
+                  // about to render, not on a fixed representative
+                  // count: `oCount` is an unbounded `int?` straight from
+                  // Stash's mutation, and a wider count that a
+                  // fixed-width budget did not see coming is exactly
+                  // what would otherwise overflow this row.
+                  final digitCount = (actions.oCount ?? 0).toString().length;
+                  final showVolume =
+                      available >= _playerBarVolumeBreakpoint(digitCount);
+                  final allowReset =
+                      available >= _playerBarResetBreakpoint(digitCount);
+                  final showCount =
+                      available >= _playerBarCountBreakpoint(digitCount);
                   return Row(
                     children: [
                       PlayerIconButton(
