@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/notices.dart';
 import '../../app/providers.dart';
+import '../../domain/browse_context.dart';
 import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
 import 'playback_controller.dart';
@@ -35,9 +36,14 @@ import 'video_surface.dart';
 /// the video ever played at all — see
 /// [_SceneScreenState._shouldShowBlockingPlaybackFailure].
 class SceneScreen extends ConsumerStatefulWidget {
-  const SceneScreen({required this.sceneId, super.key});
+  const SceneScreen({required this.sceneId, this.browse, super.key});
 
   final String sceneId;
+
+  /// Where this scene sits in the ordering the user was browsing, passed
+  /// straight through from the destination that opened it. `null` when
+  /// the scene was reached with no ordering behind it.
+  final BrowseContext? browse;
 
   @override
   ConsumerState<SceneScreen> createState() => _SceneScreenState();
@@ -104,7 +110,9 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
     // post-frame deferral).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ref.read(sceneControllerProvider).load(widget.sceneId);
+      ref
+          .read(sceneControllerProvider)
+          .load(widget.sceneId, browse: widget.browse);
     });
   }
 

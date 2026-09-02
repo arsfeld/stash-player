@@ -4,11 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app_controller.dart';
 import 'package:stash_player_flutter/app/app_router.dart';
 import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
 import '../support/fake_playback_engine.dart';
@@ -189,6 +192,77 @@ void main() {
       const AppDestination.library(),
     );
   });
+
+  testWidgets('a scene destination hands its context to the screen', (
+    tester,
+  ) async {
+    // The destination and the controller both grew a browse context
+    // before anything connected them, which left prev/next inert while
+    // every unit test still passed.
+    const browse = BrowseContext(filter: SceneFilter(), index: 7, total: 412);
+
+    await pumpRouterAt(tester, const SceneDestination('1001', browse: browse));
+
+    expect(tester.widget<SceneScreen>(find.byType(SceneScreen)).browse, browse);
+  });
+}
+
+/// Drives [AppRouter] straight to [destination], with the same
+/// scene/playback overrides `popping the scene page returns to the
+/// library` uses to reach the scene route without starting real playback
+/// or network code.
+Future<void> pumpRouterAt(
+  WidgetTester tester,
+  AppDestination destination,
+) async {
+  final stashApi = FakeStashApi()
+    ..sceneResults.add(
+      Scene(
+        id: '1001',
+        paths: const ScenePaths(stream: 'x.mp4'),
+      ),
+    );
+  final container = ProviderContainer(
+    overrides: [
+      appControllerProvider.overrideWith(
+        () => _FixedDestinationController(destination),
+      ),
+      connectionStoreProvider.overrideWithValue(
+        FakeConnectionStore(
+          saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+        ),
+      ),
+      environmentProvider.overrideWithValue(const {}),
+      stashApiFactoryProvider.overrideWithValue((config) => stashApi),
+      playbackEngineFactoryProvider.overrideWithValue(
+        ({httpProxyUrl}) => FakePlaybackEngine(),
+      ),
+    ],
+  );
+  addTearDown(container.dispose);
+
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        theme: buildAppTheme(Brightness.light),
+        home: const AppRouter(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// A test-only `AppController` that always starts at whatever
+/// [AppDestination] it is built with, so [pumpRouterAt] can drive
+/// [AppRouter] straight to any destination a test needs.
+class _FixedDestinationController extends AppController {
+  _FixedDestinationController(this._destination);
+
+  final AppDestination _destination;
+
+  @override
+  AppDestination build() => _destination;
 }
 
 /// A test-only `AppController` whose initial destination is a scene, so

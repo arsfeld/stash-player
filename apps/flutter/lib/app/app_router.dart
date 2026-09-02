@@ -39,12 +39,12 @@ class AppRouter extends ConsumerWidget {
           ),
         ],
         LibraryDestination() => const [_libraryPage],
-        SceneDestination(:final sceneId) => [
+        SceneDestination(:final sceneId, :final browse) => [
           _libraryPage,
           MaterialPage<void>(
             key: ValueKey('scene-$sceneId'),
             name: _scenePageName,
-            child: SceneScreen(sceneId: sceneId),
+            child: SceneScreen(sceneId: sceneId, browse: browse),
           ),
         ],
       };

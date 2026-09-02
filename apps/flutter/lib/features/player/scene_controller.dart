@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
+import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
 import '../../domain/scene.dart';
+import '../../domain/scene_filter.dart';
 import 'playback_controller.dart';
 
 /// Resolves one [Scene] by id, or `null` if Stash has nothing under that
@@ -15,6 +17,23 @@ import 'playback_controller.dart';
 /// `playback_controller.dart` already use for their own single-method
 /// dependencies.
 typedef FindScene = Future<Scene?> Function(String id);
+
+/// Which O-counter mutation to run. One parameter rather than two
+/// separate function dependencies, so the controller's guard code cannot
+/// apply to one and miss the other.
+enum OMutation { increment, reset }
+
+/// The paged scene lookup prev/next needs, narrowed from the full
+/// `StashApi` exactly as [FindScene] is.
+typedef FindScenesPage =
+    Future<ScenePage> Function(
+      SceneFilter filter, {
+      required int page,
+      required int perPage,
+    });
+
+/// Runs one O-counter mutation and returns the server's new count.
+typedef MutateOCounter = Future<int> Function(String id, OMutation mutation);
 
 /// Where a [SceneState] sits in its metadata-load lifecycle. Deliberately
 /// separate from `PlaybackController`'s own `PlaybackPhase`: this only
@@ -44,6 +63,11 @@ class SceneState {
     this.scene,
     this.failure,
     this.generation = 0,
+    this.browse,
+    this.navigating = false,
+    this.oCount,
+    this.oFailureSequence = 0,
+    this.browseFailureSequence = 0,
   });
 
   final ScenePhase phase;
@@ -52,6 +76,35 @@ class SceneState {
   final Failure? failure;
   final int generation;
 
+  /// Where this scene sits in the ordering the user was browsing, if
+  /// any. Advanced by [SceneController.goPrevious]/[SceneController.goNext].
+  final BrowseContext? browse;
+
+  /// True from the moment a prev/next fetch starts until its scene
+  /// lands. [scene] deliberately keeps holding the *outgoing* scene for
+  /// that whole window, which is what keeps the video surface mapped
+  /// rather than remounting mid-browse, so anything acting on the
+  /// current scene has to check this too or it acts on the one the user
+  /// just left.
+  final bool navigating;
+
+  /// The live O counter: seeded from `Scene.oCounter` on load, then
+  /// replaced by whatever the server returns from a mutation. `null`
+  /// means no scene is loaded, or one is mid-navigation, and the
+  /// player's O-counter controls are dead. Distinct from `0`, which
+  /// means a loaded scene nobody has counted yet.
+  final int? oCount;
+
+  /// Bumped every time an O-counter mutation fails. A counter rather
+  /// than a flag or a message: two consecutive failures with the same
+  /// cause have to be two observable events, or the second is silently
+  /// swallowed. The same technique `PlaybackState.controlFailureSequence`
+  /// already uses, for the same reason.
+  final int oFailureSequence;
+
+  /// Bumped every time a prev/next step finds nothing to move to.
+  final int browseFailureSequence;
+
   SceneState copyWith({
     ScenePhase? phase,
     String? sceneId,
@@ -59,12 +112,23 @@ class SceneState {
     Failure? failure,
     int? generation,
     bool clearFailure = false,
+    BrowseContext? browse,
+    bool? navigating,
+    int? oCount,
+    bool clearOCount = false,
+    int? oFailureSequence,
+    int? browseFailureSequence,
   }) => SceneState(
     phase: phase ?? this.phase,
     sceneId: sceneId ?? this.sceneId,
     scene: scene ?? this.scene,
     failure: clearFailure ? null : (failure ?? this.failure),
     generation: generation ?? this.generation,
+    browse: browse ?? this.browse,
+    navigating: navigating ?? this.navigating,
+    oCount: clearOCount ? null : (oCount ?? this.oCount),
+    oFailureSequence: oFailureSequence ?? this.oFailureSequence,
+    browseFailureSequence: browseFailureSequence ?? this.browseFailureSequence,
   );
 }
 
@@ -109,13 +173,19 @@ class SceneState {
 class SceneController extends ChangeNotifier {
   SceneController({
     required FindScene findScene,
+    required FindScenesPage findScenes,
+    required MutateOCounter mutateO,
     required PlaybackController playback,
     required VoidCallback releasePlayback,
   }) : _findScene = findScene,
+       _findScenes = findScenes,
+       _mutateO = mutateO,
        _playback = playback,
        _releasePlayback = releasePlayback;
 
   final FindScene _findScene;
+  final FindScenesPage _findScenes;
+  final MutateOCounter _mutateO;
   final PlaybackController _playback;
   final VoidCallback _releasePlayback;
 
@@ -130,7 +200,14 @@ class SceneController extends ChangeNotifier {
   /// [SceneState] — see that class's doc). A `null` result maps to
   /// [NotFoundFailure], matching `StashApi.findScene`'s own documented
   /// contract.
-  Future<void> load(String id) async {
+  ///
+  /// [browse] is where the caller says this scene sits in an ordering,
+  /// if any — `null` keeps whatever ordering was already in place
+  /// (unchanged by a bare [retry], for instance). Seeds [SceneState.oCount]
+  /// from [Scene.oCounter] on success, defaulting an unreported count to
+  /// zero so the player's O-counter controls always have something
+  /// actionable to show.
+  Future<void> load(String id, {BrowseContext? browse}) async {
     if (_disposed) return;
     // Claimed synchronously, before any `await` below — see class doc.
     final generation = _state.generation + 1;
@@ -138,6 +215,10 @@ class SceneController extends ChangeNotifier {
       phase: ScenePhase.loading,
       sceneId: id,
       generation: generation,
+      browse: browse ?? _state.browse,
+      navigating: _state.navigating,
+      oFailureSequence: _state.oFailureSequence,
+      browseFailureSequence: _state.browseFailureSequence,
     );
     notifyListeners();
 
@@ -157,13 +238,19 @@ class SceneController extends ChangeNotifier {
       _state = _state.copyWith(
         phase: ScenePhase.ready,
         scene: scene,
+        oCount: scene.oCounter ?? 0,
+        navigating: false,
         clearFailure: true,
       );
       notifyListeners();
       unawaited(_playback.loadScene(scene));
     } on Failure catch (failure) {
       if (_disposed || generation != _state.generation) return;
-      _state = _state.copyWith(phase: ScenePhase.failed, failure: failure);
+      _state = _state.copyWith(
+        phase: ScenePhase.failed,
+        failure: failure,
+        navigating: false,
+      );
       notifyListeners();
     } catch (_) {
       // Mirrors `LibraryController._fetchNextPage`'s own fallback: the
@@ -175,6 +262,7 @@ class SceneController extends ChangeNotifier {
       _state = _state.copyWith(
         phase: ScenePhase.failed,
         failure: const TransportFailure(),
+        navigating: false,
       );
       notifyListeners();
     }
@@ -191,6 +279,114 @@ class SceneController extends ChangeNotifier {
       return;
     }
     await load(id);
+  }
+
+  /// Steps to the scene before this one in the browsed ordering.
+  Future<void> goPrevious() => _step(-1);
+
+  /// Steps to the scene after this one in the browsed ordering.
+  Future<void> goNext() => _step(1);
+
+  /// Fetches the scene [offset] positions away and loads it.
+  ///
+  /// Reads exactly one scene at the target position rather than paging
+  /// through: Stash's pages are 1-indexed, so `perPage: 1` makes page
+  /// number and index interchangeable, and the fetch stays correct
+  /// however far past the library's loaded pages the user has browsed.
+  ///
+  /// Refuses while [SceneState.navigating] is already true, which is
+  /// what stops a held-down next button issuing a fetch per frame, each
+  /// stepping from the same stale index.
+  Future<void> _step(int offset) async {
+    if (_disposed || _state.navigating) return;
+    final browse = _state.browse;
+    if (browse == null) return;
+    if (offset < 0 && !browse.canGoPrevious) return;
+    if (offset > 0 && !browse.canGoNext) return;
+
+    final targetIndex = browse.index + offset;
+    // Captured before the count is cleared, so abandoning the step puts
+    // back what was actually on screen. Restoring from `scene.oCounter`
+    // instead would silently undo every bump made since this scene
+    // loaded.
+    final restoreCount = _state.oCount ?? _state.scene?.oCounter ?? 0;
+    // Claimed synchronously, before the first await, exactly as `load`
+    // does. Two presses issued back to back would otherwise compute the
+    // same next generation against the same stale value.
+    final generation = _state.generation + 1;
+    _state = _state.copyWith(
+      generation: generation,
+      navigating: true,
+      clearOCount: true,
+    );
+    notifyListeners();
+
+    try {
+      final page = await _findScenes(
+        browse.filter,
+        page: targetIndex + 1,
+        perPage: 1,
+      );
+      if (_disposed || generation != _state.generation) return;
+
+      if (page.scenes.isEmpty) {
+        _abandonStep(restoreCount);
+        return;
+      }
+
+      await load(page.scenes.first.id, browse: browse.at(targetIndex));
+    } catch (_) {
+      if (_disposed || generation != _state.generation) return;
+      _abandonStep(restoreCount);
+    }
+  }
+
+  /// Puts the controller back where it was before a step that could not
+  /// complete: the current scene stays on screen and playable, the count
+  /// it was showing comes back, and the screen is told so it can say
+  /// something.
+  void _abandonStep(int restoreCount) {
+    _state = _state.copyWith(
+      navigating: false,
+      oCount: restoreCount,
+      browseFailureSequence: _state.browseFailureSequence + 1,
+    );
+    notifyListeners();
+  }
+
+  /// Bumps the current scene's O counter.
+  Future<void> bumpO() => _runOMutation(OMutation.increment);
+
+  /// Resets the current scene's O counter to zero.
+  Future<void> clearO() => _runOMutation(OMutation.reset);
+
+  /// Runs [mutation] against the scene that is actually on screen and
+  /// stable.
+  ///
+  /// The displayed count is replaced by the server's answer rather than
+  /// adjusted locally first. Both mutations return the authoritative new
+  /// value, so an optimistic bump could only ever show a wrong number
+  /// that has to be corrected a moment later. A failure therefore leaves
+  /// the old count showing, which stays the truth until the server says
+  /// otherwise.
+  Future<void> _runOMutation(OMutation mutation) async {
+    if (_disposed || _state.navigating) return;
+    final scene = _state.scene;
+    if (scene == null || _state.phase != ScenePhase.ready) return;
+
+    final generation = _state.generation;
+    try {
+      final count = await _mutateO(scene.id, mutation);
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(oCount: count);
+      notifyListeners();
+    } catch (_) {
+      // Surfaced by the screen, which watches this controller and owns
+      // the notice channel. Nothing to roll back: the count never moved.
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(oFailureSequence: _state.oFailureSequence + 1);
+      notifyListeners();
+    }
   }
 
   /// Tears this controller down: rejects any [load] response still in
@@ -214,6 +410,23 @@ class SceneController extends ChangeNotifier {
 /// one call [SceneController] needs.
 FindScene _deferredFindScene(Ref ref) =>
     (id) async => (await ref.read(stashApiProvider.future)).findScene(id);
+
+/// Deferred [FindScenesPage], mirroring [_deferredFindScene] for the
+/// paged lookup [SceneController]'s prev/next steps need.
+FindScenesPage _deferredFindScenes(Ref ref) =>
+    (filter, {required page, required perPage}) async => (await ref.read(
+      stashApiProvider.future,
+    )).findScenes(filter, page: page, perPage: perPage);
+
+/// Deferred [MutateOCounter], mirroring [_deferredFindScene] for the two
+/// O-counter mutations [SceneController] runs.
+MutateOCounter _deferredMutateO(Ref ref) => (id, mutation) async {
+  final api = await ref.read(stashApiProvider.future);
+  return switch (mutation) {
+    OMutation.increment => api.incrementO(id),
+    OMutation.reset => api.resetO(id),
+  };
+};
 
 /// [SceneController] provider. `.autoDispose` — unlike
 /// `libraryControllerProvider`/`playbackControllerProvider`, which are
@@ -255,6 +468,8 @@ final sceneControllerProvider =
       ref.watch(connectionGenerationProvider);
       return SceneController(
         findScene: _deferredFindScene(ref),
+        findScenes: _deferredFindScenes(ref),
+        mutateO: _deferredMutateO(ref),
         playback: ref.read(playbackControllerProvider),
         releasePlayback: () {
           ref.invalidate(playbackEngineProvider);

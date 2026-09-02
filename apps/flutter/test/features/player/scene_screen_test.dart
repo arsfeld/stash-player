@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/notices.dart';
 import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
@@ -41,6 +42,7 @@ Scene _scene({
   StudioRef? studio,
   List<PerformerRef> performers = const [],
   String stream = 'stream.mp4',
+  int? oCounter,
 }) => Scene(
   id: id,
   paths: ScenePaths(stream: stream),
@@ -51,6 +53,7 @@ Scene _scene({
   files: files,
   studio: studio,
   performers: performers,
+  oCounter: oCounter,
 );
 
 /// One recorded `findScene` call with its own completer, so a test can
@@ -603,6 +606,279 @@ void main() {
       await future; // must not throw
       expect(controller.state.phase, ScenePhase.loading); // unapplied
     });
+
+    test('goNext fetches page index + 2 with one scene per page', () async {
+      // Stash pages are 1-indexed, so the scene at index N is page N + 1.
+      // Stepping from index 7 therefore reads page 9.
+      final pages = <int>[];
+      final perPages = <int>[];
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async {
+          pages.add(page);
+          perPages.add(perPage);
+          return ScenePage(total: 412, scenes: [_scene(id: 's-$page')]);
+        },
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(
+          filter: SceneFilter(),
+          index: 7,
+          total: 412,
+        ),
+      );
+      await controller.goNext();
+
+      expect(pages, [9]);
+      expect(perPages, [1]);
+      expect(controller.state.scene!.id, 's-9');
+      expect(controller.state.browse!.index, 8);
+    });
+
+    test('goPrevious refuses at the start of the ordering', () async {
+      var fetches = 0;
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async {
+          fetches++;
+          return ScenePage(total: 5, scenes: [_scene()]);
+        },
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+      await controller.goPrevious();
+
+      expect(fetches, 0);
+    });
+
+    test('a scene reached with no context can step neither way', () async {
+      var fetches = 0;
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async {
+          fetches++;
+          return ScenePage(total: 5, scenes: [_scene()]);
+        },
+      );
+
+      await controller.load('s1');
+      await controller.goNext();
+      await controller.goPrevious();
+
+      expect(fetches, 0);
+    });
+
+    test('an empty page leaves the current scene in place', () async {
+      // The library changed underneath, or total was stale. Staying on a
+      // scene that works beats blanking the screen.
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) async =>
+            ScenePage(total: 5, scenes: const []),
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+      await controller.goNext();
+
+      expect(controller.state.scene!.id, 's1');
+      expect(controller.state.browse!.index, 0);
+      expect(controller.state.phase, ScenePhase.ready);
+      expect(controller.state.navigating, isFalse);
+      expect(controller.state.browseFailureSequence, 1);
+    });
+
+    test('oCount is seeded from the loaded scene', () async {
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+      );
+
+      await controller.load('s1');
+
+      expect(controller.state.oCount, 3);
+    });
+
+    test('a scene with no reported count still offers a zero', () async {
+      // "Loaded but never counted" has to be actionable: incrementing is
+      // how it stops being zero.
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+      );
+
+      await controller.load('s1');
+
+      expect(controller.state.oCount, 0);
+    });
+
+    test('bumpO shows the server count, never a local guess', () async {
+      final calls = <(String, OMutation)>[];
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+        mutateO: (id, mutation) async {
+          calls.add((id, mutation));
+          // Deliberately not 4: whatever the server says wins, and
+          // asserting a value the caller could have guessed would not
+          // prove that.
+          return 9;
+        },
+      );
+
+      await controller.load('s1');
+      await controller.bumpO();
+
+      expect(calls, [('s1', OMutation.increment)]);
+      expect(controller.state.oCount, 9);
+    });
+
+    test('clearO resets through the server', () async {
+      final calls = <(String, OMutation)>[];
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+        mutateO: (id, mutation) async {
+          calls.add((id, mutation));
+          return 0;
+        },
+      );
+
+      await controller.load('s1');
+      await controller.clearO();
+
+      expect(calls, [('s1', OMutation.reset)]);
+      expect(controller.state.oCount, 0);
+    });
+
+    test('a failed bump leaves the displayed count untouched', () async {
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+        mutateO: (id, mutation) async => throw const TransportFailure('down'),
+      );
+
+      await controller.load('s1');
+      await controller.bumpO();
+
+      expect(controller.state.oCount, 3);
+      expect(controller.state.oFailureSequence, 1);
+    });
+
+    test('two failed bumps are two observable events', () async {
+      // A flag or a message string would collapse a repeat with the same
+      // cause into one, and the second failure would look like success.
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id, oCounter: 3),
+        mutateO: (id, mutation) async => throw const TransportFailure('down'),
+      );
+
+      await controller.load('s1');
+      await controller.bumpO();
+      await controller.bumpO();
+
+      expect(controller.state.oFailureSequence, 2);
+    });
+
+    test(
+      'mid-navigation the O-counter is unavailable and cannot be bumped',
+      () async {
+        // state.scene still holds the outgoing scene for the whole
+        // navigation window, which is what keeps the video mapped. Acting
+        // on it would count the scene the user just left.
+        final pending = Completer<ScenePage>();
+        var mutations = 0;
+        final controller = _makeSceneController(
+          findScene: (id) async => _scene(id: id, oCounter: 3),
+          findScenes: (filter, {required page, required perPage}) =>
+              pending.future,
+          mutateO: (id, mutation) async {
+            mutations++;
+            return 1;
+          },
+        );
+
+        await controller.load(
+          's1',
+          browse: const BrowseContext(
+            filter: SceneFilter(),
+            index: 0,
+            total: 5,
+          ),
+        );
+
+        final navigation = controller.goNext();
+        expect(controller.state.navigating, isTrue);
+        expect(controller.state.oCount, isNull);
+
+        await controller.bumpO();
+        expect(mutations, 0);
+
+        pending.complete(ScenePage(total: 5, scenes: [_scene(id: 's2')]));
+        await navigation;
+
+        expect(controller.state.navigating, isFalse);
+        expect(controller.state.scene!.id, 's2');
+      },
+    );
+
+    test('a step already in flight refuses a second one', () async {
+      // A held-down next button would otherwise issue a fetch per frame,
+      // each stepping from the same stale index.
+      final pending = Completer<ScenePage>();
+      var fetches = 0;
+      final controller = _makeSceneController(
+        findScene: (id) async => _scene(id: id),
+        findScenes: (filter, {required page, required perPage}) {
+          fetches++;
+          return pending.future;
+        },
+      );
+
+      await controller.load(
+        's1',
+        browse: const BrowseContext(filter: SceneFilter(), index: 0, total: 5),
+      );
+
+      final first = controller.goNext();
+      await controller.goNext();
+
+      expect(fetches, 1);
+
+      pending.complete(ScenePage(total: 5, scenes: [_scene(id: 's2')]));
+      await first;
+    });
+
+    test(
+      'a superseded step cannot clobber the load that followed it',
+      () async {
+        final pending = Completer<ScenePage>();
+        final controller = _makeSceneController(
+          findScene: (id) async => _scene(id: id),
+          findScenes: (filter, {required page, required perPage}) =>
+              pending.future,
+        );
+
+        await controller.load(
+          's1',
+          browse: const BrowseContext(
+            filter: SceneFilter(),
+            index: 0,
+            total: 5,
+          ),
+        );
+
+        final step = controller.goNext();
+        await controller.load('s9');
+
+        pending.complete(ScenePage(total: 5, scenes: [_scene(id: 's2')]));
+        await step;
+
+        expect(controller.state.scene!.id, 's9');
+      },
+    );
   });
 
   group('SceneScreen: metadata drawer does not resize the video', () {
@@ -1683,9 +1959,13 @@ class _TextEntryHarness {
 
 SceneController _makeSceneController({
   FindScene? findScene,
+  FindScenesPage? findScenes,
+  MutateOCounter? mutateO,
   VoidCallback? releasePlayback,
 }) => _makeSceneControllerWithEngine(
   findScene: findScene,
+  findScenes: findScenes,
+  mutateO: mutateO,
   releasePlayback: releasePlayback,
 ).controller;
 
@@ -1697,6 +1977,8 @@ class _SceneControllerAndEngine {
 
 _SceneControllerAndEngine _makeSceneControllerWithEngine({
   FindScene? findScene,
+  FindScenesPage? findScenes,
+  MutateOCounter? mutateO,
   VoidCallback? releasePlayback,
 }) {
   final engine = FakePlaybackEngine();
@@ -1707,6 +1989,13 @@ _SceneControllerAndEngine _makeSceneControllerWithEngine({
   );
   final controller = SceneController(
     findScene: findScene ?? (id) async => _scene(id: id),
+    findScenes:
+        findScenes ??
+        (filter, {required page, required perPage}) async =>
+            throw StateError('unexpected findScenes(page: $page)'),
+    mutateO:
+        mutateO ??
+        (id, mutation) async => throw StateError('unexpected $mutation on $id'),
     playback: playback,
     releasePlayback: releasePlayback ?? () {},
   );
