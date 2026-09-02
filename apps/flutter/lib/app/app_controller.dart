@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/browse_context.dart';
 import '../domain/connection.dart';
 import '../features/connection/connection_controller.dart';
 import '../services/socks_forward_proxy.dart';
@@ -14,7 +15,8 @@ sealed class AppDestination {
 
   const factory AppDestination.connection() = ConnectionDestination;
   const factory AppDestination.library() = LibraryDestination;
-  const factory AppDestination.scene(String sceneId) = SceneDestination;
+  const factory AppDestination.scene(String sceneId, {BrowseContext? browse}) =
+      SceneDestination;
 }
 
 final class ConnectionDestination extends AppDestination {
@@ -26,16 +28,24 @@ final class LibraryDestination extends AppDestination {
 }
 
 final class SceneDestination extends AppDestination {
-  const SceneDestination(this.sceneId);
+  const SceneDestination(this.sceneId, {this.browse});
 
   final String sceneId;
 
-  @override
-  bool operator ==(Object other) =>
-      other is SceneDestination && other.sceneId == sceneId;
+  /// Where this scene sits in the ordering the user was browsing, when
+  /// there is one. `null` for any entry point with no ordering behind
+  /// it, in which case prev/next render dead rather than the type
+  /// inventing a position.
+  final BrowseContext? browse;
 
   @override
-  int get hashCode => sceneId.hashCode;
+  bool operator ==(Object other) =>
+      other is SceneDestination &&
+      other.sceneId == sceneId &&
+      other.browse == browse;
+
+  @override
+  int get hashCode => Object.hash(sceneId, browse);
 }
 
 /// Owns which [AppDestination] is showing, and the two shell-level intents
@@ -149,10 +159,10 @@ class AppController extends Notifier<AppDestination> {
     state = const AppDestination.library();
   }
 
-  /// Navigates to a scene by id — from a library card, "play random", or
-  /// (eventually) prev/next inside the scene screen itself.
-  void openScene(String sceneId) {
-    state = AppDestination.scene(sceneId);
+  /// Navigates to a scene by id, optionally carrying [browse] so the
+  /// scene screen can step to the neighbouring scenes.
+  void openScene(String sceneId, {BrowseContext? browse}) {
+    state = AppDestination.scene(sceneId, browse: browse);
   }
 }
 

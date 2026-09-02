@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app_controller.dart';
 import 'package:stash_player_flutter/app/notices.dart';
 import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/connection/connection_controller.dart';
 
 import 'package:stash_player_flutter/services/socks_forward_proxy.dart';
@@ -298,5 +300,36 @@ void main() {
     await container.read(appControllerProvider.notifier).bootstrap();
 
     expect(container.read(globalNoticeProvider), isNull);
+  });
+
+  test('openScene carries a browse context onto the destination', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    const browse = BrowseContext(filter: SceneFilter(), index: 7, total: 412);
+    container
+        .read(appControllerProvider.notifier)
+        .openScene('1001', browse: browse);
+
+    final destination = container.read(appControllerProvider);
+    expect(destination, isA<SceneDestination>());
+    expect((destination as SceneDestination).browse, browse);
+  });
+
+  test('two scene destinations differing only in context are not equal', () {
+    // The router rebuilds its page list from the destination. Stepping
+    // from index 7 to index 8 of the same scene id has to read as a
+    // change, or a prev/next that lands back on the same scene would
+    // silently no-op.
+    const a = SceneDestination(
+      '1001',
+      browse: BrowseContext(filter: SceneFilter(), index: 7, total: 412),
+    );
+    const b = SceneDestination(
+      '1001',
+      browse: BrowseContext(filter: SceneFilter(), index: 8, total: 412),
+    );
+
+    expect(a, isNot(b));
   });
 }

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
+import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
 import '../../domain/scene.dart';
 import '../../domain/scene_filter.dart';
@@ -166,7 +167,10 @@ class LibraryController extends ChangeNotifier {
     );
     final result = await _api.findScenes(filter, page: 1, perPage: 1);
     if (result.scenes.isEmpty) return const RandomSceneSelection.empty();
-    return RandomSceneSelection.found(result.scenes.first);
+    return RandomSceneSelection.found(
+      result.scenes.first,
+      BrowseContext(filter: filter, index: 0, total: result.total),
+    );
   }
 
   Future<void> _resetAndFetch(

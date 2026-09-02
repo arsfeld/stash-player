@@ -634,6 +634,30 @@ void main() {
       expect(controller.state.scenes, hasLength(48));
       expect(controller.state.filter.sort, SceneSort.createdAt);
     });
+
+    test(
+      'playRandom hands back a context over its own seeded filter',
+      () async {
+        api.pages.add(
+          ScenePage(
+            total: 42,
+            scenes: [Scene(id: '1001', paths: const ScenePaths())],
+          ),
+        );
+
+        final result = await controller.playRandom();
+
+        final found = result as RandomSceneFound;
+        expect(found.browse.index, 0);
+        expect(found.browse.total, 42);
+        // The seeded random filter the fetch actually used, not the
+        // library's own filter: next has to walk the same shuffle the user
+        // landed in.
+        expect(found.browse.filter, api.requestedFilters.single);
+        expect(found.browse.filter.sort, SceneSort.random);
+        expect(found.browse.filter.randomSeed, isNotNull);
+      },
+    );
   });
 
   group('libraryControllerProvider', () {

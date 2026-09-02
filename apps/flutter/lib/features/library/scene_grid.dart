@@ -42,7 +42,11 @@ class SceneGrid extends StatefulWidget {
   final List<Scene> scenes;
   final bool isLoadingMore;
   final ThumbnailRepository? thumbnailRepository;
-  final ValueChanged<String> onOpenScene;
+
+  /// Called with the tapped scene's id and its 0-based position in the
+  /// grid, which is its ordinal in the active filter's ordering. The
+  /// scene screen needs the position to step through that ordering.
+  final void Function(String sceneId, int index) onOpenScene;
   final EnsureViewportFilled ensureViewportFilled;
 
   @override
@@ -153,7 +157,7 @@ class _SceneGridState extends State<SceneGrid> {
                   key: ValueKey(scene.id),
                   scene: scene,
                   thumbnailRepository: widget.thumbnailRepository,
-                  onOpen: () => widget.onOpenScene(scene.id),
+                  onOpen: () => widget.onOpenScene(scene.id, index),
                 );
               },
             );

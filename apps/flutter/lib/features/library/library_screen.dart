@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/app_controller.dart';
 import '../../app/notices.dart';
 import '../../app/providers.dart';
+import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
 import '../../services/thumbnail_repository.dart';
 import '../../ui/theme/app_tokens.dart';
@@ -63,8 +64,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       final result = await controller.playRandom();
       if (!mounted) return;
       switch (result) {
-        case RandomSceneFound(:final scene):
-          ref.read(appControllerProvider.notifier).openScene(scene.id);
+        case RandomSceneFound(:final scene, :final browse):
+          ref
+              .read(appControllerProvider.notifier)
+              .openScene(scene.id, browse: browse);
         case RandomSceneEmpty():
           _showNotice('No scenes match these filters', AppNoticeSeverity.info);
       }
@@ -127,8 +130,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               controller: controller,
               thumbnailRepository: thumbnailRepository,
               onClearFilters: controller.clearFilters,
-              onOpenScene: (sceneId) =>
-                  ref.read(appControllerProvider.notifier).openScene(sceneId),
+              onOpenScene: (sceneId, index) => ref
+                  .read(appControllerProvider.notifier)
+                  .openScene(
+                    sceneId,
+                    browse: BrowseContext(
+                      filter: state.filter,
+                      index: index,
+                      total: state.total,
+                    ),
+                  ),
             ),
           ),
         ],
@@ -150,7 +161,7 @@ class _LibraryBody extends StatelessWidget {
   final LibraryController controller;
   final ThumbnailRepository? thumbnailRepository;
   final VoidCallback onClearFilters;
-  final ValueChanged<String> onOpenScene;
+  final void Function(String sceneId, int index) onOpenScene;
 
   @override
   Widget build(BuildContext context) {

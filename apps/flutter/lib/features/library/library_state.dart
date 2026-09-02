@@ -1,3 +1,4 @@
+import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
 import '../../domain/scene.dart';
 import '../../domain/scene_filter.dart';
@@ -70,14 +71,20 @@ class LibraryState {
 sealed class RandomSceneSelection {
   const RandomSceneSelection();
 
-  const factory RandomSceneSelection.found(Scene scene) = RandomSceneFound;
+  const factory RandomSceneSelection.found(Scene scene, BrowseContext browse) =
+      RandomSceneFound;
   const factory RandomSceneSelection.empty() = RandomSceneEmpty;
 }
 
 final class RandomSceneFound extends RandomSceneSelection {
-  const RandomSceneFound(this.scene);
+  const RandomSceneFound(this.scene, this.browse);
 
   final Scene scene;
+
+  /// The ordering the pick came from: its own seeded filter, at index 0.
+  /// Prev/next from a random scene walk that same shuffle rather than
+  /// jumping into the library's visible ordering.
+  final BrowseContext browse;
 }
 
 final class RandomSceneEmpty extends RandomSceneSelection {

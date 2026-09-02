@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app_controller.dart';
 import 'package:stash_player_flutter/app/notices.dart';
 import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
@@ -326,9 +327,8 @@ void main() {
       expect(find.text('Scene 2'), findsOneWidget);
     });
 
-    testWidgets('tapping a scene card navigates via AppController.openScene', (
-      tester,
-    ) async {
+    testWidgets('tapping a scene card navigates via AppController.openScene, '
+        'carrying its position in the library ordering', (tester) async {
       final api = FakeStashApi()
         ..pages.add(ScenePage(total: 1, scenes: _scenes(1, start: 7)));
       final harness = await _pumpLibrary(tester, api: api);
@@ -339,7 +339,10 @@ void main() {
 
       expect(
         harness.container.read(appControllerProvider),
-        const AppDestination.scene('7'),
+        const AppDestination.scene(
+          '7',
+          browse: BrowseContext(filter: SceneFilter(), index: 0, total: 1),
+        ),
       );
     });
 
@@ -857,9 +860,8 @@ void main() {
   });
 
   group('play random', () {
-    testWidgets('a successful pick navigates to the chosen scene', (
-      tester,
-    ) async {
+    testWidgets('a successful pick navigates to the chosen scene, carrying a '
+        'context over its own seeded filter', (tester) async {
       final api = FakeStashApi()
         ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
       final harness = await _pumpLibrary(tester, api: api);
@@ -869,9 +871,17 @@ void main() {
       await tester.tap(find.byTooltip('Play random'));
       await tester.pumpAndSettle();
 
+      final destination = harness.container.read(appControllerProvider);
+      expect(destination, isA<SceneDestination>());
+      final scene = destination as SceneDestination;
+      expect(scene.sceneId, '99');
+      expect(scene.browse?.index, 0);
+      expect(scene.browse?.total, 1);
+      // `_pumpLibrary` wires a fixed seed generator, so the seeded random
+      // filter playRandom drew from is deterministic here.
       expect(
-        harness.container.read(appControllerProvider),
-        const AppDestination.scene('99'),
+        scene.browse?.filter,
+        const SceneFilter(sort: SceneSort.random, randomSeed: 42),
       );
     });
 
@@ -974,7 +984,10 @@ void main() {
 
       expect(
         harness.container.read(appControllerProvider),
-        const AppDestination.scene('0'),
+        const AppDestination.scene(
+          '0',
+          browse: BrowseContext(filter: SceneFilter(), index: 0, total: 1),
+        ),
       );
     });
   });
