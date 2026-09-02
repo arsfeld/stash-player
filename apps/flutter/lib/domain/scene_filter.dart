@@ -52,4 +52,26 @@ class SceneFilter {
     hideTracked: hideTracked ?? this.hideTracked,
     randomSeed: clearRandomSeed ? null : randomSeed ?? this.randomSeed,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      other is SceneFilter &&
+      other.query == query &&
+      other.sort == sort &&
+      other.direction == direction &&
+      other.minimumRating == minimumRating &&
+      other.organized == organized &&
+      other.hideTracked == hideTracked &&
+      other.randomSeed == randomSeed;
+
+  @override
+  int get hashCode => Object.hash(
+    query,
+    sort,
+    direction,
+    minimumRating,
+    organized,
+    hideTracked,
+    randomSeed,
+  );
 }
