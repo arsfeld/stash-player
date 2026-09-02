@@ -47,7 +47,7 @@ class BrowseContext {
   bool get canGoNext => index + 1 < total;
 
   /// A copy pointing at [newIndex], optionally also replacing [total]
-  /// with a fresher count a caller just received alongside it (a step
+  /// with a fresher count a caller just received alongside it. A step
   /// that just fetched [newIndex]'s scene knows [total] as of that same
   /// response, which can already be stale by the time [at] is called
   /// otherwise (see [index]'s own doc for why it drifts).

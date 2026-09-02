@@ -281,7 +281,14 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
         backgroundColor: Colors.black,
         body: _SceneUnavailableView(
           state: sceneState,
-          onRetry: sceneController.retry,
+          // `widget.browse` re-supplies the ordering context: a scene
+          // whose very first load failed never reached `load`'s own
+          // ready branch, so nothing has applied it to `SceneState` yet
+          // (see `SceneController.load`'s own doc for why application
+          // waits for that branch), and the controller has no other
+          // record of it to fall back on. See `SceneController.retry`'s
+          // own doc for the concrete regression this closes.
+          onRetry: () => sceneController.retry(browse: widget.browse),
           onOpenInStash: _openInStash,
         ),
       );

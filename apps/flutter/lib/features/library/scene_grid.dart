@@ -160,12 +160,19 @@ class _SceneGridState extends State<SceneGrid> {
               itemCount: widget.scenes.length,
               itemBuilder: (context, index) {
                 final scene = widget.scenes[index];
+                // Captured here, not read from `widget.ordinals[index]`
+                // inside the tap closure below: `index` is fixed at
+                // build time, but the closure itself can outlive this
+                // build (a filter change shrinking `ordinals` before the
+                // tile is tapped), which would otherwise turn a stale
+                // `index` into a `RangeError` at tap time instead of
+                // build time.
+                final ordinal = widget.ordinals[index];
                 return SceneTile(
                   key: ValueKey(scene.id),
                   scene: scene,
                   thumbnailRepository: widget.thumbnailRepository,
-                  onOpen: () =>
-                      widget.onOpenScene(scene.id, widget.ordinals[index]),
+                  onOpen: () => widget.onOpenScene(scene.id, ordinal),
                 );
               },
             );

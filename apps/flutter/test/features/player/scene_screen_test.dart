@@ -535,6 +535,33 @@ void main() {
       expect(calls, ['x', 'x']);
     });
 
+    test('retry after the very first load fails restores the browse context, '
+        'not just the scene', () async {
+      // The very first `load` for a scene never reaches its own ready
+      // branch when it fails, so `browse` was never applied to
+      // `SceneState` in the first place (see `load`'s own doc). A
+      // retry that drops it here leaves prev/next dead for the rest
+      // of the visit, even once the scene loads.
+      var succeed = false;
+      final controller = _makeSceneController(
+        findScene: (id) async {
+          if (!succeed) throw const TransportFailure();
+          return _scene(id: id);
+        },
+      );
+      const browse = BrowseContext(filter: SceneFilter(), index: 42, total: 90);
+
+      await controller.load('s5', browse: browse);
+      expect(controller.state.phase, ScenePhase.failed);
+      expect(controller.state.browse, isNull);
+
+      succeed = true;
+      await controller.retry(browse: browse);
+
+      expect(controller.state.phase, ScenePhase.ready);
+      expect(controller.state.browse, browse);
+    });
+
     test('retry is a no-op when not failed/notFound', () async {
       final calls = <String>[];
       final controller = _makeSceneController(

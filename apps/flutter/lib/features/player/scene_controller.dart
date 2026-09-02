@@ -309,16 +309,26 @@ class SceneController extends ChangeNotifier {
   }
 
   /// Re-requests the scene that just failed (or came back not-found),
-  /// using the same id. A no-op otherwise — call [load] directly to open
-  /// a different scene.
-  Future<void> retry() async {
+  /// using the same id. A no-op otherwise (call [load] directly to open
+  /// a different scene).
+  ///
+  /// [browse] re-supplies the ordering context the original [load] call
+  /// was given, for the caller to pass back in. This matters because a
+  /// scene whose very first [load] fails never reaches that method's
+  /// ready branch, so its `browse` argument was never applied to
+  /// [SceneState] in the first place (see [load]'s own doc for why
+  /// application waits for that branch). Without re-supplying it here,
+  /// a retry after an initial failure would settle on `browse: null`
+  /// forever, leaving prev/next dead for the rest of that visit even
+  /// once the scene loads.
+  Future<void> retry({BrowseContext? browse}) async {
     final id = _state.sceneId;
     if (id == null) return;
     if (_state.phase != ScenePhase.failed &&
         _state.phase != ScenePhase.notFound) {
       return;
     }
-    await load(id);
+    await load(id, browse: browse);
   }
 
   /// Steps to the scene before this one in the browsed ordering.
