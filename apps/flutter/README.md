@@ -8,7 +8,14 @@ Flutter app is a from-scratch vertical slice (connection → library →
 scene playback) built to evaluate Flutter as a third desktop toolchain,
 kept fully isolated from the Rust/Swift codebases under `apps/flutter/`.
 
-It targets Linux and macOS desktop only — no mobile, no web.
+It targets Linux and macOS desktop — no mobile, no web. Windows is a
+target only in the thin sense that CI compiles one: the `Flutter Windows`
+job in `.github/workflows/flutter.yml` runs `flutter build windows
+--release` on every push of the development branch and uploads the result
+as a build artifact. Nothing validates that artifact — there is no Windows
+dev shell, no test (unit or integration) runs on Windows, and nobody
+launches the app there. Read a green Windows job as "the embedder and the
+native plugins still link", not as support.
 
 ## Prerequisites
 
@@ -140,6 +147,11 @@ flutter test
 flutter build linux --debug    # Linux
 flutter build macos --debug    # macOS
 ```
+
+CI runs one more build the Nix dev shell can't: `flutter build windows
+--release`, on a `windows-latest` runner with an SDK pinned by hand to the
+flake's Flutter version. See the caveat at the top of this file for what
+that job does and doesn't prove.
 
 ### Run the integration smoke test
 

@@ -2,7 +2,11 @@ name: Flutter
 
 on:
   push:
-    branches: [main, master]
+    # `flutter` is the branch this client is being developed on; it gets the
+    # same three-platform CI as main so the Windows build (which nobody
+    # builds locally — there is no Windows dev shell) can't rot unnoticed
+    # between merges.
+    branches: [main, master, flutter]
     paths:
       - "apps/flutter/**"
       - "tools/mock-stash/**"
@@ -154,3 +158,50 @@ jobs:
             cd apps/flutter
             flutter build macos --debug
           '
+
+  windows:
+    name: Flutter Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Nix, not the SDK, is what's missing here: the flake's `flutter` dev
+      # shell only exists for Linux and macOS. So this job pins the SDK by
+      # hand to whatever `nix develop .#flutter --command flutter --version`
+      # resolves to (3.41.6 / Dart 3.11.4), keeping all three jobs on one
+      # toolchain. Bump this in the same commit that moves flake.lock's
+      # nixpkgs, or Windows silently starts compiling against a different
+      # Flutter than the other two jobs.
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.6
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      # No `dart format` / `flutter analyze` / `flutter test` here — those
+      # gates are host-independent and the Linux and macOS jobs already run
+      # them. What only this job can prove is that the Windows embedder and
+      # the native plugin half of the dependency tree link: media_kit's
+      # libmpv, flutter_secure_storage's DPAPI backend, url_launcher.
+      #
+      # Release rather than debug (the other two jobs build debug) so the
+      # uploaded artifact is something a Windows user can actually run.
+      # Nothing about that artifact is validated — no Windows dev shell, no
+      # integration test, no manual pass; a green job means "it compiles and
+      # bundles", not "it works".
+      - name: Flutter Windows release build
+        working-directory: apps/flutter
+        run: flutter build windows --release
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: stash-player-flutter-windows-x64
+          path: apps/flutter/build/windows/x64/runner/Release/
+          if-no-files-found: error
