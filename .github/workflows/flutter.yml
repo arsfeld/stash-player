@@ -96,19 +96,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v20
+      # Not Nix — and unlike Windows, not for want of a dev shell, since
+      # `devShells.flutter` does exist on Darwin. nixpkgs assembles its
+      # Flutter SDK as a symlink farm into the read-only store, and
+      # `UnpackMacOS` copies FlutterMacOS.framework with `rsync -av`
+      # (no `-L`, see flutter_tools' darwin.dart), so the copy is still
+      # links pointing back into the store and rsync's `--chmod` lands on
+      # the links rather than their targets. `lipo` then can't write its
+      # temp file beside the binary — "can't create temporary output file:
+      # …/FlutterMacOS.lipo (Permission denied)" — and no chmod or env var
+      # fixes it from outside, because the copy and the thinning happen
+      # inside one build target. Same SDK pin as the Windows job, for the
+      # same reason: every job on the version `nix develop .#flutter`
+      # resolves. The dev shell still gets exercised — by the Linux job,
+      # which genuinely needs its GTK3/mpv libraries.
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.6
+          channel: stable
+          cache: true
 
       - name: Verify Flutter client
+        working-directory: apps/flutter
         run: |
-          nix develop .#flutter --command bash -c '
-            set -e
-            cd apps/flutter
-            flutter pub get
-            dart format --output=none --set-exit-if-changed .
-            flutter analyze --fatal-infos --fatal-warnings
-            flutter test
-          '
+          flutter pub get
+          dart format --output=none --set-exit-if-changed .
+          flutter analyze --fatal-infos --fatal-warnings
+          flutter test
 
       # Mock-only — see the Linux job's own step (above) for what "smoke"
       # means here and why the step exists at all; the step name is kept
@@ -138,26 +153,19 @@ jobs:
       - name: Connection/library smoke (mock stream; no playback validation)
         continue-on-error: true
         run: |
-          nix develop .#flutter --command bash -c '
-            set -e
-            python3 tools/mock-stash/server.py &
-            MOCK_PID=$!
-            trap "kill $MOCK_PID 2>/dev/null || true" EXIT
-            for i in $(seq 1 30); do
-              curl -s -o /dev/null -X POST -H "content-type: application/json" -d "{}" http://127.0.0.1:9999/graphql && break
-              sleep 1
-            done
-            cd apps/flutter
-            STASH_URL=http://127.0.0.1:9999 STASH_API_KEY= flutter test integration_test/connection_library_scene_test.dart -d macos
-          '
+          python3 tools/mock-stash/server.py &
+          MOCK_PID=$!
+          trap 'kill "$MOCK_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null -X POST -H "content-type: application/json" -d "{}" http://127.0.0.1:9999/graphql && break
+            sleep 1
+          done
+          cd apps/flutter
+          STASH_URL=http://127.0.0.1:9999 STASH_API_KEY="" flutter test integration_test/connection_library_scene_test.dart -d macos
 
       - name: Flutter macOS debug build
-        run: |
-          nix develop .#flutter --command bash -c '
-            set -e
-            cd apps/flutter
-            flutter build macos --debug
-          '
+        working-directory: apps/flutter
+        run: flutter build macos --debug
 
   windows:
     name: Flutter Windows
@@ -167,12 +175,13 @@ jobs:
         uses: actions/checkout@v4
 
       # Nix, not the SDK, is what's missing here: the flake's `flutter` dev
-      # shell only exists for Linux and macOS. So this job pins the SDK by
-      # hand to whatever `nix develop .#flutter --command flutter --version`
-      # resolves to (3.41.6 / Dart 3.11.4), keeping all three jobs on one
-      # toolchain. Bump this in the same commit that moves flake.lock's
-      # nixpkgs, or Windows silently starts compiling against a different
-      # Flutter than the other two jobs.
+      # shell has no Windows counterpart at all. (The macOS job skips that
+      # shell too, but for its own reason — see above.) So this job pins the
+      # SDK by hand to whatever `nix develop .#flutter --command flutter
+      # --version` resolves to (3.41.6 / Dart 3.11.4), keeping all three
+      # jobs on one toolchain. Bump both pins in the same commit that moves
+      # flake.lock's nixpkgs, or the two non-Nix jobs silently start
+      # compiling against a different Flutter than the Linux one.
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:

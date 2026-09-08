@@ -224,6 +224,22 @@ real. If `flutter run`/`flutter test -d linux` reports it can't find
 `libmpv` or similar, you are almost certainly outside `nix develop
 .#flutter`.
 
+**`flutter build macos` fails inside `nix develop .#flutter`.** It dies
+in `debug_unpack_macos`/`release_unpack_macos` with `Failed to extract
+architectures "arm64"` and, underneath it, `lipo: can't create temporary
+output file: …/FlutterMacOS.lipo (Permission denied)`. nixpkgs assembles
+the Flutter SDK as a farm of symlinks into the read-only Nix store, and
+`flutter_tools` copies `FlutterMacOS.framework` with `rsync -av` — no
+`-L` — so the copy in `build/` is still links into the store, and the
+`--chmod` rsync is given applies to the links instead of their targets.
+`lipo` then has nowhere writable to put its temp file. Nothing outside
+Flutter can fix it: the copy and the thinning happen inside one build
+target. Everything else in the shell is fine on macOS — `flutter pub
+get`, `dart format`, `flutter analyze` and `flutter test` all work — so
+this is specific to producing a macOS app bundle. CI sidesteps it by
+installing the same pinned SDK outside Nix (see the `Flutter macOS` job);
+locally, build from a non-Nix Flutter SDK of the same version.
+
 **`pumpAndSettle()` hangs on the scene screen — use a bounded pump loop
 instead.** This bit Task 12 while writing the integration smoke test,
 and will bite any future integration test that navigates into the scene
