@@ -178,11 +178,12 @@
         in
         pkgs.mkShell {
           # Rust + xcodegen for the released SwiftUI client only. `flutter`,
-          # `cmake`, `ninja`, `clang`, and `cocoapods` live in
-          # `devShells.flutter` instead — see the Linux shell's comment for
-          # why an explicit `clang` here is a hazard for the Rust build (and
-          # on Darwin it compounds the documented `nix develop` + xcodebuild
-          # linker conflict).
+          # `cmake`, `ninja`, and `cocoapods` live in `devShells.flutter`
+          # instead — see the Linux shell's comment for why an explicit
+          # `clang` is a hazard for the Rust build (and on Darwin it
+          # compounds the documented `nix develop` + xcodebuild linker
+          # conflict). No shell on this platform ships one: the Flutter
+          # shell is `mkShellNoCC` for its own Apple-toolchain reason.
           nativeBuildInputs = with pkgs; [
             rustToolchain
             pkg-config
@@ -197,14 +198,24 @@
 
       # Flutter-only toolchain, kept out of the default shell for the same
       # reasons as the Linux split above.
+      #
+      # `mkShellNoCC`, and no `clang` in the inputs, because on Darwin every
+      # compile this shell drives has to be Xcode's. `flutter test` builds
+      # the `objective_c` package's native-asset hook, and that hook picks
+      # its compiler off PATH: with nixpkgs' clang-wrapper there, its SDK
+      # lookup fails and clang is handed `-isysroot error: unable to find
+      # sdk: 'macosx'`, so every file dies on `Foundation/Foundation.h`.
+      # Plain `mkShell` is not enough to avoid that — it puts stdenv's own
+      # cc-wrapper on PATH even with `clang` dropped. Nothing here wants it:
+      # `flutter build macos` and the pods go through xcodebuild, which has
+      # its own reason to keep nixpkgs' wrapper away (see `macosRunFor`).
       darwinFlutterDevShell = system:
         let pkgs = pkgsFor system; in
-        pkgs.mkShell {
+        pkgs.mkShellNoCC {
           nativeBuildInputs = with pkgs; [
             flutter
             cmake
             ninja
-            clang
             cocoapods
           ];
           shellHook = ''
