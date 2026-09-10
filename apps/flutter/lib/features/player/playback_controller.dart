@@ -459,16 +459,21 @@ class PlaybackController extends ChangeNotifier {
   /// paused.
   ///
   /// Where [at] goes depends on the kind. A stream with a real timeline
-  /// is opened at an offset within it. A progressive transcode has no
-  /// timeline, so the offset is baked into the URL and
-  /// [_streamStartOffset] becomes the bridge between the stream's clock
-  /// (which restarts at zero) and the scene's.
+  /// is opened at an offset within it. A progressive transcode has none
+  /// to seek within, so the offset travels as Stash's own `start=` query
+  /// parameter and [_streamStartOffset] becomes the bridge between the
+  /// stream's clock (which restarts at zero) and the scene's. Nothing
+  /// here rewrites the path: an endpoint that reaches this branch is
+  /// already the route it is meant to be, and MP4 is not the only
+  /// progressive kind (appending `.mp4` to a WEBM endpoint would ask
+  /// Stash for a route it does not serve).
   Future<void> _openStream(
     SceneStream stream, {
     required Duration at,
     required bool play,
     required int generation,
   }) async {
+    if (_disposed || generation != _state.generation) return;
     final config = _connection;
     if (config == null) return;
 
@@ -488,7 +493,14 @@ class PlaybackController extends ChangeNotifier {
     } else {
       _streamStartOffset = at;
       await _engine.open(
-        transcodedStreamUrl(authenticated, startAt: at),
+        at > Duration.zero
+            ? authenticated.replace(
+                queryParameters: {
+                  ...authenticated.queryParameters,
+                  'start': at.inSeconds.toString(),
+                },
+              )
+            : authenticated,
         play: play,
       );
     }
