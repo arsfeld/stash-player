@@ -2120,6 +2120,35 @@ void main() {
   });
 
   group('SceneScreen: playback failure recovery', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    //
+    // Drives the engine's `errors` stream all the way to a genuine
+    // terminal failure, honouring the ladder-walk `PlaybackController`
+    // now does for every report on that stream: these tests' scenes carry
+    // no endpoint list, so the automatic ladder is the synthesized
+    // two-rung `[direct, mp4]`, and a single report only advances onto
+    // `mp4` rather than failing outright. Once there, the controller
+    // gives that last rung one reopen before believing a report against
+    // it, so this sends a second report with that reopen queued to fail
+    // too, confirming (the way a persistent server-side refusal would)
+    // that the failure is real rather than an echo of the rung already
+    // left.
+    Future<void> failPlayback(
+      WidgetTester tester,
+      FakePlaybackEngine engine, {
+      String message = 'stream unavailable',
+    }) async {
+      engine.emitError(message);
+      await tester.pump();
+      await tester.pump();
+      engine.failNextOpens.add(StateError(message));
+      engine.emitError(message);
+      await tester.pump();
+      await tester.pump();
+    }
+
     testWidgets(
       'a playback failure before the video ever played keeps metadata '
       'reachable and shows Retry and Open in Stash',
@@ -2133,9 +2162,7 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        harness.engine.emitError('stream unavailable');
-        await tester.pump();
-        await tester.pump();
+        await failPlayback(tester, harness.engine);
 
         expect(find.text('Retry'), findsOneWidget);
         expect(find.text('Open in Stash'), findsWidgets);
@@ -2153,9 +2180,7 @@ void main() {
       harness.api.calls.single.completer.complete(scene);
       await tester.pump();
       await tester.pump();
-      harness.engine.emitError('stream unavailable');
-      await tester.pump();
-      await tester.pump();
+      await failPlayback(tester, harness.engine);
 
       await tester.tap(find.text('Retry'));
       await tester.pump();
@@ -2175,9 +2200,7 @@ void main() {
         harness.api.calls.single.completer.complete(scene);
         await tester.pump();
         await tester.pump();
-        harness.engine.emitError('stream unavailable');
-        await tester.pump();
-        await tester.pump();
+        await failPlayback(tester, harness.engine);
 
         await tester.tap(find.text('Open in Stash').first);
         await tester.pump();
@@ -2209,9 +2232,7 @@ void main() {
         // A genuine stream-level failure (e.g. a network drop mid-scene)
         // reported by the engine's own `errors` stream, after duration
         // (and thus a once-successful open) is already known.
-        harness.engine.emitError('stream broke');
-        await tester.pump();
-        await tester.pump();
+        await failPlayback(tester, harness.engine, message: 'stream broke');
 
         // The video surface and transport controls are still there — no
         // full-screen failure overlay took over.
@@ -2257,9 +2278,7 @@ void main() {
 
         // The banner used to sit on top of the top bar and silently
         // swallow taps meant for the back button and details toggle.
-        harness.engine.emitError('stream broke');
-        await tester.pump();
-        await tester.pump();
+        await failPlayback(tester, harness.engine, message: 'stream broke');
 
         expect(
           find.byKey(const Key('scene-transient-failure-banner')),

@@ -2953,4 +2953,118 @@ void main() {
       expect(controller.state.failure, contains('***'));
     });
   });
+
+  group('a stream that reports failure on the errors stream', () {
+    // Real playback is asynchronous: `open()` itself never throws for a
+    // server refusal. media_kit's own `Player.open` issues the load to
+    // libmpv and returns immediately; libmpv reports a refusal later, on
+    // its own event stream, which is what `PlaybackEngine.errors` (and
+    // `FakePlaybackEngine.emitError` here) stands in for. That is a
+    // second, independent way a stream Stash advertised can turn out not
+    // to work, alongside the synchronous `open()` throw the previous
+    // group covers.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene fullScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=ORIGINAL',
+          'MP4',
+        ),
+      ],
+    );
+
+    Future<void> stall(FakePlaybackEngine engine, _ManualTimers timers) async {
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+    }
+
+    test('an error advances the ladder, the same way a stall does', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+
+      final opens = engine.commands.whereType<OpenCommand>();
+      expect(opens, hasLength(1));
+      expect(opens.single.uri.path, endsWith('/stream.m3u8'));
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test('a second, later error for the same failed load reopens the '
+        'ladder\'s last rung once rather than declaring it dead, because '
+        'libmpv can report one failure as more than one error line and '
+        'the errors stream carries no way to tell which rung a report '
+        'was actually about', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      await stall(engine, timers); // direct stalls -> switches to HLS
+      engine.commands.clear();
+
+      // Both lines describe the very same HLS refusal. The first moves
+      // this generation off HLS and onto MP4 (the ladder's last rung);
+      // the second arrives only once that switch has already resolved,
+      // indistinguishable on its face from a fresh MP4 failure.
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+
+      final opens = engine.commands.whereType<OpenCommand>();
+      expect(opens, hasLength(2));
+      expect(opens.first.uri.path, endsWith('/stream.mp4'));
+      // The second open is the one unproven-failure reopen MP4 gets: the
+      // very same URL, since MP4 was never actually broken.
+      expect(opens.last.uri.path, endsWith('/stream.mp4'));
+      expect(controller.state.streams!.current.kind, StreamKind.mp4);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test(
+      'an error once the ladder is spent still fails terminally, with '
+      'the API key redacted, once the one reopen it is given fails too',
+      () async {
+        final engine = FakePlaybackEngine();
+        final controller = _buildController(engine: engine);
+        // No endpoint list, so the automatic ladder is just [direct, mp4]:
+        // one step, spent after the first advance.
+        await controller.loadScene(
+          _sceneWith(stream: 'scene/s1/stream', duration: 2000),
+        );
+        engine.emitError('503 Live transcoding disabled');
+        await pumpEventQueue(); // direct -> mp4, the ladder's only rung
+        engine.commands.clear();
+
+        // MP4's one reopen is queued to fail too, confirming this report
+        // was genuine rather than a stray echo from the rung already left.
+        engine.failNextOpens.add(StateError('refused ${_config.apiKey}'));
+        engine.emitError('refused ${_config.apiKey}');
+        await pumpEventQueue();
+
+        expect(engine.commands.whereType<OpenCommand>(), hasLength(1));
+        expect(controller.state.phase, PlaybackPhase.failed);
+        expect(controller.state.failure, isNot(contains(_config.apiKey)));
+        expect(controller.state.failure, contains('***'));
+      },
+    );
+  });
 }

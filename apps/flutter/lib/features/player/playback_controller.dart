@@ -232,6 +232,14 @@ class PlaybackController extends ChangeNotifier {
   /// doc for what it does with that.
   bool _positionEstablished = false;
 
+  /// Whether the current ladder's last rung has already been reopened
+  /// once in response to an unproven [PlaybackEngine.errors] report. See
+  /// [_handleStreamError]'s own doc for why a single reopen, not an
+  /// immediate failure, is the right first response once the ladder is
+  /// spent. Reset by [_bindStreams] on every scene load, the same as
+  /// every other piece of per-scene stream-handling state.
+  bool _spentRungReopened = false;
+
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
   StreamSubscription<Duration>? _bufferedSubscription;
@@ -900,11 +908,77 @@ class PlaybackController extends ChangeNotifier {
       _state = _state.copyWith(duration: value);
       notifyListeners();
     });
+    _spentRungReopened = false;
     _errorsSubscription = _engine.errors.listen((message) {
       if (_disposed || generation != _state.generation) return;
-      _state = _state.copyWith(phase: PlaybackPhase.failed, failure: message);
-      notifyListeners();
+      unawaited(_handleStreamError(message, generation));
     });
+  }
+
+  /// Reacts to one line from [PlaybackEngine.errors], on the same terms
+  /// [_switchTo]'s own catch already applies to a refused [_openStream]
+  /// call: advance to the next rung unless the viewer picked this stream
+  /// themselves or the ladder is already spent. This is the other half
+  /// of that same rule, for a server that advertises a stream and only
+  /// fails it after `open` already returned: real playback is
+  /// asynchronous, so `open` itself never throws for a refusal, only the
+  /// errors stream reports it, later.
+  ///
+  /// Unlike a thrown `open`, a message on this stream carries no
+  /// identity: there is no way to tell whether it describes the rung
+  /// this generation just switched *away* from, or the one it switched
+  /// *to*. libmpv can report a single failed load as more than one error
+  /// line (a demuxer-open failure and its own end-of-file summary for
+  /// the same refusal, say), and every one of them is delivered here,
+  /// one at a time, only once the previous one has been fully reacted
+  /// to. That means a stray report for an already-abandoned rung can and
+  /// does arrive after this generation has already moved past it,
+  /// looking exactly like a fresh failure of wherever it landed.
+  ///
+  /// Once the ladder is spent that ambiguity is resolved by proof rather
+  /// than by timing: the *first* report received while spent (tracked by
+  /// [_spentRungReopened], reset per scene by [_bindStreams]) reopens the
+  /// current rung once instead of declaring it dead outright. A stray
+  /// report about the rung just left resolves itself here, because
+  /// reopening a stream that was never actually broken simply works,
+  /// landing back on `ready`. A rung that is genuinely broken fails that
+  /// reopen too ([_switchTo]'s own catch still applies to it), and a
+  /// second, truly independent report against a rung that already used
+  /// its one reopen falls straight through to the terminal branch below.
+  /// Either path costs at most one extra reopen and never loops: once
+  /// [_spentRungReopened] is `true`, this method takes no branch that
+  /// could set it again.
+  Future<void> _handleStreamError(String message, int generation) async {
+    if (_disposed || generation != _state.generation) return;
+
+    final selection = _state.streams;
+    final next = (selection == null || selection.isManual)
+        ? null
+        : selection.nextRung();
+    if (next != null) {
+      _log(
+        'scene ${_state.scene?.id}: ${selection!.current.label} reported '
+        '$message, trying ${next.label}',
+      );
+      await _switchTo(selection.advance(next), generation);
+      return;
+    }
+
+    if (selection != null && !selection.isManual && !_spentRungReopened) {
+      _spentRungReopened = true;
+      _log(
+        'scene ${_state.scene?.id}: ${selection.current.label} reported '
+        '$message, reopening it once before giving up',
+      );
+      await _switchTo(selection, generation);
+      return;
+    }
+
+    _state = _state.copyWith(
+      phase: PlaybackPhase.failed,
+      failure: redactSensitive(message, apiKey: _connection?.apiKey ?? ''),
+    );
+    notifyListeners();
   }
 
   /// Cancels (and clears) every currently-bound stream subscription
