@@ -59,6 +59,15 @@ class DisposeCommand implements PlaybackCommand {}
 class FakePlaybackEngine implements PlaybackEngine {
   final List<PlaybackCommand> commands = [];
 
+  /// Errors to throw from the next [open] calls, consumed one per call
+  /// and in order. Empty means every open succeeds.
+  ///
+  /// Exists because a server can advertise a stream in `sceneStreams` and
+  /// then refuse to serve it: the endpoint list is filtered only on the
+  /// maximum transcode size and the file's resolution, never on whether
+  /// live transcoding is switched on at all.
+  final List<Object> failNextOpens = [];
+
   final StreamController<bool> _playingController =
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
@@ -115,6 +124,7 @@ class FakePlaybackEngine implements PlaybackEngine {
   Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
     _checkNotDisposed();
     commands.add(OpenCommand(uri, play: play, startAt: startAt));
+    if (failNextOpens.isNotEmpty) throw failNextOpens.removeAt(0);
   }
 
   @override

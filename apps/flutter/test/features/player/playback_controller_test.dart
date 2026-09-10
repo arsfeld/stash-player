@@ -2859,4 +2859,98 @@ void main() {
       expect(controller.state.duration, const Duration(seconds: 1800));
     });
   });
+
+  group('a stream that refuses to open', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene fullScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=ORIGINAL',
+          'MP4',
+        ),
+      ],
+    );
+
+    Future<void> stall(FakePlaybackEngine engine, _ManualTimers timers) async {
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+    }
+
+    test('falls onward to MP4 when the advertised HLS is refused, because a '
+        'listing is not a promise', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+      engine.failNextOpens.add(StateError('503 Live transcoding disabled'));
+
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      final opens = engine.commands.whereType<OpenCommand>().toList();
+      expect(opens, hasLength(2));
+      expect(opens.first.uri.path, endsWith('/stream.m3u8'));
+      expect(opens.last.uri.path, endsWith('/stream.mp4'));
+      expect(controller.state.streams!.current.kind, StreamKind.mp4);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test('gives up once the ladder is spent, rather than cycling', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+      engine.failNextOpens.addAll([
+        StateError('503 Live transcoding disabled'),
+        StateError('500 transcode failed'),
+      ]);
+
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), hasLength(2));
+      expect(controller.state.phase, PlaybackPhase.failed);
+    });
+
+    test('keeps the API key out of the surfaced failure', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(
+        _sceneWith(stream: 'scene/s1/stream', duration: 2000),
+      );
+      engine.failNextOpens.add(StateError('refused ${_config.apiKey}'));
+
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      expect(controller.state.failure, isNot(contains(_config.apiKey)));
+      expect(controller.state.failure, contains('***'));
+    });
+  });
 }

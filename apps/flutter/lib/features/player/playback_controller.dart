@@ -540,6 +540,21 @@ class PlaybackController extends ChangeNotifier {
       notifyListeners();
     } catch (error) {
       if (_disposed || generation != _state.generation) return;
+
+      // A server can advertise a stream and then refuse to serve it, so a
+      // refusal is treated exactly like a stall: try the next rung. A
+      // stream the viewer chose is never swapped out from under them, and
+      // a spent ladder has nowhere left to go, so both end here.
+      final next = selection.isManual ? null : selection.nextRung();
+      if (next != null) {
+        _log(
+          'scene ${_state.scene?.id}: ${selection.current.label} would not '
+          'open, trying ${next.label}',
+        );
+        await _switchTo(selection.advance(next), generation);
+        return;
+      }
+
       _state = _state.copyWith(
         phase: PlaybackPhase.failed,
         failure: redactSensitive('$error', apiKey: _connection?.apiKey ?? ''),
