@@ -256,6 +256,25 @@ class PlaybackController extends ChangeNotifier {
   /// this is protecting against. Reset to `false` at the top of
   /// [_openStream], so every attempt (the scene's initial open, an
   /// automatic ladder step, a reopen) starts unproven again.
+  ///
+  /// One consequence is deliberate rather than overlooked: a stream
+  /// sitting *paused* at raw zero never sets this. That is a real state
+  /// and not a hypothetical one, since [loadScene] opens with
+  /// `play: false` and the switch paths carry the previous value across,
+  /// so a scene with no resume position to open at waits at raw zero
+  /// until the viewer presses play. (A resume position does not wait:
+  /// the offset travels to the engine, whose very first reading is then
+  /// the offset itself, paused or not.) Every error line arriving in
+  /// that window is therefore read as a load failure and walks the
+  /// ladder. For a server refusing the stream that is exactly right, and
+  /// it is the whole point. For a decoder complaining about the poster
+  /// frame, which mpv decodes even while paused, it costs one
+  /// unnecessary step down the ladder, bounded to one by
+  /// [_rungTrialUsed]. Spending that rung is the better trade: what this
+  /// flag claims is that the attempt produced real evidence of playing,
+  /// and a stream paused on its first frame has not, so special-casing
+  /// the pause would spare the occasional rung at the price of a signal
+  /// that no longer means what its name says.
   bool _currentStreamAdvanced = false;
 
   StreamSubscription<bool>? _playingSubscription;
