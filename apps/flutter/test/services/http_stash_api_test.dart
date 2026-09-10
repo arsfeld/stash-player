@@ -278,6 +278,61 @@ void main() {
     expect(scene?.studio?.name, 'Studio Foo');
   });
 
+  test('findScene asks for, and decodes, the file facts a slow load has to '
+      'be explained against', () async {
+    final transport = RecordingClient(fixture('find_scene.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    final scene = await api.findScene('1001');
+
+    expect(transport.lastQuery, contains('audio_codec'));
+    expect(transport.lastQuery, contains('format'));
+    expect(transport.lastQuery, contains('size'));
+    expect(transport.lastQuery, contains('bit_rate'));
+    final file = scene!.files.single;
+    expect(file.audioCodec, 'aac');
+    expect(file.format, 'mp4');
+    expect(file.size, 2147483648);
+    expect(file.bitRate, 9500000);
+  });
+
+  test('findScenes asks for the same file facts as findScene, so a library '
+      'card and a scene page describe the same file', () async {
+    final transport = RecordingClient(fixture('find_scenes_default.json'));
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: transport,
+    );
+
+    await api.findScenes(const SceneFilter(), page: 1, perPage: 10);
+
+    expect(transport.lastQuery, contains('audio_codec'));
+    expect(transport.lastQuery, contains('bit_rate'));
+  });
+
+  test('a file with none of the diagnostic fields decodes as absent rather '
+      'than as zero', () async {
+    final api = HttpStashApi(
+      baseUri: Uri.parse('https://stash.test'),
+      apiKey: '',
+      client: RecordingClient(
+        '{"data":{"findScene":{"id":"1","paths":{},"files":[{}]}}}',
+      ),
+    );
+
+    final file = (await api.findScene('1'))!.files.single;
+
+    expect(file.audioCodec, isNull);
+    expect(file.format, isNull);
+    expect(file.size, isNull);
+    expect(file.bitRate, isNull);
+  });
+
   test('saveSceneActivity sends Stash variable names', () async {
     final transport = RecordingClient('{"data":{"sceneSaveActivity":true}}');
     final api = HttpStashApi(

@@ -55,6 +55,23 @@ class Scene {
     return 'Scene $id';
   }
 
+  /// The duration Stash scanned from the file itself, or `null` when it
+  /// reported none.
+  ///
+  /// Authoritative in a way the playback engine's own reported duration
+  /// is not. A transcoded stream is produced as it is sent, so the engine
+  /// can only ever report how much of it has arrived, and that number
+  /// climbs for the whole scene. This one is measured from the original
+  /// file and is correct from the moment the metadata loads, before a
+  /// single byte of video has been fetched.
+  Duration? get knownDuration {
+    final seconds = files.isEmpty ? null : files.first.duration;
+    if (seconds == null || seconds <= 0) return null;
+    return Duration(
+      microseconds: (seconds * Duration.microsecondsPerSecond).round(),
+    );
+  }
+
   double? get effectiveResume {
     final resume = resumeTime;
     if (resume == null || resume <= 0) return null;
@@ -89,6 +106,10 @@ class SceneFile {
     this.width,
     this.height,
     this.videoCodec,
+    this.audioCodec,
+    this.format,
+    this.size,
+    this.bitRate,
     this.frameRate,
   });
 
@@ -97,6 +118,22 @@ class SceneFile {
   final int? width;
   final int? height;
   final String? videoCodec;
+
+  /// The three fields below exist to answer "why did this take so long to
+  /// start" rather than to be displayed. A codec pair plus a container
+  /// plus a size is most of the question already: whether Stash is
+  /// handing back the original file or transcoding it, and how much has
+  /// to cross the wire before the first frame can be decoded.
+  final String? audioCodec;
+
+  /// Container, as Stash reports it (`mkv`, `mp4`, ...).
+  final String? format;
+
+  /// File size in bytes.
+  final int? size;
+
+  /// Overall bitrate in bits per second.
+  final int? bitRate;
   final double? frameRate;
 }
 

@@ -28,7 +28,7 @@ query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
     scenes {
       id title details date rating100 resume_time play_count play_duration o_counter
       paths { screenshot preview sprite stream webp }
-      files { path duration width height video_codec frame_rate }
+      files { path duration width height video_codec audio_codec format size bit_rate frame_rate }
       studio { id name }
       performers { id name }
     }
@@ -41,7 +41,7 @@ query FindScene($id: ID!) {
   findScene(id: $id) {
     id title details date rating100 resume_time play_count play_duration o_counter
     paths { screenshot preview sprite stream webp }
-    files { path duration width height video_codec frame_rate }
+    files { path duration width height video_codec audio_codec format size bit_rate frame_rate }
     studio { id name }
     performers { id name }
   }
@@ -275,6 +275,10 @@ SceneFile _decodeFile(Map<String, Object?> source) => SceneFile(
   width: _optionalInt(source, 'width'),
   height: _optionalInt(source, 'height'),
   videoCodec: _optionalString(source, 'video_codec'),
+  audioCodec: _optionalString(source, 'audio_codec'),
+  format: _optionalString(source, 'format'),
+  size: _optionalInt(source, 'size'),
+  bitRate: _optionalInt(source, 'bit_rate'),
   frameRate: _optionalDouble(source, 'frame_rate'),
 );
 
