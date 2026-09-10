@@ -3274,5 +3274,99 @@ void main() {
       expect(controller.state.phase, PlaybackPhase.ready);
       expect(controller.state.failure, isNull);
     });
+
+    test(
+      'the position reset an open emits before it loads anything is '
+      'not evidence of playing, so a refusal still walks the ladder',
+      () async {
+        final engine = FakePlaybackEngine();
+        final controller = _buildController(engine: engine);
+        await controller.loadScene(fullScene());
+        engine.commands.clear();
+
+        // What the real engine does on every single open: media_kit's
+        // `Player.open` calls `stop` before it hands the URL to libmpv, and
+        // that pushes a bare `Duration.zero` onto the position stream. It is
+        // emitted explicitly here because `FakePlaybackEngine` does not do
+        // it on its own, which is exactly why this went unnoticed.
+        engine.emitPosition(Duration.zero);
+        await pumpEventQueue();
+
+        engine.emitError('503 Live transcoding disabled');
+        await pumpEventQueue();
+
+        final opens = engine.commands.whereType<OpenCommand>();
+        expect(opens, hasLength(1));
+        expect(opens.single.uri.path, endsWith('/stream.m3u8'));
+        expect(controller.state.streams!.current.kind, StreamKind.hls);
+        expect(controller.state.phase, PlaybackPhase.ready);
+      },
+    );
+
+    test('a first real tick a fraction of a second in is evidence enough, '
+        'so a following error is still a hiccup', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+
+      // The smallest reading that is genuinely about playback rather than
+      // about opening: a stream four frames in has proven itself just as
+      // well as one four seconds in.
+      engine.emitPosition(const Duration(milliseconds: 60));
+      await pumpEventQueue();
+
+      engine.emitError('Error while decoding frame!');
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.streams!.current.kind, StreamKind.direct);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+    });
+
+    test(
+      'the same reset on a transcode opened at an offset is not '
+      'evidence either, though the position it reports is not zero',
+      () async {
+        final engine = FakePlaybackEngine();
+        final timers = _ManualTimers();
+        final controller = _buildController(
+          engine: engine,
+          stallTimerFactory: timers.call,
+        );
+        // No endpoint list, so the ladder is direct -> MP4: stalling once
+        // lands on the transcode, which is opened with the offset baked
+        // into its URL and whose own clock therefore restarts at zero.
+        await controller.loadScene(
+          _sceneWith(stream: 'scene/s1/stream', duration: 2000),
+        );
+        engine.emitPosition(const Duration(seconds: 600));
+        await pumpEventQueue();
+        engine.emitBuffering(true);
+        await pumpEventQueue();
+        timers.latest.fire();
+        await pumpEventQueue();
+        expect(controller.state.streams!.current.kind, StreamKind.mp4);
+        engine.commands.clear();
+
+        engine.emitPosition(Duration.zero);
+        await pumpEventQueue();
+        // The scene-timeline position this produces is 600s, nowhere near
+        // zero, which is why the raw engine reading is what has to be
+        // judged and not this one.
+        expect(controller.state.position, const Duration(seconds: 600));
+
+        engine.emitError('503 Live transcoding disabled');
+        await pumpEventQueue();
+
+        // The ladder is spent here, so the refusal buys a reopen of the
+        // same rung rather than a step to a new one. Either way it is a
+        // reaction, which is what the reset must not have suppressed.
+        final opens = engine.commands.whereType<OpenCommand>();
+        expect(opens, hasLength(1));
+        expect(opens.single.uri.queryParameters['start'], '600');
+      },
+    );
   });
 }

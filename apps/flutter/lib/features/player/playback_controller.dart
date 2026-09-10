@@ -244,14 +244,18 @@ class PlaybackController extends ChangeNotifier {
 
   /// Whether the currently *open* stream (this specific [_openStream]
   /// attempt, not the scene as a whole) has produced real evidence of
-  /// playing: a `position` event. Deliberately not `_state.playing`,
-  /// which only tracks the engine's pause state and would already be
-  /// `true` the instant an `open(play: true)` call returns, before a
-  /// single frame has actually arrived. Reset to `false` at the top of
+  /// playing: a position event past zero. Deliberately not
+  /// `_state.playing`, which only tracks the engine's pause state and
+  /// would already be `true` the instant an `open(play: true)` call
+  /// returns, before a single frame has actually arrived. Just as
+  /// deliberately not *any* position event: the engine emits a position
+  /// of exactly zero as part of opening, before it has been asked to
+  /// load anything at all, and counting that would make every stream
+  /// look like it had played. See the position listener in [_bindStreams]
+  /// for the whole of that, and [_handleStreamError]'s own doc for what
+  /// this is protecting against. Reset to `false` at the top of
   /// [_openStream], so every attempt (the scene's initial open, an
-  /// automatic ladder step, a reopen) starts unproven again; set `true`
-  /// by the position listener in [_bindStreams]. See
-  /// [_handleStreamError]'s own doc for what this is protecting against.
+  /// automatic ladder step, a reopen) starts unproven again.
   bool _currentStreamAdvanced = false;
 
   StreamSubscription<bool>? _playingSubscription;
@@ -961,7 +965,23 @@ class PlaybackController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(position: _streamStartOffset + value);
       _positionEstablished = true;
-      _currentStreamAdvanced = true;
+      // Only a reading past zero proves this attempt is playing, and it
+      // has to be the raw engine reading rather than the scene-timeline
+      // one built above. Opening a stream emits a position of exactly
+      // zero on the way past: the engine stops whatever was playing
+      // first, and stopping resets the position, so the event arrives
+      // before the URL has even been handed to the decoder. Treating any
+      // position event as progress therefore marked every stream as
+      // playing the instant it was opened, and a server's refusal
+      // moments later then read as a mid-playback decode hiccup to be
+      // ignored, so the ladder never walked for the one case it exists
+      // for. A real first tick is always strictly past zero on
+      // either clock (a stream with a timeline reports where it was
+      // opened, a transcode a fraction of a second), so this excludes the
+      // reset and nothing else. The scene-timeline value would not: a
+      // transcode carrying its offset in its URL reports that reset as
+      // the offset, hundreds of seconds from zero.
+      if (value > Duration.zero) _currentStreamAdvanced = true;
       notifyListeners();
     });
     _durationSubscription = _engine.duration.listen((value) {
