@@ -824,6 +824,21 @@ class PlaybackController extends ChangeNotifier {
   Future<void> seekRelative(Duration delta) =>
       seekAbsolute(_state.position + delta);
 
+  /// Reopens the current scene on [stream], because the viewer asked for
+  /// it, carrying their position and their play/pause state across.
+  ///
+  /// A deliberate choice, so it stops the automatic ladder: a stall on
+  /// this stream will surface as a stall rather than silently moving them
+  /// somewhere else. Choosing the stream already playing is a no-op.
+  Future<void> selectStream(SceneStream stream) async {
+    if (_disposed) return;
+    final selection = _state.streams;
+    if (selection == null || selection.current == stream) return;
+
+    _cancelStallWatch();
+    await _switchTo(selection.choose(stream), _state.generation);
+  }
+
   /// Sets volume, clamped to `[0.0, 1.0]`.
   Future<void> setVolume(double value) async {
     if (_disposed) return;

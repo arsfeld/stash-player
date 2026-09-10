@@ -416,6 +416,8 @@ class _ManualTimers {
   }
 
   _ManualTimer get latest => created.last;
+
+  bool get hasPending => created.any((timer) => timer.isActive);
 }
 
 class _CallCountingEngine implements PlaybackEngine {
@@ -3515,6 +3517,182 @@ void main() {
       await pumpEventQueue();
 
       expect(controller.state.position, const Duration(seconds: 900));
+    });
+  });
+
+  group('choosing a stream', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene fullScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=STANDARD',
+          'HLS Standard (480p)',
+        ),
+      ],
+    );
+
+    test(
+      'reopens on the chosen stream at the position already reached',
+      () async {
+        final engine = FakePlaybackEngine();
+        final controller = _buildController(engine: engine);
+        await controller.loadScene(fullScene());
+        engine.emitPosition(const Duration(seconds: 240));
+        await pumpEventQueue();
+        engine.commands.clear();
+
+        await controller.selectStream(controller.state.streams!.options.last);
+
+        final opened = engine.commands.whereType<OpenCommand>().single;
+        expect(opened.uri.path, endsWith('/stream.m3u8'));
+        expect(opened.startAt, const Duration(seconds: 240));
+        expect(controller.state.streams!.current.label, 'HLS Standard (480p)');
+        expect(controller.state.streams!.isManual, isTrue);
+      },
+    );
+
+    test('is the same scene continuing, so the generation does not move and '
+        'the activity accounting is not interrupted', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      final before = controller.state.generation;
+
+      await controller.selectStream(controller.state.streams!.options.last);
+
+      expect(controller.state.generation, before);
+    });
+
+    test('stays paused when the viewer was paused', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.emitPlaying(false);
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      await controller.selectStream(controller.state.streams!.options.last);
+
+      expect(engine.commands.whereType<OpenCommand>().single.play, isFalse);
+      expect(engine.commands.whereType<PlayCommand>(), isEmpty);
+    });
+
+    test(
+      'a stall on a chosen stream does not move the viewer off it',
+      () async {
+        final engine = FakePlaybackEngine();
+        final timers = _ManualTimers();
+        final controller = _buildController(
+          engine: engine,
+          stallTimerFactory: timers.call,
+        );
+        await controller.loadScene(fullScene());
+        await controller.selectStream(controller.state.streams!.options.last);
+        engine.commands.clear();
+
+        engine.emitBuffering(true);
+        await pumpEventQueue();
+
+        // The watch never arms on a deliberate choice, so there is no
+        // deadline to fire.
+        expect(timers.hasPending, isFalse);
+        expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+        expect(controller.state.streams!.current.label, 'HLS Standard (480p)');
+      },
+    );
+
+    test('a chosen stream that will not open fails rather than moving them '
+        'somewhere they did not ask for. The menu stays reachable under the '
+        'failure, so this is recoverable', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+      engine.failNextOpens.add(StateError('503 Live transcoding disabled'));
+
+      await controller.selectStream(controller.state.streams!.options.last);
+
+      expect(engine.commands.whereType<OpenCommand>(), hasLength(1));
+      expect(controller.state.phase, PlaybackPhase.failed);
+      expect(controller.state.streams!.options, hasLength(2));
+    });
+
+    test('choosing the stream already playing does nothing', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+
+      await controller.selectStream(controller.state.streams!.current);
+
+      expect(engine.commands, isEmpty);
+    });
+
+    // Carried forward from the WEBM path fix (`_openStream`'s progressive
+    // branch used to call `transcodedStreamUrl`, which rewrites the path
+    // to end in `.mp4` regardless of the endpoint's real kind). Nothing
+    // could reach `_openStream` with a WEBM endpoint until `selectStream`
+    // existed: the automatic ladder only ever steps through HLS and MP4,
+    // never WEBM, so this is the first test able to exercise that branch
+    // against a WEBM stream at all.
+    test('choosing a WEBM endpoint opens its own route with the position '
+        'as a query parameter, never a rewritten path', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(
+        _sceneWith(
+          stream: 'scene/s1/stream',
+          duration: 2000,
+          streams: [
+            endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+            endpoint(
+              'https://stash.example/scene/s1/stream.webm?resolution=STANDARD',
+              'WEBM Standard (480p)',
+            ),
+          ],
+        ),
+      );
+      engine.emitPosition(const Duration(seconds: 120));
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      await controller.selectStream(controller.state.streams!.options.last);
+
+      final opened = engine.commands.whereType<OpenCommand>().single;
+      expect(opened.uri.path, endsWith('/stream.webm'));
+      expect(opened.uri.path, isNot(endsWith('/stream.webm.mp4')));
+      expect(opened.uri.queryParameters['start'], '120');
+      expect(opened.startAt, isNull);
+    });
+
+    // Carried forward from the ladder-walks-on-error fix: a stream the
+    // viewer picked themselves must be a dead end for the automatic
+    // ladder, the same way it already is for a stall (the test above).
+    // `isManual` could not become `true` through the public API before
+    // `selectStream` existed, so `_handleStreamError`'s check of it was
+    // never exercised at controller level.
+    test('a chosen stream errors and the scene fails rather than walking '
+        'the ladder off a choice the viewer made', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      await controller.selectStream(controller.state.streams!.options.last);
+      engine.commands.clear();
+
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.phase, PlaybackPhase.failed);
+      expect(controller.state.streams!.current.label, 'HLS Standard (480p)');
     });
   });
 }
