@@ -220,16 +220,16 @@ class PlaybackController extends ChangeNotifier {
   bool _disposed = false;
 
   /// Whether `_state.position` currently reflects a real, established
-  /// position for the *current* scene — `true` once the resume-seek
-  /// decision in `loadScene` has run (whether or not a seek actually
-  /// happened) or the engine's `position` stream has fired at least once;
+  /// position for the *current* scene — `true` once `loadScene` has
+  /// settled where this scene starts, which it does just before it opens
+  /// anything, or the engine's `position` stream has fired at least once;
   /// `false` from the moment a new scene's state is built until then.
   /// `loadScene` reads this for the *outgoing* scene before resetting it,
   /// so a scene replaced before its own position was ever established
-  /// (e.g. superseded by a second `loadScene` before the first's resume
-  /// seek could land) reports its outgoing resume position as unknown
-  /// rather than a bogus zero (N4) — see `ActivitySync.replaceScene`'s own
-  /// doc for what it does with that.
+  /// (e.g. superseded by a second `loadScene` before the first got as far
+  /// as settling where its scene starts) reports its outgoing resume
+  /// position as unknown rather than a bogus zero (N4) — see
+  /// `ActivitySync.replaceScene`'s own doc for what it does with that.
   bool _positionEstablished = false;
 
   /// Whether the current rung has already had one automatic decision
@@ -428,6 +428,24 @@ class PlaybackController extends ChangeNotifier {
       );
       _state = _state.copyWith(streams: selection);
 
+      // Written before the open rather than after it, because the quality
+      // menu this selection populates is reachable for the whole of that
+      // open: the controls stay pinned while nothing is playing, and the
+      // loading overlay sits under them, so the menu button is what a tap
+      // hits. Every switch (a viewer's pick, a stall deadline, an engine
+      // error) reopens at `_state.position` and reads nothing else, so
+      // leaving the resume point unwritten until the open returns means a
+      // switch during it reopens at zero and then checkpoints that zero
+      // to Stash, destroying the very resume point the load was about to
+      // honour. `_positionEstablished` is set even when there is nothing
+      // to resume to, because zero is a real answer here rather than a
+      // placeholder. See that field's own doc.
+      if (resumeTarget != null) {
+        _state = _state.copyWith(position: resumeTarget);
+        notifyListeners();
+      }
+      _positionEstablished = true;
+
       _enterStage(timeline, LoadStage.opening, generation);
       // The resume position is handed to `open` rather than seeked to
       // once it returns. A seek issued after the fact reaches a backend
@@ -441,15 +459,6 @@ class PlaybackController extends ChangeNotifier {
         generation: generation,
       );
       if (_disposed || generation != _state.generation) return;
-
-      if (resumeTarget != null) {
-        _state = _state.copyWith(position: resumeTarget);
-        notifyListeners();
-      }
-      // Whether or not a resume seek was needed, `_state.position` now
-      // genuinely reflects this scene's starting position (zero is a real
-      // answer here, not a placeholder) — see `_positionEstablished`'s doc.
-      _positionEstablished = true;
 
       _enterStage(timeline, LoadStage.starting, generation);
       await _engine.play();

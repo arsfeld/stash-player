@@ -68,6 +68,17 @@ class FakePlaybackEngine implements PlaybackEngine {
   /// live transcoding is switched on at all.
   final List<Object> failNextOpens = [];
 
+  /// Holds the next [open] call open until the test completes it, then
+  /// clears itself so the call after that runs normally.
+  ///
+  /// The command is recorded *before* the wait, because that is the order
+  /// a real engine works in: it has been asked to open the URL, it just
+  /// has not finished. A test that gates an open this way can therefore
+  /// still assert on what was asked for while the caller is parked inside
+  /// it, and later opens issued during that window land after it in
+  /// [commands] rather than in front of it.
+  Completer<void>? blockNextOpen;
+
   final StreamController<bool> _playingController =
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
@@ -124,6 +135,9 @@ class FakePlaybackEngine implements PlaybackEngine {
   Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
     _checkNotDisposed();
     commands.add(OpenCommand(uri, play: play, startAt: startAt));
+    final gate = blockNextOpen;
+    blockNextOpen = null;
+    if (gate != null) await gate.future;
     if (failNextOpens.isNotEmpty) throw failNextOpens.removeAt(0);
   }
 

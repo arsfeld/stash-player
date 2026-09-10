@@ -3694,5 +3694,79 @@ void main() {
       expect(controller.state.phase, PlaybackPhase.failed);
       expect(controller.state.streams!.current.label, 'HLS Standard (480p)');
     });
+
+    // A scene whose resume point is far enough in that opening at zero is
+    // unmistakable, offering the whole ladder so both switching triggers
+    // below have a rung to move onto.
+    Scene resumingScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      resumeTime: 600,
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=STANDARD',
+          'HLS Standard (480p)',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=STANDARD',
+          'MP4 Standard (480p)',
+        ),
+      ],
+    );
+
+    // Both triggers get their own test rather than one standing in for
+    // the other: every switch reads the same single input for where to
+    // reopen (`_state.position`), so a scene's resume point has to be
+    // published before its first open rather than after it, whatever
+    // ends up doing the switching. A menu pick is the reachable one --
+    // the controls stay pinned while nothing is playing and the loading
+    // overlay sits underneath them, so the menu is hit-testable for the
+    // whole of a slow open -- and a stall deadline is the one that needs
+    // no viewer at all.
+    test('a stream chosen while the scene is still opening resumes where '
+        'the viewer left off rather than restarting it', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      final slowOpen = Completer<void>();
+      engine.blockNextOpen = slowOpen;
+
+      final load = controller.loadScene(resumingScene());
+      await pumpEventQueue();
+      await controller.selectStream(controller.state.streams!.options[1]);
+      slowOpen.complete();
+      await load;
+
+      final opened = engine.commands.whereType<OpenCommand>().last;
+      expect(opened.uri.path, endsWith('.m3u8'));
+      expect(opened.startAt, const Duration(seconds: 600));
+      expect(controller.state.position, const Duration(seconds: 600));
+    });
+
+    test('a stall deadline that steps off the still-opening stream carries '
+        'the resume point onto the next rung', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      final slowOpen = Completer<void>();
+      engine.blockNextOpen = slowOpen;
+
+      final load = controller.loadScene(resumingScene());
+      await pumpEventQueue();
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+      slowOpen.complete();
+      await load;
+
+      final opened = engine.commands.whereType<OpenCommand>().last;
+      expect(opened.uri.path, endsWith('.m3u8'));
+      expect(opened.startAt, const Duration(seconds: 600));
+      expect(controller.state.position, const Duration(seconds: 600));
+    });
   });
 }
