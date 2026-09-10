@@ -874,11 +874,14 @@ class PlaybackController extends ChangeNotifier {
     });
     _durationSubscription = _engine.duration.listen((value) {
       if (_disposed || generation != _state.generation) return;
-      // The server's scanned duration wins whenever there is one. On a
-      // transcode the engine reports the length of what it has received
-      // so far, which climbs for the whole scene and would drag the
-      // transport's total up with it. See `Scene.knownDuration`.
+      // The server's scanned duration wins whenever there is one.
       if (_state.scene?.knownDuration != null) return;
+      // Failing that, believe the engine only on a stream that can be
+      // honest about its length. A progressive transcode reports how much
+      // of itself has arrived, which climbs for the whole scene and would
+      // drag the transport's total up with it. A manifest enumerates every
+      // segment of the whole file up front, so its number is real.
+      if (_state.streams?.current.kind.reportsTrueDuration == false) return;
       _state = _state.copyWith(duration: value);
       notifyListeners();
     });

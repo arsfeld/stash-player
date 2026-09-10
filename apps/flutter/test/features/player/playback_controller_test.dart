@@ -2698,4 +2698,165 @@ void main() {
       },
     );
   });
+
+  group('seeking and duration by stream kind', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene hlsScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=ORIGINAL',
+          'MP4',
+        ),
+      ],
+    );
+
+    Future<void> stall(FakePlaybackEngine engine, _ManualTimers timers) async {
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+    }
+
+    test('a stall falls to HLS rather than the progressive MP4, so the '
+        'picture survives a container problem', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(hlsScene());
+      engine.commands.clear();
+
+      await stall(engine, timers);
+
+      final opened = engine.commands.whereType<OpenCommand>().single;
+      expect(opened.uri.path, endsWith('/stream.m3u8'));
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+    });
+
+    test('seeking on HLS is a seek, not a reopen: the manifest enumerates '
+        'every segment, so there is a timeline to move within', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(hlsScene());
+      await stall(engine, timers);
+      engine.commands.clear();
+
+      await controller.seekAbsolute(const Duration(seconds: 600));
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(
+        engine.commands.whereType<SeekCommand>().single.position,
+        const Duration(seconds: 600),
+      );
+      expect(controller.state.position, const Duration(seconds: 600));
+    });
+
+    test('HLS positions are reported as they arrive, with no offset to add '
+        'back', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(hlsScene());
+      engine.emitPosition(const Duration(seconds: 300));
+      await pumpEventQueue();
+      await stall(engine, timers);
+
+      engine.emitPosition(const Duration(seconds: 305));
+      await pumpEventQueue();
+
+      expect(controller.state.position, const Duration(seconds: 305));
+    });
+
+    test('seeking on a progressive transcode still reopens, because there '
+        'is nothing to seek within', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      // No endpoint list, so the synthesized direct/MP4 pair applies and
+      // the ladder's only rung is the progressive transcode.
+      await controller.loadScene(
+        _sceneWith(stream: 'scene/s1/stream', duration: 2000),
+      );
+      await stall(engine, timers);
+      engine.commands.clear();
+
+      await controller.seekAbsolute(const Duration(seconds: 600));
+
+      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      final reopened = engine.commands.whereType<OpenCommand>().single;
+      expect(reopened.uri.queryParameters['start'], '600');
+    });
+
+    test('a progressive transcode\'s climbing duration is ignored even when '
+        'Stash scanned no duration of its own', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(
+        _sceneWith(stream: 'scene/s1/stream', withFile: false),
+      );
+      await stall(engine, timers);
+
+      engine.emitDuration(const Duration(seconds: 12));
+      await pumpEventQueue();
+
+      expect(controller.state.duration, Duration.zero);
+    });
+
+    test('an HLS duration is believed when Stash scanned none, because the '
+        'manifest covers the whole file', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(
+        _sceneWith(
+          stream: 'scene/s1/stream',
+          withFile: false,
+          streams: [
+            endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+            endpoint(
+              'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+              'HLS',
+            ),
+          ],
+        ),
+      );
+      await stall(engine, timers);
+
+      engine.emitDuration(const Duration(seconds: 1800));
+      await pumpEventQueue();
+
+      expect(controller.state.duration, const Duration(seconds: 1800));
+    });
+  });
 }
