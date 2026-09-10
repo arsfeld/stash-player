@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../shared/diagnostics.dart';
 import 'byte_reader.dart';
 
 /// The SOCKS5 proxy the forward proxy hops through, as configured.
@@ -67,9 +68,22 @@ class SocksEndpoint {
 /// `CONNECT` the payload stays inside the client's own TLS session, so this
 /// proxy never sees the API key or a response body.
 class SocksForwardProxy {
-  SocksForwardProxy._(this._server);
+  SocksForwardProxy._(this._server, this._log);
 
   final ServerSocket _server;
+
+  /// Where per-connection diagnostics go. Every media request libmpv makes
+  /// crosses this proxy, so a video that takes ten seconds to start and a
+  /// video that takes ten round trips to start are distinguishable here
+  /// and almost nowhere else.
+  final void Function(String message) _log;
+
+  /// Counts accepted connections for the life of this proxy, so the log
+  /// shows connection *churn* rather than a single line repeated. A player
+  /// that opens one connection per range request is a different problem
+  /// from one that opens a single slow one, and the count is what tells
+  /// them apart.
+  int _connections = 0;
 
   /// The SOCKS5 proxy to hop through, or null when none is configured.
   ///
@@ -94,28 +108,42 @@ class SocksForwardProxy {
   String? get httpProxyUrl =>
       endpoint == null ? null : 'http://127.0.0.1:$port';
 
-  static Future<SocksForwardProxy> bind() async {
+  static Future<SocksForwardProxy> bind({
+    void Function(String message)? log,
+  }) async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final proxy = SocksForwardProxy._(server);
+    final proxy = SocksForwardProxy._(server, log ?? _defaultLog);
     server.listen(proxy._accept, onError: (_) {});
     return proxy;
   }
+
+  static void _defaultLog(String message) =>
+      logDiagnostic('media_proxy', message);
 
   Future<void> close() => _server.close();
 
   Future<void> _accept(Socket client) async {
     client.setOption(SocketOption.tcpNoDelay, true);
+    final connection = ++_connections;
     final reader = ByteReader(client);
+    var target = 'unknown';
     try {
       final head = ascii.decode(await reader.readHead(limit: _headLimit));
       final request = _ProxiedRequest.parse(head);
+      target = '${request.host}:${request.port}';
       final via = endpoint;
       if (via == null) {
         await _refuse(client, 'no SOCKS5 proxy is configured');
+        _log('#$connection $target refused: no SOCKS5 proxy is configured');
         return;
       }
       final upstream = await _socksConnect(via, request.host, request.port);
       final rewritten = request.rewrittenHead;
+      _log(
+        '#$connection $target ${rewritten == null ? 'tunnel' : 'forward'}: '
+        'tcp ${upstream.tcpConnect.inMilliseconds}ms, '
+        'socks ${upstream.handshake.inMilliseconds}ms',
+      );
       if (rewritten == null) {
         client.write('HTTP/1.1 200 Connection established\r\n\r\n');
         _splice(client, reader, upstream.socket, upstream.incoming);
@@ -124,6 +152,7 @@ class SocksForwardProxy {
       await _forward(client, reader, upstream, rewritten);
     } on Object catch (error) {
       await _refuse(client, '$error');
+      _log('#$connection $target failed: $error');
     }
   }
 
@@ -221,11 +250,13 @@ class SocksForwardProxy {
     String host,
     int port,
   ) async {
+    final clock = Stopwatch()..start();
     final socket = await Socket.connect(
       via.host,
       via.port,
       timeout: const Duration(seconds: 10),
     );
+    final tcpConnect = clock.elapsed;
     socket.setOption(SocketOption.tcpNoDelay, true);
     final reader = ByteReader(socket);
     try {
@@ -251,7 +282,12 @@ class SocksForwardProxy {
         );
       }
       await _drainBoundAddress(reader, reply[3]);
-      return _Upstream(socket, reader.release());
+      return _Upstream(
+        socket,
+        reader.release(),
+        tcpConnect: tcpConnect,
+        handshake: clock.elapsed - tcpConnect,
+      );
     } on Object {
       socket.destroy();
       rethrow;
@@ -278,10 +314,23 @@ class SocksForwardProxy {
 /// An open upstream socket plus the inbound bytes already read off it while
 /// parsing the SOCKS5 reply, which would otherwise be lost to the splice.
 class _Upstream {
-  _Upstream(this.socket, this.incoming);
+  _Upstream(
+    this.socket,
+    this.incoming, {
+    required this.tcpConnect,
+    required this.handshake,
+  });
 
   final Socket socket;
   final Stream<Uint8List> incoming;
+
+  /// How long the TCP connection to the SOCKS proxy itself took.
+  final Duration tcpConnect;
+
+  /// How long the SOCKS5 greeting and CONNECT exchange took after that.
+  /// Two round trips to the proxy, which is where a tunnelled link's
+  /// latency shows up multiplied.
+  final Duration handshake;
 }
 
 /// A request this proxy has been asked to forward.

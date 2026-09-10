@@ -254,6 +254,93 @@ void main() {
       expect(response, contains('no SOCKS5 proxy is configured'));
     });
 
+    test('logs each upstream connection with what it cost, so a load that '
+        'spends its time in round trips can be seen doing it', () async {
+      final logs = <String>[];
+      final origin = await _UppercasingEchoServer.start();
+      final socks = await _FakeSocksServer.start();
+      final proxy = await SocksForwardProxy.bind(log: logs.add);
+      proxy.endpoint = SocksEndpoint(host: '127.0.0.1', port: socks.port);
+      addTearDown(() async {
+        await proxy.close();
+        await socks.close();
+        await origin.close();
+      });
+
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        proxy.port,
+      );
+      socket.write(
+        'CONNECT 127.0.0.1:${origin.port} HTTP/1.1\r\n'
+        'Host: 127.0.0.1:${origin.port}\r\n\r\n',
+      );
+      await socket.flush();
+      final reader = ByteReader(socket);
+      await reader.readHead(limit: 4096);
+      await socket.close();
+
+      expect(
+        logs,
+        contains(
+          allOf(
+            contains('127.0.0.1:${origin.port}'),
+            contains('tcp '),
+            contains('socks '),
+          ),
+        ),
+      );
+    });
+
+    test('numbers its connections, so opening ten of them to play one video '
+        'is visible as ten rather than as one line repeated', () async {
+      final logs = <String>[];
+      final origin = await _RecordingOriginServer.start(
+        response:
+            'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok',
+      );
+      final socks = await _FakeSocksServer.start();
+      final proxy = await SocksForwardProxy.bind(log: logs.add);
+      proxy.endpoint = SocksEndpoint(host: '127.0.0.1', port: socks.port);
+      addTearDown(() async {
+        await proxy.close();
+        await socks.close();
+        await origin.close();
+      });
+
+      final client = HttpClient()
+        ..findProxy = (_) => 'PROXY 127.0.0.1:${proxy.port}';
+      addTearDown(() => client.close(force: true));
+
+      for (var i = 0; i < 2; i++) {
+        final request = await client.getUrl(
+          Uri.parse('http://127.0.0.1:${origin.port}/$i'),
+        );
+        await (await request.close()).drain<void>();
+      }
+
+      expect(logs, contains(contains('#1')));
+      expect(logs, contains(contains('#2')));
+    });
+
+    test('logs a refused connection rather than letting a failed load be '
+        'silent', () async {
+      final logs = <String>[];
+      final proxy = await SocksForwardProxy.bind(log: logs.add);
+      addTearDown(proxy.close);
+
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        proxy.port,
+      );
+      socket.write('CONNECT example.test:443 HTTP/1.1\r\n\r\n');
+      await socket.flush();
+      await ByteReader(socket).readHead(limit: 4096);
+      await socket.close();
+
+      expect(logs, contains(contains('no SOCKS5 proxy is configured')));
+    });
+
     test('advertises DIRECT while no endpoint is configured', () async {
       final proxy = await SocksForwardProxy.bind();
       addTearDown(proxy.close);
