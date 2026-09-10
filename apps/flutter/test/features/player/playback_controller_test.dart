@@ -3067,4 +3067,124 @@ void main() {
       },
     );
   });
+
+  group('a stall deadline and an engine-reported error racing over the '
+      'same failed load', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene fullScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=ORIGINAL',
+          'MP4',
+        ),
+      ],
+    );
+
+    Future<void> stall(FakePlaybackEngine engine, _ManualTimers timers) async {
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+    }
+
+    test('a stall deadline left armed by a rung an error already moved '
+        'off of cannot advance a second time', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      engine.emitBuffering(true);
+      await pumpEventQueue(); // arms the stall watch for the direct stream
+      engine.commands.clear();
+
+      // The server reports the refusal before the 8-second stall deadline
+      // this test never actually waits out.
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      // The stall timer armed for the direct stream must already be
+      // dead: `_switchTo` cancels it as part of the same switch, so it
+      // never gets a chance to fire stale against whatever comes next.
+      expect(timers.latest.isActive, isFalse);
+      engine.commands.clear();
+
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test('an error already queued when a stall deadline fires does not '
+        'land on the rung the stall just moved to', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      engine.emitBuffering(true);
+      await pumpEventQueue(); // arms the stall watch for the direct stream
+      engine.commands.clear();
+
+      // Queue a report for the direct stream, then let the stall deadline
+      // fire before anything drains the event queue: the report is still
+      // sitting undelivered at the exact moment the switch begins.
+      engine.emitError('503 Live transcoding disabled');
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      // If the queued report had reached the rung the stall just moved
+      // to, this would have walked straight past HLS onto MP4 instead of
+      // stopping there with one open.
+      expect(engine.commands.whereType<OpenCommand>(), hasLength(1));
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test('a stall-driven arrival at the last rung still lets a following '
+        'error use its own one reopen', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(fullScene());
+      await stall(engine, timers); // direct stalls -> switches to HLS
+      await stall(engine, timers); // hls stalls -> switches to MP4
+      engine.commands.clear();
+
+      // MP4's own first report, confirmed genuine: its one reopen is
+      // queued to fail too, even though it was a stall (not an error)
+      // that put this generation on MP4 in the first place.
+      engine.failNextOpens.add(StateError('refused ${_config.apiKey}'));
+      engine.emitError('refused ${_config.apiKey}');
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), hasLength(1));
+      expect(controller.state.phase, PlaybackPhase.failed);
+      expect(controller.state.failure, isNot(contains(_config.apiKey)));
+      expect(controller.state.failure, contains('***'));
+    });
+  });
 }

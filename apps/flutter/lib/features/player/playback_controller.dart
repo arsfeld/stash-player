@@ -232,13 +232,15 @@ class PlaybackController extends ChangeNotifier {
   /// doc for what it does with that.
   bool _positionEstablished = false;
 
-  /// Whether the current ladder's last rung has already been reopened
-  /// once in response to an unproven [PlaybackEngine.errors] report. See
-  /// [_handleStreamError]'s own doc for why a single reopen, not an
-  /// immediate failure, is the right first response once the ladder is
-  /// spent. Reset by [_bindStreams] on every scene load, the same as
-  /// every other piece of per-scene stream-handling state.
-  bool _spentRungReopened = false;
+  /// Whether the current rung has already had one automatic decision
+  /// made against it, by either [_onStallDeadline] or
+  /// [_handleStreamError]: an advance to the next rung, or (once the
+  /// ladder is spent) a reopen of this one. See [_handleStreamError]'s
+  /// own doc for why a further report against the same rung must not get
+  /// to make a second one. Reset to `false` by [_bindStreams] on every
+  /// scene load and by [_switchTo] on every genuine advance (never on a
+  /// same-rung reopen, since that rung already had its one trial).
+  bool _rungTrialUsed = false;
 
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
@@ -436,6 +438,18 @@ class PlaybackController extends ChangeNotifier {
 
   /// The stall has run its full delay. Switch only if it is still running
   /// and still has nothing to show for it.
+  ///
+  /// A stall timer this generation still owns (see [_switchTo]'s own doc
+  /// for why a stale one can never reach here at all) firing at the same
+  /// moment [_handleStreamError] is mid-decision for the same rung is not
+  /// a real race: only one of them can still be holding a *live* timer or
+  /// an unconsumed [_rungTrialUsed] credit once the other has already
+  /// called [_switchTo], since that call cancels the one and spends the
+  /// other. The `_rungTrialUsed` check below is therefore belt-and-braces
+  /// (structurally, it should already be `false` every time this method
+  /// gets this far) rather than the thing actually doing the work, but it
+  /// keeps this method honest about the same rule [_handleStreamError]
+  /// follows: a rung only gets to be judged once.
   Future<void> _onStallDeadline(int generation) async {
     if (_disposed || generation != _state.generation) return;
     if (!_state.buffering) return;
@@ -445,8 +459,9 @@ class PlaybackController extends ChangeNotifier {
 
     final selection = _state.streams;
     final next = selection?.nextRung();
-    if (selection == null || next == null) return;
+    if (selection == null || next == null || _rungTrialUsed) return;
 
+    _rungTrialUsed = true;
     _log(
       'scene ${_state.scene?.id}: ${selection.current.label} stalled with '
       'nothing cached, retrying on ${next.label} at '
@@ -520,7 +535,45 @@ class PlaybackController extends ChangeNotifier {
   /// Deliberately does not bump [PlaybackState.generation] and does not
   /// touch [ActivitySync]: this is the same scene continuing, not a new
   /// one, so the activity accounting must carry on uninterrupted.
+  ///
+  /// The single place any switch actually happens, whether the trigger
+  /// was a stall deadline or an engine-reported error, which is why its
+  /// first three actions matter for both triggers rather than just the
+  /// one that called it this time:
+  ///
+  /// - [_cancelStallWatch] deterministically stops a stall timer already
+  ///   armed for the rung this call is moving away from. A `Timer` that
+  ///   is cancelled never fires, full stop, so an error-driven switch can
+  ///   never leave a stall deadline live to act on stale state, and a
+  ///   stall-driven switch can never race its own deadline again.
+  /// - Cancelling and rebinding [_errorsSubscription] drops any error
+  ///   already queued for delivery to the *old* subscription at the
+  ///   moment of the switch, rather than letting it land on whatever
+  ///   rung this call is moving *to* instead: a plain
+  ///   `StreamController.broadcast()` cancels a subscription's delivery
+  ///   synchronously, so an event already scheduled for it is never
+  ///   delivered: not to the cancelled subscription, and not to the
+  ///   fresh one either, since a new listener never receives a broadcast
+  ///   stream's past events. See [_handleStreamError]'s own doc for why
+  ///   this alone cannot close every version of the same problem, and
+  ///   [_rungTrialUsed] for the rest of it.
+  /// - Resetting [_rungTrialUsed] only when [selection] is genuinely a
+  ///   different stream than what was current (never on a same-rung
+  ///   reopen) gives a newly-arrived rung its own fresh trial without
+  ///   handing a stale report that arrives just *after* this settles a
+  ///   second bite at skipping ahead again.
   Future<void> _switchTo(StreamSelection selection, int generation) async {
+    _cancelStallWatch();
+    // Fire-and-forget: the protective effect (no further delivery to the
+    // old subscription) is synchronous the moment `cancel()` is called,
+    // not once its own returned future resolves, so nothing here needs
+    // to await it before rebinding.
+    unawaited(_errorsSubscription?.cancel());
+    if (_state.streams?.current != selection.current) {
+      _rungTrialUsed = false;
+    }
+    _bindErrorsSubscription(generation);
+
     final resumeAt = _state.position;
     final wasPlaying = _state.playing;
     _state = _state.copyWith(
@@ -908,7 +961,16 @@ class PlaybackController extends ChangeNotifier {
       _state = _state.copyWith(duration: value);
       notifyListeners();
     });
-    _spentRungReopened = false;
+    _rungTrialUsed = false;
+    _bindErrorsSubscription(generation);
+  }
+
+  /// (Re)binds [_errorsSubscription] to [_engine.errors]. Called once by
+  /// [_bindStreams] for the scene's initial rung, and again by
+  /// [_switchTo] on every switch: see that method's own doc for why
+  /// rebinding, not just leaving the original subscription running for
+  /// the whole scene, matters.
+  void _bindErrorsSubscription(int generation) {
     _errorsSubscription = _engine.errors.listen((message) {
       if (_disposed || generation != _state.generation) return;
       unawaited(_handleStreamError(message, generation));
@@ -933,44 +995,51 @@ class PlaybackController extends ChangeNotifier {
   /// one at a time, only once the previous one has been fully reacted
   /// to. That means a stray report for an already-abandoned rung can and
   /// does arrive after this generation has already moved past it,
-  /// looking exactly like a fresh failure of wherever it landed.
+  /// looking exactly like a fresh failure of wherever it landed. The
+  /// same is true of [_onStallDeadline]'s own decisions: nothing stops a
+  /// stall timeout and an engine-reported error from both existing for
+  /// the same underlying failure, one arriving just after the other has
+  /// already switched.
   ///
-  /// Once the ladder is spent that ambiguity is resolved by proof rather
-  /// than by timing: the *first* report received while spent (tracked by
-  /// [_spentRungReopened], reset per scene by [_bindStreams]) reopens the
-  /// current rung once instead of declaring it dead outright. A stray
-  /// report about the rung just left resolves itself here, because
-  /// reopening a stream that was never actually broken simply works,
-  /// landing back on `ready`. A rung that is genuinely broken fails that
-  /// reopen too ([_switchTo]'s own catch still applies to it), and a
-  /// second, truly independent report against a rung that already used
-  /// its one reopen falls straight through to the terminal branch below.
-  /// Either path costs at most one extra reopen and never loops: once
-  /// [_spentRungReopened] is `true`, this method takes no branch that
-  /// could set it again.
+  /// That ambiguity is resolved by proof rather than by timing, and
+  /// [_rungTrialUsed] is what makes the proof possible: whichever
+  /// trigger (this method, or [_onStallDeadline]) reaches a rung first
+  /// gets to decide for it, advancing if there is a next rung or (once
+  /// the ladder is spent) reopening it once, and marks that rung's trial
+  /// used. Any further report while `_rungTrialUsed` is still `true` for
+  /// the *current* rung cannot be trusted to be about it rather than
+  /// about whatever this generation already left behind, so it goes
+  /// straight to the terminal branch below instead of getting to skip
+  /// (or fail) a rung on its own unproven say-so. [_switchTo] resets the
+  /// flag the moment it lands on a genuinely different stream, so a
+  /// rung that never actually had a problem of its own still gets a
+  /// fresh, full-speed trial: the ambiguity only ever costs a rung that
+  /// already used its own trial a chance to skip further, never a
+  /// newly-arrived one a chance to be judged fairly. A rung that is
+  /// genuinely broken still surfaces as a failure: either its own reopen
+  /// fails too ([_switchTo]'s own catch still applies to that attempt),
+  /// or a second, truly independent report against it lands in the
+  /// terminal branch directly.
   Future<void> _handleStreamError(String message, int generation) async {
     if (_disposed || generation != _state.generation) return;
 
     final selection = _state.streams;
-    final next = (selection == null || selection.isManual)
-        ? null
-        : selection.nextRung();
-    if (next != null) {
-      _log(
-        'scene ${_state.scene?.id}: ${selection!.current.label} reported '
-        '$message, trying ${next.label}',
-      );
-      await _switchTo(selection.advance(next), generation);
-      return;
-    }
-
-    if (selection != null && !selection.isManual && !_spentRungReopened) {
-      _spentRungReopened = true;
-      _log(
-        'scene ${_state.scene?.id}: ${selection.current.label} reported '
-        '$message, reopening it once before giving up',
-      );
-      await _switchTo(selection, generation);
+    if (selection != null && !selection.isManual && !_rungTrialUsed) {
+      _rungTrialUsed = true;
+      final next = selection.nextRung();
+      if (next != null) {
+        _log(
+          'scene ${_state.scene?.id}: ${selection.current.label} reported '
+          '$message, trying ${next.label}',
+        );
+        await _switchTo(selection.advance(next), generation);
+      } else {
+        _log(
+          'scene ${_state.scene?.id}: ${selection.current.label} reported '
+          '$message, reopening it once before giving up',
+        );
+        await _switchTo(selection, generation);
+      }
       return;
     }
 
