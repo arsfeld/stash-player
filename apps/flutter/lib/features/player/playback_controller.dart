@@ -266,23 +266,44 @@ class PlaybackController extends ChangeNotifier {
   /// that rule and the reasoning behind them.
   ///
   /// One consequence is deliberate rather than overlooked: a stream
-  /// sitting *paused* at raw zero never sets this. That is a real state
-  /// and not a hypothetical one, since [loadScene] opens with
-  /// `play: false` and the switch paths carry the previous value across,
-  /// so a scene with no resume position to open at waits at raw zero
-  /// until the viewer presses play. (A resume position does not wait:
-  /// the offset travels to the engine, whose very first reading is then
-  /// the offset itself, paused or not.) Every error line arriving in
-  /// that window is therefore read as a load failure and walks the
-  /// ladder. For a server refusing the stream that is exactly right, and
-  /// it is the whole point. For a decoder complaining about the poster
-  /// frame, which mpv decodes even while paused, it costs one
-  /// unnecessary step down the ladder, bounded to one by
-  /// [_rungTrialUsed]. Spending that rung is the better trade: what this
-  /// flag claims is that the attempt produced real evidence of playing,
-  /// and a stream paused on its first frame has not, so special-casing
-  /// the pause would spare the occasional rung at the price of a signal
-  /// that no longer means what its name says.
+  /// still sitting at raw zero has not set this, and every error line
+  /// arriving until it does is therefore read as a load failure and
+  /// walks the ladder. Three windows reach that state, and none is
+  /// hypothetical:
+  ///
+  /// - A fresh load, between [_openStream] and the `_engine.play()`
+  ///   [loadScene] issues right after it taking effect. Short, and not
+  ///   viewer-held: this player has no autoplay preference, so
+  ///   `play: false` on the open is only about *how* a scene starts, not
+  ///   whether it does.
+  /// - A switch, which carries `wasPlaying` across, so a scene the
+  ///   viewer had paused stays paused and stays at raw zero for as long
+  ///   as they leave it there.
+  /// - [_reopenAt], which is every seek on a progressive transcode. It
+  ///   re-enters [_openStream], so the flag clears and the engine's own
+  ///   clock restarts at zero, making this the window ordinary use
+  ///   reaches most often.
+  ///
+  /// A resume position does not lift any of them. The first reading
+  /// after an open is the reset, never the offset, which is the whole
+  /// premise of the rule above. And the offset only reaches the engine
+  /// on a stream with a real timeline; a progressive transcode carries
+  /// it in the URL instead and its clock restarts at zero regardless, so
+  /// one opened paused at a resume point sits at exactly raw zero.
+  ///
+  /// For a server refusing the stream, reacting in these windows is
+  /// exactly right, and it is the whole point. For a decoder
+  /// complaining about a frame mpv decodes while paused, it costs a
+  /// step down the ladder that was not needed, or, on a rung that has
+  /// already spent its [_rungTrialUsed] credit and not had it reset (a
+  /// [_reopenAt] does not reset it, unlike a [_switchTo] onto a
+  /// different stream), a failure surfaced against a stream that was
+  /// only ever going to recover. Wearing that is still the better
+  /// trade: what this flag claims is that the attempt produced real
+  /// evidence of playing, and a stream that has not reported a frame
+  /// yet has not, so special-casing the pause would spare the
+  /// occasional rung at the price of a signal that no longer means what
+  /// its name says.
   bool _currentStreamAdvanced = false;
 
   StreamSubscription<bool>? _playingSubscription;
