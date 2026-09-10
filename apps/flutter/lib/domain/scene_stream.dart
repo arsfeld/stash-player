@@ -98,8 +98,7 @@ class SceneStream {
   /// endpoint, and it lets the menu mark the current entry without
   /// tracking object identity across a rebuilt selection.
   @override
-  bool operator ==(Object other) =>
-      other is SceneStream && other.url == url;
+  bool operator ==(Object other) => other is SceneStream && other.url == url;
 
   @override
   int get hashCode => url.hashCode;

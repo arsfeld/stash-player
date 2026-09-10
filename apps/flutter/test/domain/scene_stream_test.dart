@@ -23,7 +23,9 @@ void main() {
       };
       for (final entry in cases.entries) {
         expect(
-          StreamKind.fromUrl(Uri.parse('https://s.example/scene/1/${entry.key}')),
+          StreamKind.fromUrl(
+            Uri.parse('https://s.example/scene/1/${entry.key}'),
+          ),
           entry.value,
           reason: entry.key,
         );
@@ -85,8 +87,14 @@ void main() {
 
     test('two endpoints with the same URL are equal, so the menu can mark '
         'the current one without identity tracking', () {
-      final a = SceneStream.fromEndpoint(url: 'https://s.example/a', label: 'A');
-      final b = SceneStream.fromEndpoint(url: 'https://s.example/a', label: 'A');
+      final a = SceneStream.fromEndpoint(
+        url: 'https://s.example/a',
+        label: 'A',
+      );
+      final b = SceneStream.fromEndpoint(
+        url: 'https://s.example/a',
+        label: 'A',
+      );
       expect(a, b);
       expect(a.hashCode, b.hashCode);
     });
