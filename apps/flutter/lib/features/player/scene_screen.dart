@@ -61,6 +61,11 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   bool _controlsFocused = false;
   bool _metadataOpen = false;
 
+  /// Held true while the quality menu is open. A menu is anchored to the
+  /// top bar, so the bar fading out from under it would leave the menu
+  /// floating over nothing.
+  bool _menuOpen = false;
+
   /// The top bar and the player bar live in different `Positioned`
   /// subtrees (the failure banner has to sit between them in the top
   /// bar's own `Column`; see `_buildSceneStack`'s own doc), so each needs
@@ -164,7 +169,8 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
       playback.buffering ||
       _hoveringControls ||
       _controlsFocused ||
-      _metadataOpen;
+      _metadataOpen ||
+      _menuOpen;
 
   /// The single place every "the user is doing something" signal (pointer
   /// movement, a keyboard shortcut, hovering/focusing a control, opening
@@ -208,6 +214,12 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   void _setControlsFocused(bool value, PlaybackState playback) {
     if (_controlsFocused == value) return;
     setState(() => _controlsFocused = value);
+    _registerActivity(playback);
+  }
+
+  void _setMenuOpen(bool value, PlaybackState playback) {
+    if (_menuOpen == value) return;
+    setState(() => _menuOpen = value);
     _registerActivity(playback);
   }
 
@@ -562,6 +574,13 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                                       Navigator.of(context).maybePop(),
                                   onToggleMetadata: () =>
                                       _toggleMetadata(playback),
+                                  streamOptions:
+                                      playback.streams?.options ?? const [],
+                                  currentStream: playback.streams?.current,
+                                  onSelectStream:
+                                      playbackController.selectStream,
+                                  onMenuOpenChanged: (open) =>
+                                      _setMenuOpen(open, playback),
                                 ),
                               ),
                             ),

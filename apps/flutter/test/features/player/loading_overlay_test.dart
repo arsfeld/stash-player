@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/domain/scene_stream.dart';
 import 'package:stash_player_flutter/features/player/load_diagnostics.dart';
 import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
@@ -45,6 +46,30 @@ StreamSelection _switched() {
   );
   return selection.advance(selection.nextRung()!);
 }
+
+/// A scene with a real endpoint list, for the manual-pick case: choosing a
+/// stream only means something when there is more than the synthesized
+/// direct/MP4 pair to choose between.
+Scene _streamedScene() => Scene(
+  id: 's1',
+  paths: const ScenePaths(stream: 'scene/s1/stream'),
+  files: const [SceneFile(duration: 3600)],
+  streams: [
+    SceneStream.fromEndpoint(
+      url: 'https://stash.test/scene/s1/stream',
+      label: 'Direct stream',
+    ),
+    SceneStream.fromEndpoint(
+      url: 'https://stash.test/scene/s1/stream.m3u8?resolution=ORIGINAL',
+      label: 'HLS',
+    ),
+  ],
+);
+
+StreamSelection _selection() => StreamSelection.forScene(
+  _streamedScene(),
+  directFallback: Uri.parse('https://stash.test/scene/s1/stream'),
+);
 
 Future<void> _mount(WidgetTester tester, PlaybackState state) =>
     tester.pumpWidget(
@@ -222,6 +247,42 @@ void main() {
 
       expect(find.textContaining('Buffering'), findsOneWidget);
       expect(find.textContaining('faster stream'), findsNothing);
+    });
+
+    testWidgets('names the stream when the viewer chose it, since they know '
+        'what they asked for', (tester) async {
+      final base = _selection();
+      final chosen = base.choose(base.options.last);
+
+      await _pump(
+        tester,
+        PlaybackState(
+          scene: _streamedScene(),
+          phase: PlaybackPhase.loading,
+          loadStage: LoadStage.opening,
+          streams: chosen,
+        ),
+      );
+
+      expect(find.textContaining('Switching to HLS'), findsOneWidget);
+      expect(find.textContaining('faster stream'), findsNothing);
+    });
+
+    testWidgets('stays generic when the player switched on its own, since '
+        'naming a stream nobody chose only raises a question', (tester) async {
+      final base = _selection();
+
+      await _pump(
+        tester,
+        PlaybackState(
+          scene: _streamedScene(),
+          phase: PlaybackPhase.loading,
+          loadStage: LoadStage.opening,
+          streams: base.advance(base.nextRung()!),
+        ),
+      );
+
+      expect(find.textContaining('faster stream'), findsOneWidget);
     });
   });
 }

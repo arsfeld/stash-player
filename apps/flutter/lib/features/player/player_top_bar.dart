@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/scene_stream.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/window_chrome.dart';
 import 'player_icon_button.dart';
 
-/// The scene screen's top chrome: back, title, and the metadata toggle,
-/// over a scrim that darkens only the top edge of the picture.
+/// The scene screen's top chrome: back, title, the quality menu, and the
+/// metadata toggle, over a scrim that darkens only the top edge of the
+/// picture.
 ///
 /// Purely presentational. Fades in and out with [PlayerBar] on the scene
 /// screen's existing auto-hide timer.
@@ -29,6 +31,10 @@ class PlayerTopBar extends StatelessWidget {
     required this.metadataOpen,
     required this.onBack,
     required this.onToggleMetadata,
+    required this.streamOptions,
+    required this.currentStream,
+    required this.onSelectStream,
+    required this.onMenuOpenChanged,
     super.key,
   });
 
@@ -36,6 +42,20 @@ class PlayerTopBar extends StatelessWidget {
   final bool metadataOpen;
   final VoidCallback onBack;
   final VoidCallback onToggleMetadata;
+
+  /// Everything Stash offered for this scene, in Stash's own order. The
+  /// menu button hides itself when there is nothing to choose between.
+  final List<SceneStream> streamOptions;
+
+  /// The stream actually playing, checked in the menu. `null` while no
+  /// scene has loaded.
+  final SceneStream? currentStream;
+  final ValueChanged<SceneStream> onSelectStream;
+
+  /// Fires `true` when the menu opens and `false` when it closes (by a
+  /// pick or a dismiss), so the caller can hold the auto-hide timer off
+  /// while a menu anchored to this bar is still on screen.
+  final ValueChanged<bool> onMenuOpenChanged;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -76,6 +96,40 @@ class PlayerTopBar extends StatelessWidget {
                   ),
                 ),
               ),
+              if (streamOptions.length > 1)
+                PopupMenuButton<SceneStream>(
+                  tooltip: 'Video quality',
+                  icon: const Icon(
+                    Icons.high_quality_outlined,
+                    color: AppTokens.playerText,
+                  ),
+                  // The top bar fades on the scene screen's auto-hide
+                  // timer. Without this the menu would outlive the bar it
+                  // is anchored to.
+                  onOpened: () => onMenuOpenChanged(true),
+                  onCanceled: () => onMenuOpenChanged(false),
+                  onSelected: (stream) {
+                    onMenuOpenChanged(false);
+                    onSelectStream(stream);
+                  },
+                  itemBuilder: (context) => [
+                    for (final stream in streamOptions)
+                      PopupMenuItem<SceneStream>(
+                        value: stream,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 24,
+                              child: stream == currentStream
+                                  ? const Icon(Icons.check, size: 18)
+                                  : null,
+                            ),
+                            Expanded(child: Text(stream.label)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               PlayerIconButton(
                 icon: Icons.info_outline,
                 tooltip: metadataOpen ? 'Hide details' : 'Show details',

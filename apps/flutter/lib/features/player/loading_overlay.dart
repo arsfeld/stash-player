@@ -178,8 +178,14 @@ class _PlaybackLoadingOverlayState extends State<PlaybackLoadingOverlay> {
     // Only while the switch is actually in flight. Once it is playing, a
     // later stall is just a stall, and repeating the switch wording would
     // suggest it is happening again.
-    if (state.streams?.hasSwitched == true && stage == LoadStage.opening) {
-      return 'Switching to a faster stream';
+    final streams = state.streams;
+    if (streams != null && streams.hasSwitched && stage == LoadStage.opening) {
+      // A viewer who picked a stream is owed its name. One the player
+      // picked for them is not, and naming it would raise a question
+      // ("HLS?") the wording is there to avoid.
+      return streams.isManual
+          ? 'Switching to ${streams.current.label}'
+          : 'Switching to a faster stream';
     }
     return switch (stage) {
       LoadStage.connecting => 'Connecting to Stash',

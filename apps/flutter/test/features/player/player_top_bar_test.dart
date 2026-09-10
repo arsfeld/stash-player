@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stash_player_flutter/domain/scene_stream.dart';
 import 'package:stash_player_flutter/features/player/player_top_bar.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
@@ -11,9 +12,15 @@ const _topBar = PlayerTopBar(
   metadataOpen: false,
   onBack: _noop,
   onToggleMetadata: _noop,
+  streamOptions: [],
+  currentStream: null,
+  onSelectStream: _noopSelectStream,
+  onMenuOpenChanged: _noopMenuOpenChanged,
 );
 
 void _noop() {}
+void _noopSelectStream(SceneStream stream) {}
+void _noopMenuOpenChanged(bool open) {}
 
 Future<void> _pump(WidgetTester tester, TargetPlatform platform, Widget body) =>
     tester.pumpWidget(
@@ -24,6 +31,35 @@ Future<void> _pump(WidgetTester tester, TargetPlatform platform, Widget body) =>
     );
 
 final _backButton = find.byTooltip('Back to library');
+
+SceneStream _endpoint(String url, String label) =>
+    SceneStream.fromEndpoint(url: url, label: label);
+
+final _direct = _endpoint('https://s.example/scene/1/stream', 'Direct stream');
+final _hls = _endpoint('https://s.example/scene/1/stream.m3u8', 'HLS');
+
+Future<void> _pumpQualityMenu(
+  WidgetTester tester, {
+  required List<SceneStream> options,
+  SceneStream? current,
+  ValueChanged<SceneStream>? onSelect,
+  ValueChanged<bool>? onMenuOpenChanged,
+}) => tester.pumpWidget(
+  MaterialApp(
+    home: Scaffold(
+      body: PlayerTopBar(
+        title: 'A scene',
+        metadataOpen: false,
+        onBack: () {},
+        onToggleMetadata: () {},
+        streamOptions: options,
+        currentStream: current,
+        onSelectStream: onSelect ?? (_) {},
+        onMenuOpenChanged: onMenuOpenChanged ?? (_) {},
+      ),
+    ),
+  ),
+);
 
 void main() {
   // The macOS titlebar is transparent and full-size-content, which is a
@@ -113,4 +149,60 @@ void main() {
       );
     });
   }
+
+  testWidgets('offers no menu when there is only one way to play the scene', (
+    tester,
+  ) async {
+    await _pumpQualityMenu(tester, options: [_direct], current: _direct);
+
+    expect(find.byTooltip('Video quality'), findsNothing);
+  });
+
+  testWidgets('lists every stream Stash offered, by its own label', (
+    tester,
+  ) async {
+    await _pumpQualityMenu(tester, options: [_direct, _hls], current: _direct);
+
+    await tester.tap(find.byTooltip('Video quality'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Direct stream'), findsOneWidget);
+    expect(find.text('HLS'), findsOneWidget);
+  });
+
+  testWidgets('reports the chosen stream', (tester) async {
+    SceneStream? chosen;
+    await _pumpQualityMenu(
+      tester,
+      options: [_direct, _hls],
+      current: _direct,
+      onSelect: (stream) => chosen = stream,
+    );
+
+    await tester.tap(find.byTooltip('Video quality'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('HLS'));
+    await tester.pumpAndSettle();
+
+    expect(chosen, _hls);
+  });
+
+  testWidgets('holds the controls open while the menu is, so the bar does '
+      'not fade out from under it', (tester) async {
+    final opens = <bool>[];
+    await _pumpQualityMenu(
+      tester,
+      options: [_direct, _hls],
+      current: _direct,
+      onMenuOpenChanged: opens.add,
+    );
+
+    await tester.tap(find.byTooltip('Video quality'));
+    await tester.pumpAndSettle();
+    expect(opens, [true]);
+
+    await tester.tap(find.text('HLS'));
+    await tester.pumpAndSettle();
+    expect(opens, [true, false]);
+  });
 }
