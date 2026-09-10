@@ -493,9 +493,9 @@ class PlaybackController extends ChangeNotifier {
   /// Waiting costs nothing on the files that work.
   void _armStallWatch(int generation) {
     final selection = _state.streams;
+    if (_stallTimer != null) return;
     // A stream the viewer chose is never swapped out from under them,
     // and a spent ladder has nowhere left to go.
-    if (_stallTimer != null) return;
     if (selection == null || selection.isManual) return;
     if (selection.nextRung() == null) return;
     _stallTimer = _createStallTimer(_stallFallbackDelay, () {

@@ -85,6 +85,15 @@ void main() {
       expect(stream.label, 'Direct stream');
     });
 
+    test('falls back the same way on an empty label, which is a name the '
+        'menu cannot show any more than a missing one', () {
+      final stream = SceneStream.fromEndpoint(
+        url: 'https://s.example/scene/1/stream.m3u8',
+        label: '',
+      );
+      expect(stream.label, 'HLS');
+    });
+
     test('two endpoints with the same URL are equal, so the menu can mark '
         'the current one without identity tracking', () {
       final a = SceneStream.fromEndpoint(
