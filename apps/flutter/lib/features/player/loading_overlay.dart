@@ -178,7 +178,7 @@ class _PlaybackLoadingOverlayState extends State<PlaybackLoadingOverlay> {
     // Only while the switch is actually in flight. Once it is playing, a
     // later stall is just a stall, and repeating the switch wording would
     // suggest it is happening again.
-    if (state.usingFallbackStream && stage == LoadStage.opening) {
+    if (state.streams?.hasSwitched == true && stage == LoadStage.opening) {
       return 'Switching to a faster stream';
     }
     return switch (stage) {

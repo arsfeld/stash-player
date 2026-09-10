@@ -8,6 +8,7 @@ import '../../app/notices.dart';
 import '../../app/providers.dart';
 import '../../domain/connection.dart';
 import '../../domain/scene.dart';
+import '../../domain/scene_stream.dart';
 import '../../services/authenticated_url.dart';
 import '../../services/media_kit_playback_engine.dart';
 import '../../shared/diagnostics.dart';
@@ -15,6 +16,7 @@ import 'activity_sync.dart';
 import 'load_diagnostics.dart';
 import 'playback_engine.dart';
 import 'playback_state.dart';
+import 'stream_selection.dart';
 
 /// One user-facing player command a keyboard shortcut
 /// (`player_shortcuts.dart`, wired up by Task 11's scene screen) can
@@ -173,23 +175,13 @@ class PlaybackController extends ChangeNotifier {
   final Duration _stallFallbackDelay;
   late final ActivitySync _activitySync;
 
-  /// The authenticated direct-stream URI of the scene currently loaded,
-  /// kept so a stalled load can be retried against Stash's transcode of
-  /// the same scene without re-resolving the connection.
-  Uri? _streamUri;
-
-  /// Whether this scene has already been moved onto the transcode. One
-  /// switch per load: a transcode that also stalls must not start the
-  /// cycle again.
-  bool _usingFallbackStream = false;
-
   /// How far into the scene the currently open stream begins.
   ///
-  /// Zero for the original file, which mpv opens at an offset within a
-  /// real timeline and reports absolute positions for. Non-zero on the
-  /// transcode, whose own clock always restarts at zero because the
-  /// offset is baked into the URL, so every position the engine reports
-  /// has to have this added back before anyone sees it.
+  /// Zero on any kind with a real timeline, which mpv opens at an offset
+  /// within and reports absolute positions for. Non-zero only on a
+  /// progressive transcode, whose own clock always restarts at zero
+  /// because the offset is baked into the URL, so every position the
+  /// engine reports has to have this added back before anyone sees it.
   Duration _streamStartOffset = Duration.zero;
 
   /// Armed while a stall is running, cancelled the moment it ends, by a
@@ -205,16 +197,16 @@ class PlaybackController extends ChangeNotifier {
   /// own load rather than a previous scene's.
   LoadTimeline? _timeline;
 
-  /// The API key of the most recently resolved [ConnectionConfig], kept
-  /// so [_runEngineCommand]'s `catch` — which has no connection in scope
-  /// of its own — can still redact a real key out of an error message
-  /// instead of passing an empty one to [redactSensitive] (final review
-  /// I6). Set the moment [loadScene] resolves a connection, regardless of
-  /// whether the rest of that call succeeds, and never re-read via `ref`
-  /// lazily — this controller is rebuilt fresh on every
-  /// `connectionGenerationProvider` change, so this field only ever holds
-  /// *this* controller's own generation's key.
-  String _lastKnownApiKey = '';
+  /// The most recently resolved connection, kept for two reasons that
+  /// used to need two fields. [_openStream] authenticates each endpoint
+  /// against it, and [_runEngineCommand]'s catch (which has no connection
+  /// in scope of its own) needs the key to redact a real one out of an
+  /// error message. Set the moment [loadScene] resolves a connection,
+  /// regardless of whether the rest of that call succeeds, and never
+  /// re-read lazily: this controller is rebuilt fresh on every
+  /// connection generation change, so this only ever holds this
+  /// generation's config.
+  ConnectionConfig? _connection;
 
   PlaybackState _state = const PlaybackState();
   PlaybackState get state => _state;
@@ -279,10 +271,6 @@ class PlaybackController extends ChangeNotifier {
         ? _durationToSeconds(_state.position)
         : null;
     _positionEstablished = false;
-    // A fresh scene always gets the original file first: the fallback is
-    // a response to this scene's own stream misbehaving, never a sticky
-    // preference.
-    _usingFallbackStream = false;
     _streamStartOffset = Duration.zero;
     _cancelStallWatch();
 
@@ -340,7 +328,7 @@ class PlaybackController extends ChangeNotifier {
     ConnectionConfig? config;
     try {
       config = await _resolveConnection();
-      _lastKnownApiKey = config.apiKey;
+      _connection = config;
       if (_disposed || generation != _state.generation) return;
 
       final source = scene.paths.stream;
@@ -355,25 +343,29 @@ class PlaybackController extends ChangeNotifier {
         return;
       }
 
-      final uri = authenticatedUrl(
-        Uri.parse(config.serverUrl),
-        source,
-        config.apiKey,
-      );
-
       final resumeSeconds = scene.effectiveResume;
       final resumeTarget = resumeSeconds == null
           ? null
           : _secondsToDuration(resumeSeconds);
 
-      _streamUri = uri;
+      final selection = StreamSelection.forScene(
+        scene,
+        directFallback: Uri.parse(config.serverUrl).resolve(source),
+      );
+      _state = _state.copyWith(streams: selection);
+
       _enterStage(timeline, LoadStage.opening, generation);
       // The resume position is handed to `open` rather than seeked to
       // once it returns. A seek issued after the fact reaches a backend
       // that may not have the file yet, and the real one rejected it
       // outright while this controller recorded a successful two
       // millisecond `resume-seek` and the scene played from zero.
-      await _engine.open(uri, play: false, startAt: resumeTarget);
+      await _openStream(
+        selection.current,
+        at: resumeTarget ?? Duration.zero,
+        play: false,
+        generation: generation,
+      );
       if (_disposed || generation != _state.generation) return;
 
       if (resumeTarget != null) {
@@ -417,7 +409,12 @@ class PlaybackController extends ChangeNotifier {
   /// on every load to serve the roughly one in twenty-four that needs it.
   /// Waiting costs nothing on the files that work.
   void _armStallWatch(int generation) {
-    if (_stallTimer != null || _usingFallbackStream) return;
+    final selection = _state.streams;
+    // A stream the viewer chose is never swapped out from under them,
+    // and a spent ladder has nowhere left to go.
+    if (_stallTimer != null) return;
+    if (selection == null || selection.isManual) return;
+    if (selection.nextRung() == null) return;
     _stallTimer = _createStallTimer(_stallFallbackDelay, () {
       _stallTimer = null;
       unawaited(_onStallDeadline(generation));
@@ -437,57 +434,92 @@ class PlaybackController extends ChangeNotifier {
     // Data is arriving, just slowly. The original file is the better
     // picture, so a stall that is winning is left to win.
     if (_state.buffered > Duration.zero) return;
-    await _fallBackToTranscode(generation);
-  }
 
-  /// Reopens the current scene on Stash's transcode, at the position the
-  /// viewer had reached.
-  ///
-  /// Deliberately does not bump [PlaybackState.generation] or touch
-  /// [ActivitySync]: this is the same scene continuing, not a new one, so
-  /// the activity accounting must carry on uninterrupted.
-  Future<void> _fallBackToTranscode(int generation) async {
-    final direct = _streamUri;
-    if (direct == null || _usingFallbackStream) return;
-    final fallback = transcodedStreamUrl(direct);
-    if (fallback == direct) return;
+    final selection = _state.streams;
+    final next = selection?.nextRung();
+    if (selection == null || next == null) return;
 
-    _usingFallbackStream = true;
-    final resumeAt = _state.position;
     _log(
-      'scene ${_state.scene?.id}: direct stream stalled with nothing '
-      'cached, retrying on the transcode at ${resumeAt.inSeconds}s',
+      'scene ${_state.scene?.id}: ${selection.current.label} stalled with '
+      'nothing cached, retrying on ${next.label} at '
+      '${_state.position.inSeconds}s',
     );
-    await _openFallbackAt(resumeAt, generation);
+    await _switchTo(selection.advance(next), generation);
   }
 
-  /// Opens (or reopens) the transcode so that it begins at [target].
+  /// Opens [stream] so that playback begins at [at]. The single place any
+  /// stream is ever opened: the initial load, an automatic ladder step,
+  /// and a manual pick all arrive here.
   ///
-  /// The offset lives in the URL, not in a seek: Stash produces the
-  /// transcode as it sends it, so there is nothing to seek within. That
-  /// makes every reopen the only way to move around, and makes
-  /// [_streamStartOffset] the bridge between the stream's clock and the
-  /// scene's.
-  Future<void> _openFallbackAt(Duration target, int generation) async {
-    final direct = _streamUri;
-    if (direct == null) return;
-    final uri = transcodedStreamUrl(direct, startAt: target);
+  /// [play] is an argument rather than something read off
+  /// `_state.playing`, because [loadScene] resets `playing` to false
+  /// before it opens anything. Inferring the intent would leave every
+  /// scene sitting paused on arrival. The switch paths pass the current
+  /// value instead, so choosing a different stream while paused stays
+  /// paused.
+  ///
+  /// Where [at] goes depends on the kind. A stream with a real timeline
+  /// is opened at an offset within it. A progressive transcode has no
+  /// timeline, so the offset is baked into the URL and
+  /// [_streamStartOffset] becomes the bridge between the stream's clock
+  /// (which restarts at zero) and the scene's.
+  Future<void> _openStream(
+    SceneStream stream, {
+    required Duration at,
+    required bool play,
+    required int generation,
+  }) async {
+    final config = _connection;
+    if (config == null) return;
 
-    _streamStartOffset = target;
+    final authenticated = authenticatedUrl(
+      Uri.parse(config.serverUrl),
+      stream.url.toString(),
+      config.apiKey,
+    );
+
+    if (stream.kind.hasRealTimeline) {
+      _streamStartOffset = Duration.zero;
+      await _engine.open(
+        authenticated,
+        play: play,
+        startAt: at > Duration.zero ? at : null,
+      );
+    } else {
+      _streamStartOffset = at;
+      await _engine.open(
+        transcodedStreamUrl(authenticated, startAt: at),
+        play: play,
+      );
+    }
+  }
+
+  /// Reopens the current scene on [stream], carrying the viewer's
+  /// position across.
+  ///
+  /// Deliberately does not bump [PlaybackState.generation] and does not
+  /// touch [ActivitySync]: this is the same scene continuing, not a new
+  /// one, so the activity accounting must carry on uninterrupted.
+  Future<void> _switchTo(StreamSelection selection, int generation) async {
+    final resumeAt = _state.position;
+    final wasPlaying = _state.playing;
     _state = _state.copyWith(
       phase: PlaybackPhase.loading,
       loadStage: LoadStage.opening,
-      usingFallbackStream: true,
+      streams: selection,
       buffered: Duration.zero,
-      position: target,
+      position: resumeAt,
     );
     _positionEstablished = true;
     notifyListeners();
 
     try {
-      await _engine.open(uri, play: false);
-      if (_disposed || generation != _state.generation) return;
-      await _engine.play();
+      await _openStream(
+        selection.current,
+        at: resumeAt,
+        play: wasPlaying,
+        generation: generation,
+      );
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(
         phase: PlaybackPhase.ready,
@@ -498,7 +530,47 @@ class PlaybackController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(
         phase: PlaybackPhase.failed,
-        failure: redactSensitive('$error', apiKey: _lastKnownApiKey),
+        failure: redactSensitive('$error', apiKey: _connection?.apiKey ?? ''),
+        clearLoadStage: true,
+      );
+      notifyListeners();
+    }
+  }
+
+  /// Reopens the current progressive transcode so that it begins at
+  /// [target]. The offset lives in the URL, not in a seek, so every move
+  /// is a reopen.
+  Future<void> _reopenAt(Duration target, int generation) async {
+    final selection = _state.streams;
+    if (selection == null) return;
+    final wasPlaying = _state.playing;
+    _state = _state.copyWith(
+      phase: PlaybackPhase.loading,
+      loadStage: LoadStage.opening,
+      buffered: Duration.zero,
+      position: target,
+    );
+    _positionEstablished = true;
+    notifyListeners();
+
+    try {
+      await _openStream(
+        selection.current,
+        at: target,
+        play: wasPlaying,
+        generation: generation,
+      );
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(
+        phase: PlaybackPhase.ready,
+        clearLoadStage: true,
+      );
+      notifyListeners();
+    } catch (error) {
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(
+        phase: PlaybackPhase.failed,
+        failure: redactSensitive('$error', apiKey: _connection?.apiKey ?? ''),
         clearLoadStage: true,
       );
       notifyListeners();
@@ -570,12 +642,13 @@ class PlaybackController extends ChangeNotifier {
     }
     if (_disposed || generation != _state.generation) return;
 
-    // On the transcode there is nothing to seek within: Stash generates
-    // the stream as it sends it, so asking the engine to seek fails and
-    // surfaces as "it cannot seek". Moving means asking the server for a
-    // new stream that begins at the target instead.
-    if (_usingFallbackStream) {
-      await _openFallbackAt(clamped, generation);
+    // A progressive transcode has nothing to seek within: Stash generates
+    // it as it sends it, so asking the engine to seek fails and surfaces
+    // as "it cannot seek". Moving means asking the server for a new
+    // stream that begins at the target instead.
+    final selection = _state.streams;
+    if (selection != null && !selection.current.kind.hasRealTimeline) {
+      await _reopenAt(clamped, generation);
       return;
     }
 
@@ -870,7 +943,10 @@ class PlaybackController extends ChangeNotifier {
     } catch (error) {
       if (_disposed || generation != _state.generation) return false;
       _state = _state.copyWith(
-        controlFailure: redactSensitive('$error', apiKey: _lastKnownApiKey),
+        controlFailure: redactSensitive(
+          '$error',
+          apiKey: _connection?.apiKey ?? '',
+        ),
         controlFailureSequence: _state.controlFailureSequence + 1,
       );
       notifyListeners();

@@ -4,6 +4,7 @@ import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/player/load_diagnostics.dart';
 import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
+import 'package:stash_player_flutter/features/player/stream_selection.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
 Scene _scene({double? resumeTime}) => Scene(
@@ -31,6 +32,19 @@ PlaybackState _stalled({Duration buffered = Duration.zero}) => PlaybackState(
   buffering: true,
   buffered: buffered,
 );
+
+/// A selection the automatic ladder has already stepped off its first
+/// stream, which is the state the switching wording is about. The scene
+/// carries no endpoint list, so this is the synthesized direct/MP4 pair,
+/// built against Stash's real extensionless direct route so that the two
+/// entries are genuinely different URLs.
+StreamSelection _switched() {
+  final selection = StreamSelection.forScene(
+    _scene(),
+    directFallback: Uri.parse('https://stash.test/scene/s1/stream'),
+  );
+  return selection.advance(selection.nextRung()!);
+}
 
 Future<void> _mount(WidgetTester tester, PlaybackState state) =>
     tester.pumpWidget(
@@ -185,7 +199,7 @@ void main() {
           scene: _scene(),
           phase: PlaybackPhase.loading,
           loadStage: LoadStage.opening,
-          usingFallbackStream: true,
+          streams: _switched(),
         ),
       );
 
@@ -202,7 +216,7 @@ void main() {
           phase: PlaybackPhase.ready,
           playing: true,
           buffering: true,
-          usingFallbackStream: true,
+          streams: _switched(),
         ),
       );
 

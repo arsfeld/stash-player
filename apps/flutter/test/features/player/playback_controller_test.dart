@@ -7,6 +7,7 @@ import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/services/socks_forward_proxy.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/domain/scene_stream.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/load_diagnostics.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
@@ -29,11 +30,13 @@ Scene _sceneWith({
   double? resumeTime,
   double? duration,
   bool withFile = true,
+  List<SceneStream> streams = const [],
 }) => Scene(
   id: id,
   paths: ScenePaths(stream: stream),
   resumeTime: resumeTime,
   files: withFile ? [SceneFile(duration: duration)] : const [],
+  streams: streams,
 );
 
 /// Builds a [PlaybackController] wired to a fully-controllable
@@ -2358,7 +2361,7 @@ void main() {
       final opens = engine.commands.whereType<OpenCommand>();
       expect(opens, hasLength(1));
       expect(opens.single.uri.path, endsWith('/stream.mp4'));
-      expect(controller.state.usingFallbackStream, isTrue);
+      expect(controller.state.streams!.hasSwitched, isTrue);
     });
 
     test('leaves a stall that is actually buffering alone, since the direct '
@@ -2378,7 +2381,7 @@ void main() {
       await pumpEventQueue();
 
       expect(engine.commands.whereType<OpenCommand>(), isEmpty);
-      expect(controller.state.usingFallbackStream, isFalse);
+      expect(controller.state.streams!.hasSwitched, isFalse);
     });
 
     test('leaves a stall that recovers on its own alone', () async {
@@ -2468,12 +2471,12 @@ void main() {
       await controller.loadScene(directScene(id: 'first'));
       await stall(engine, timers);
       await pumpEventQueue();
-      expect(controller.state.usingFallbackStream, isTrue);
+      expect(controller.state.streams!.hasSwitched, isTrue);
       engine.commands.clear();
 
       await controller.loadScene(directScene(id: 'second'));
 
-      expect(controller.state.usingFallbackStream, isFalse);
+      expect(controller.state.streams!.hasSwitched, isFalse);
       expect(
         engine.commands.whereType<OpenCommand>().single.uri.path,
         isNot(endsWith('.mp4')),
@@ -2495,7 +2498,8 @@ void main() {
       await stall(engine, timers);
       await pumpEventQueue();
 
-      expect(logs, contains(contains('transcode')));
+      expect(logs, contains(contains('Direct stream stalled')));
+      expect(logs, contains(contains('retrying on MP4')));
     });
 
     test('does not switch after the controller is disposed', () async {
@@ -2513,7 +2517,7 @@ void main() {
       timers.latest.fire();
       await pumpEventQueue();
 
-      expect(controller.state.usingFallbackStream, isFalse);
+      expect(controller.state.streams!.hasSwitched, isFalse);
       // Teardown cancels the pending deadline rather than leaving a real
       // eight-second timer alive past the controller.
       expect(timers.latest.isActive, isFalse);

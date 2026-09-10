@@ -1,6 +1,7 @@
 import '../../domain/scene.dart';
 import 'load_diagnostics.dart';
 import 'playback_engine.dart';
+import 'stream_selection.dart';
 
 /// Where a [PlaybackState] sits in its load lifecycle.
 ///
@@ -58,7 +59,7 @@ class PlaybackState {
     this.buffering = false,
     this.buffered = Duration.zero,
     this.loadStage,
-    this.usingFallbackStream = false,
+    this.streams,
     this.duration = Duration.zero,
     this.position = Duration.zero,
     this.volume = 1.0,
@@ -85,14 +86,13 @@ class PlaybackState {
   /// opens showing the previous scene's cache.
   final Duration buffered;
 
-  /// Whether this scene is playing from Stash's transcode rather than the
-  /// original file, because the direct stream stalled without making
-  /// progress.
+  /// Which of this scene's streams is playing, what else it could play,
+  /// and whether the viewer picked it. `null` before a scene has been
+  /// loaded.
   ///
-  /// Reset per scene. Worth surfacing rather than hiding: the picture is
-  /// measurably worse than the original, so a viewer wondering why is
-  /// owed the answer.
-  final bool usingFallbackStream;
+  /// Reset per scene: a fallback is a response to one scene's own stream
+  /// misbehaving, never a sticky preference.
+  final StreamSelection? streams;
 
   /// Which stage of `PlaybackController.loadScene` is currently running,
   /// or `null` once the load has finished (either way) and there is no
@@ -135,7 +135,7 @@ class PlaybackState {
     Duration? buffered,
     LoadStage? loadStage,
     bool clearLoadStage = false,
-    bool? usingFallbackStream,
+    StreamSelection? streams,
     Duration? duration,
     Duration? position,
     double? volume,
@@ -153,7 +153,7 @@ class PlaybackState {
     buffering: buffering ?? this.buffering,
     buffered: buffered ?? this.buffered,
     loadStage: clearLoadStage ? null : (loadStage ?? this.loadStage),
-    usingFallbackStream: usingFallbackStream ?? this.usingFallbackStream,
+    streams: streams ?? this.streams,
     duration: duration ?? this.duration,
     position: position ?? this.position,
     volume: volume ?? this.volume,
