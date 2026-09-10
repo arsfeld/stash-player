@@ -9,6 +9,7 @@ import '../../app/providers.dart';
 import '../../domain/browse_context.dart';
 import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
+import 'loading_overlay.dart';
 import 'playback_controller.dart';
 import 'playback_state.dart';
 import 'player_bar.dart';
@@ -143,6 +144,20 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
     // background.
     super.dispose();
   }
+
+  /// Whether the player currently owes the viewer an explanation for why
+  /// nothing is happening: the scene's video is still being loaded, or
+  /// playback has stalled mid-stream.
+  ///
+  /// [PlaybackPhase.initial] counts. A scene whose metadata has landed
+  /// but whose `loadScene` has not yet been dispatched is, from the
+  /// viewer's side, indistinguishable from one that is loading, and
+  /// leaving that gap uncovered would flash a bare black frame between
+  /// the two.
+  static bool _shouldShowLoading(PlaybackState playback) =>
+      playback.phase == PlaybackPhase.loading ||
+      playback.phase == PlaybackPhase.initial ||
+      playback.buffering;
 
   bool _suppressHide(PlaybackState playback) =>
       !playback.playing ||
@@ -476,6 +491,16 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                 ),
               ),
             ),
+            // 1a. Loading/buffering feedback, directly over the video and
+            // under everything else. Deliberately not inside either
+            // bar's `FadeTransition`: the auto-hide exists to get the
+            // chrome out of the way of a video that is playing, and a
+            // video that is not yet playing is exactly the case where
+            // hiding the only explanation on screen would be wrong.
+            // Suppressed while a blocking failure is up, since that
+            // overlay is a more specific answer to the same question.
+            if (_shouldShowLoading(playback) && !showBlockingFailure)
+              Positioned.fill(child: PlaybackLoadingOverlay(state: playback)),
             if (showBlockingFailure)
               _PlaybackFailureOverlay(
                 title: scene.displayTitle,

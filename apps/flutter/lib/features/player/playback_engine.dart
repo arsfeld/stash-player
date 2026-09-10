@@ -25,6 +25,16 @@ abstract interface class PlaybackEngine {
   /// Whether the engine is currently buffering.
   Stream<bool> get buffering;
 
+  /// How much of the media is demuxed and cached ahead of the current
+  /// position.
+  ///
+  /// Distinct from [buffering], which is a bare yes/no: this is the
+  /// number that says whether a stall is making progress or is stuck.
+  /// A load sitting at zero for ten seconds and a load that has quietly
+  /// cached forty are the same [buffering] value and completely
+  /// different situations, and the viewer is owed the difference.
+  Stream<Duration> get buffered;
+
   /// Current playback position of the open media.
   Stream<Duration> get position;
 
@@ -42,9 +52,18 @@ abstract interface class PlaybackEngine {
   /// how the surface itself is built and kept in sync with playback.
   Widget buildVideoSurface({Key? key});
 
-  /// Opens [uri] for playback. Starts playing immediately when [play] is
-  /// `true`; otherwise the engine stays paused until [play] is called.
-  Future<void> open(Uri uri, {bool play = false});
+  /// Opens [uri] for playback, beginning at [startAt] when one is given.
+  /// Starts playing immediately when [play] is `true`; otherwise the
+  /// engine stays paused until [play] is called.
+  ///
+  /// [startAt] is part of *opening* rather than a seek the caller issues
+  /// afterwards, deliberately. A seek sent once `open` returns arrives
+  /// before the backend necessarily has the file, and a backend is
+  /// within its rights to reject it: the real one did, leaving scenes
+  /// playing from zero while the caller believed the resume had worked.
+  /// Implementations that cannot open at an offset natively must still
+  /// honour this by seeking once the media is genuinely ready.
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt});
 
   /// Resumes (or starts) playback of the currently open media.
   Future<void> play();

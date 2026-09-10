@@ -1,4 +1,6 @@
 import '../../domain/scene.dart';
+import 'load_diagnostics.dart';
+import 'playback_engine.dart';
 
 /// Where a [PlaybackState] sits in its load lifecycle.
 ///
@@ -54,6 +56,9 @@ class PlaybackState {
     this.phase = PlaybackPhase.initial,
     this.playing = false,
     this.buffering = false,
+    this.buffered = Duration.zero,
+    this.loadStage,
+    this.usingFallbackStream = false,
     this.duration = Duration.zero,
     this.position = Duration.zero,
     this.volume = 1.0,
@@ -69,6 +74,35 @@ class PlaybackState {
   final PlaybackPhase phase;
   final bool playing;
   final bool buffering;
+
+  /// How far ahead of [position] the engine has demuxed and cached. See
+  /// [PlaybackEngine.buffered] for why this is tracked separately from
+  /// the [buffering] flag: it is the difference between a stall that is
+  /// slowly winning and one that is stuck.
+  ///
+  /// Transient per scene, like [playing]/[duration]/[position]: reset to
+  /// zero by every `PlaybackController.loadScene`, so a new scene never
+  /// opens showing the previous scene's cache.
+  final Duration buffered;
+
+  /// Whether this scene is playing from Stash's transcode rather than the
+  /// original file, because the direct stream stalled without making
+  /// progress.
+  ///
+  /// Reset per scene. Worth surfacing rather than hiding: the picture is
+  /// measurably worse than the original, so a viewer wondering why is
+  /// owed the answer.
+  final bool usingFallbackStream;
+
+  /// Which stage of `PlaybackController.loadScene` is currently running,
+  /// or `null` once the load has finished (either way) and there is no
+  /// stage in flight.
+  ///
+  /// Only meaningful while [phase] is [PlaybackPhase.loading]. A
+  /// mid-playback buffering stall is not a load stage and leaves this
+  /// `null` while [buffering] goes true, which is exactly how the
+  /// loading overlay tells the two situations apart.
+  final LoadStage? loadStage;
 
   /// `Duration.zero` doubles as "unknown" — no real media has a zero
   /// duration, and the engine hasn't reported one yet until its
@@ -98,6 +132,10 @@ class PlaybackState {
     PlaybackPhase? phase,
     bool? playing,
     bool? buffering,
+    Duration? buffered,
+    LoadStage? loadStage,
+    bool clearLoadStage = false,
+    bool? usingFallbackStream,
     Duration? duration,
     Duration? position,
     double? volume,
@@ -113,6 +151,9 @@ class PlaybackState {
     phase: phase ?? this.phase,
     playing: playing ?? this.playing,
     buffering: buffering ?? this.buffering,
+    buffered: buffered ?? this.buffered,
+    loadStage: clearLoadStage ? null : (loadStage ?? this.loadStage),
+    usingFallbackStream: usingFallbackStream ?? this.usingFallbackStream,
     duration: duration ?? this.duration,
     position: position ?? this.position,
     volume: volume ?? this.volume,

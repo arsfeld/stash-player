@@ -14,6 +14,7 @@ import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
+import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
 import 'package:stash_player_flutter/features/player/player_icon_button.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
@@ -179,14 +180,23 @@ class _TestHarness {
 /// channel end-to-end (through the real provider graph, not just
 /// `PlaybackController` in isolation, which `playback_controller_test.dart`
 /// already covers directly).
-class _ThrowingSetVolumeEngine implements PlaybackEngine {
-  _ThrowingSetVolumeEngine(this._inner);
+/// Holds `open` pending so a test can see the scene screen *during* a
+/// load rather than only after one. Without it every stage of a
+/// `FakePlaybackEngine`-backed load resolves inside a couple of
+/// microtasks, and the loading state this file exists to check is never
+/// on screen for a frame.
+class _GatedOpenEngine implements PlaybackEngine {
+  _GatedOpenEngine(this._inner, this.gate);
+
   final FakePlaybackEngine _inner;
+  final Completer<void> gate;
 
   @override
   Stream<bool> get playing => _inner.playing;
   @override
   Stream<bool> get buffering => _inner.buffering;
+  @override
+  Stream<Duration> get buffered => _inner.buffered;
   @override
   Stream<Duration> get position => _inner.position;
   @override
@@ -196,8 +206,46 @@ class _ThrowingSetVolumeEngine implements PlaybackEngine {
   @override
   Widget buildVideoSurface({Key? key}) => _inner.buildVideoSurface(key: key);
   @override
-  Future<void> open(Uri uri, {bool play = false}) =>
-      _inner.open(uri, play: play);
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
+    await gate.future;
+    await _inner.open(uri, play: play, startAt: startAt);
+  }
+
+  @override
+  Future<void> play() => _inner.play();
+  @override
+  Future<void> pause() => _inner.pause();
+  @override
+  Future<void> seek(Duration position) => _inner.seek(position);
+  @override
+  Future<void> setVolume(double zeroToOne) => _inner.setVolume(zeroToOne);
+  @override
+  Future<void> setMuted(bool muted) => _inner.setMuted(muted);
+  @override
+  Future<void> dispose() => _inner.dispose();
+}
+
+class _ThrowingSetVolumeEngine implements PlaybackEngine {
+  _ThrowingSetVolumeEngine(this._inner);
+  final FakePlaybackEngine _inner;
+
+  @override
+  Stream<bool> get playing => _inner.playing;
+  @override
+  Stream<bool> get buffering => _inner.buffering;
+  @override
+  Stream<Duration> get buffered => _inner.buffered;
+  @override
+  Stream<Duration> get position => _inner.position;
+  @override
+  Stream<Duration> get duration => _inner.duration;
+  @override
+  Stream<String> get errors => _inner.errors;
+  @override
+  Widget buildVideoSurface({Key? key}) => _inner.buildVideoSurface(key: key);
+  @override
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) =>
+      _inner.open(uri, play: play, startAt: startAt);
   @override
   Future<void> play() => _inner.play();
   @override
@@ -1764,6 +1812,10 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
 
       expect(_controlsOpacity(tester), 1.0);
+
+      // Leaving the scene mid-stall would leave the controller's own
+      // stall deadline pending, which teardown is what cancels.
+      await _tearDownScene(tester, harness);
     });
 
     testWidgets(
@@ -1981,6 +2033,89 @@ void main() {
       expect(_controlsOpacity(tester), 0.0);
 
       await _tearDownScene(tester, harness);
+    });
+  });
+
+  group('SceneScreen: loading feedback', () {
+    testWidgets('says what the player is doing while the video is still '
+        'opening, rather than showing a bare black rectangle', (tester) async {
+      final gate = Completer<void>();
+      final harness = _harness(
+        wrapEngine: (inner) => _GatedOpenEngine(inner, gate),
+      );
+      addTearDown(harness.container.dispose);
+
+      await tester.pumpWidget(_app(harness.container, 's1'));
+      await tester.pump();
+      harness.api.calls.single.completer.complete(_scene(title: 'Alpha'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(loadingOverlayGrace + const Duration(milliseconds: 1));
+
+      expect(find.byType(PlaybackLoadingOverlay), findsOneWidget);
+      expect(find.textContaining('Opening'), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('takes the overlay away once the scene is playing', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      await _pumpReadyScene(tester, harness, _scene());
+
+      expect(find.byType(PlaybackLoadingOverlay), findsNothing);
+
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('brings it back for a mid-playback stall, so a video that '
+        'freezes is distinguishable from one that has simply paused', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      await _pumpReadyScene(tester, harness, _scene());
+
+      harness.engine.emitBuffering(true);
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(loadingOverlayGrace + const Duration(milliseconds: 1));
+
+      expect(find.byType(PlaybackLoadingOverlay), findsOneWidget);
+      expect(find.textContaining('Buffering'), findsOneWidget);
+
+      harness.engine.emitBuffering(false);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(PlaybackLoadingOverlay), findsNothing);
+
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('keeps the overlay up while the transport controls hide '
+        'themselves, because a load must not be able to fade away', (
+      tester,
+    ) async {
+      final gate = Completer<void>();
+      final harness = _harness(
+        wrapEngine: (inner) => _GatedOpenEngine(inner, gate),
+      );
+      addTearDown(harness.container.dispose);
+
+      await tester.pumpWidget(_app(harness.container, 's1'));
+      await tester.pump();
+      harness.api.calls.single.completer.complete(_scene(title: 'Alpha'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 10));
+
+      expect(find.byType(PlaybackLoadingOverlay), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
     });
   });
 

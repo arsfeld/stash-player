@@ -11,10 +11,14 @@ import 'package:stash_player_flutter/features/player/playback_engine.dart';
 sealed class PlaybackCommand {}
 
 class OpenCommand implements PlaybackCommand {
-  OpenCommand(this.uri, {required this.play});
+  OpenCommand(this.uri, {required this.play, this.startAt});
 
   final Uri uri;
   final bool play;
+
+  /// The position the caller asked the engine to open at, or `null` for
+  /// the start of the file.
+  final Duration? startAt;
 }
 
 class PlayCommand implements PlaybackCommand {}
@@ -59,6 +63,8 @@ class FakePlaybackEngine implements PlaybackEngine {
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
       StreamController<bool>.broadcast();
+  final StreamController<Duration> _bufferedController =
+      StreamController<Duration>.broadcast();
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
   final StreamController<Duration> _durationController =
@@ -79,6 +85,9 @@ class FakePlaybackEngine implements PlaybackEngine {
   Stream<bool> get buffering => _bufferingController.stream;
 
   @override
+  Stream<Duration> get buffered => _bufferedController.stream;
+
+  @override
   Stream<Duration> get position => _positionController.stream;
 
   @override
@@ -91,6 +100,8 @@ class FakePlaybackEngine implements PlaybackEngine {
 
   void emitBuffering(bool value) => _bufferingController.add(value);
 
+  void emitBuffered(Duration value) => _bufferedController.add(value);
+
   void emitPosition(Duration value) => _positionController.add(value);
 
   void emitDuration(Duration value) => _durationController.add(value);
@@ -101,9 +112,9 @@ class FakePlaybackEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => SizedBox.shrink(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) async {
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
     _checkNotDisposed();
-    commands.add(OpenCommand(uri, play: play));
+    commands.add(OpenCommand(uri, play: play, startAt: startAt));
   }
 
   @override
@@ -143,6 +154,7 @@ class FakePlaybackEngine implements PlaybackEngine {
     commands.add(DisposeCommand());
     await _playingController.close();
     await _bufferingController.close();
+    await _bufferedController.close();
     await _positionController.close();
     await _durationController.close();
     await _errorsController.close();

@@ -69,4 +69,70 @@ void main() {
       'https://x.test/v?ApiKey=***&x=1',
     );
   });
+
+  group('transcodedStreamUrl', () {
+    test('asks Stash for its transcode of the same scene', () {
+      expect(
+        transcodedStreamUrl(
+          Uri.parse('https://stash.test/scene/12880/stream'),
+        ).toString(),
+        'https://stash.test/scene/12880/stream.mp4',
+      );
+    });
+
+    test('keeps the authenticated query, which the media stack cannot send '
+        'as a header', () {
+      expect(
+        transcodedStreamUrl(
+          Uri.parse('https://stash.test/scene/12880/stream?apikey=SECRET'),
+        ).toString(),
+        'https://stash.test/scene/12880/stream.mp4?apikey=SECRET',
+      );
+    });
+
+    test('bakes a start offset into the URL, because a live transcode has '
+        'no timeline to seek within', () {
+      expect(
+        transcodedStreamUrl(
+          Uri.parse('https://stash.test/scene/1/stream?apikey=SECRET'),
+          startAt: const Duration(minutes: 10),
+        ).toString(),
+        'https://stash.test/scene/1/stream.mp4?apikey=SECRET&start=600',
+      );
+    });
+
+    test('omits the offset at the start of the scene rather than sending a '
+        'redundant start=0', () {
+      expect(
+        transcodedStreamUrl(
+          Uri.parse('https://stash.test/scene/1/stream'),
+          startAt: Duration.zero,
+        ).toString(),
+        'https://stash.test/scene/1/stream.mp4',
+      );
+    });
+
+    test('replaces a previous offset instead of accumulating one, so a '
+        'second seek does not stack', () {
+      final first = transcodedStreamUrl(
+        Uri.parse('https://stash.test/scene/1/stream'),
+        startAt: const Duration(seconds: 60),
+      );
+
+      expect(
+        transcodedStreamUrl(
+          first,
+          startAt: const Duration(seconds: 900),
+        ).toString(),
+        'https://stash.test/scene/1/stream.mp4?start=900',
+      );
+    });
+
+    test('is a no-op on a URL that is already the transcode, so a retry '
+        'cannot append twice', () {
+      final already = Uri.parse('https://stash.test/scene/1/stream.mp4');
+
+      expect(transcodedStreamUrl(already), already);
+    });
+  });
 }

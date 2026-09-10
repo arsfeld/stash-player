@@ -32,6 +32,12 @@ class SetVolumeCommand implements PortCommand {
 
 class DisposeCommand implements PortCommand {}
 
+class OptionCommand implements PortCommand {
+  OptionCommand(this.name, this.value);
+  final String name;
+  final String value;
+}
+
 /// A [MediaKitPlayerPort] that never touches `package:media_kit` — no
 /// native player is ever constructed by this test file. Deliberately does
 /// *not* close its own stream controllers in [dispose]: that lets tests
@@ -42,15 +48,35 @@ class FakeMediaKitPlayerPort implements MediaKitPlayerPort {
   final List<PortCommand> commands = [];
   int disposeCalls = 0;
 
+  /// Every option set on this port, last value wins, so a test can ask
+  /// what libmpv was actually configured with rather than replaying the
+  /// call sequence.
+  final Map<String, String> options = {};
+
+  /// The names of options set before the first [open]. mpv reads some
+  /// options (`start`, and everything about the stream layer) only when
+  /// it opens a file, so for those the ordering is the behaviour.
+  final Set<String> optionsSetBeforeOpen = {};
+  bool _opened = false;
+
+  /// [commands] without the option traffic, for the tests that care about
+  /// the play/pause/seek sequence rather than how libmpv was configured.
+  List<PortCommand> get controlCommands =>
+      commands.where((command) => command is! OptionCommand).toList();
+
   final StreamController<bool> _playingController =
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
       StreamController<bool>.broadcast();
+  final StreamController<Duration> _bufferController =
+      StreamController<Duration>.broadcast();
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
   final StreamController<Duration> _durationController =
       StreamController<Duration>.broadcast();
   final StreamController<String> _errorController =
+      StreamController<String>.broadcast();
+  final StreamController<String> _logController =
       StreamController<String>.broadcast();
 
   @override
@@ -58,6 +84,9 @@ class FakeMediaKitPlayerPort implements MediaKitPlayerPort {
 
   @override
   Stream<bool> get buffering => _bufferingController.stream;
+
+  @override
+  Stream<Duration> get buffer => _bufferController.stream;
 
   @override
   Stream<Duration> get position => _positionController.stream;
@@ -68,14 +97,28 @@ class FakeMediaKitPlayerPort implements MediaKitPlayerPort {
   @override
   Stream<String> get error => _errorController.stream;
 
+  @override
+  Stream<String> get log => _logController.stream;
+
   void emitPlaying(bool value) => _playingController.add(value);
   void emitBuffering(bool value) => _bufferingController.add(value);
+  void emitBuffer(Duration value) => _bufferController.add(value);
   void emitPosition(Duration value) => _positionController.add(value);
   void emitDuration(Duration value) => _durationController.add(value);
   void emitError(String message) => _errorController.add(message);
+  void emitLog(String prefix, String level, String text) =>
+      _logController.add('[$prefix/$level] $text');
+
+  @override
+  Future<void> setOption(String name, String value) async {
+    if (!_opened) optionsSetBeforeOpen.add(name);
+    options[name] = value;
+    commands.add(OptionCommand(name, value));
+  }
 
   @override
   Future<void> open(Uri uri, {required bool play}) async {
+    _opened = true;
     commands.add(OpenCommand(uri, play: play));
   }
 
@@ -114,8 +157,8 @@ void main() {
       final uri = Uri.parse('https://stash.example/scene/1.m3u8');
       await engine.open(uri, play: true);
 
-      expect(port.commands, hasLength(1));
-      final command = port.commands.single as OpenCommand;
+      expect(port.controlCommands, hasLength(1));
+      final command = port.controlCommands.single as OpenCommand;
       expect(command.uri, uri);
       expect(command.play, isTrue);
     });
@@ -124,7 +167,7 @@ void main() {
       final uri = Uri.parse('https://stash.example/scene/1.mp4');
       await engine.open(uri);
 
-      final command = port.commands.single as OpenCommand;
+      final command = port.controlCommands.single as OpenCommand;
       expect(command.play, isFalse);
     });
 
@@ -133,11 +176,11 @@ void main() {
       await engine.pause();
       await engine.seek(const Duration(seconds: 42));
 
-      expect(port.commands, hasLength(3));
-      expect(port.commands[0], isA<PlayCommand>());
-      expect(port.commands[1], isA<PauseCommand>());
+      expect(port.controlCommands, hasLength(3));
+      expect(port.controlCommands[0], isA<PlayCommand>());
+      expect(port.controlCommands[1], isA<PauseCommand>());
       expect(
-        (port.commands[2] as SeekCommand).position,
+        (port.controlCommands[2] as SeekCommand).position,
         const Duration(seconds: 42),
       );
     });
@@ -146,21 +189,21 @@ void main() {
       test('maps interface 0-1 to package 0-100 at the midpoint', () async {
         await engine.setVolume(0.5);
 
-        final command = port.commands.single as SetVolumeCommand;
+        final command = port.controlCommands.single as SetVolumeCommand;
         expect(command.volume, 50.0);
       });
 
       test('clamps above 1.0 to 100 rather than overshooting', () async {
         await engine.setVolume(1.5);
 
-        final command = port.commands.single as SetVolumeCommand;
+        final command = port.controlCommands.single as SetVolumeCommand;
         expect(command.volume, 100.0);
       });
 
       test('clamps below 0.0 to 0 rather than undershooting', () async {
         await engine.setVolume(-0.2);
 
-        final command = port.commands.single as SetVolumeCommand;
+        final command = port.controlCommands.single as SetVolumeCommand;
         expect(command.volume, 0.0);
       });
     });
@@ -171,16 +214,16 @@ void main() {
         await engine.setMuted(true);
         await engine.setMuted(false);
 
-        expect(port.commands, hasLength(3));
-        expect((port.commands[0] as SetVolumeCommand).volume, 60.0);
-        expect((port.commands[1] as SetVolumeCommand).volume, 0.0);
-        expect((port.commands[2] as SetVolumeCommand).volume, 60.0);
+        expect(port.controlCommands, hasLength(3));
+        expect((port.controlCommands[0] as SetVolumeCommand).volume, 60.0);
+        expect((port.controlCommands[1] as SetVolumeCommand).volume, 0.0);
+        expect((port.controlCommands[2] as SetVolumeCommand).volume, 60.0);
       });
 
       test('does not forward a redundant mute/unmute call', () async {
         await engine.setMuted(false);
 
-        expect(port.commands, isEmpty);
+        expect(port.controlCommands, isEmpty);
       });
 
       test('remembers a volume change made while muted for unmute', () async {
@@ -191,10 +234,10 @@ void main() {
         await engine.setVolume(0.2);
         await engine.setMuted(false);
 
-        expect(port.commands, hasLength(3));
-        expect((port.commands[0] as SetVolumeCommand).volume, 60.0);
-        expect((port.commands[1] as SetVolumeCommand).volume, 0.0);
-        expect((port.commands[2] as SetVolumeCommand).volume, 20.0);
+        expect(port.controlCommands, hasLength(3));
+        expect((port.controlCommands[0] as SetVolumeCommand).volume, 60.0);
+        expect((port.controlCommands[1] as SetVolumeCommand).volume, 0.0);
+        expect((port.controlCommands[2] as SetVolumeCommand).volume, 20.0);
       });
     });
 
@@ -249,6 +292,115 @@ void main() {
 
         expect(errors.single, isNot(contains('super-secret-key')));
         expect(errors.single, contains('ApiKey: ***'));
+      });
+    });
+
+    group('proxy configuration', () {
+      test('routes through the proxy when one is configured', () async {
+        final tuned = MediaKitPlaybackEngine.testable(
+          port: port,
+          httpProxyUrl: 'http://127.0.0.1:5000',
+        );
+        addTearDown(tuned.dispose);
+        await pumpEventQueue();
+
+        expect(port.options['http-proxy'], 'http://127.0.0.1:5000');
+      });
+
+      test('sets no proxy at all when none is configured, rather than an '
+          'empty one libmpv would try to use', () async {
+        final tuned = MediaKitPlaybackEngine.testable(port: port);
+        addTearDown(tuned.dispose);
+        await pumpEventQueue();
+
+        expect(port.options, isNot(contains('http-proxy')));
+      });
+
+      test('sets no throughput tuning, every candidate for which measured '
+          'neutral or worse against the real server', () async {
+        final tuned = MediaKitPlaybackEngine.testable(port: port);
+        addTearDown(tuned.dispose);
+        await pumpEventQueue();
+
+        // `multiple_requests=1` took a 53-second load past 240 seconds and
+        // an 8 MiB stream buffer read 255 MB instead of 70 MB. This test
+        // is the tripwire: adding one back without a measurement fails
+        // here first.
+        expect(port.options.keys, isNot(contains('stream-lavf-o')));
+        expect(port.options.keys, isNot(contains('stream-buffer-size')));
+        expect(port.options.keys, isNot(contains('demuxer-readahead-secs')));
+        expect(port.options.keys, isNot(contains('cache')));
+      });
+    });
+
+    group('opening at a resume position', () {
+      test('opens directly at the resume position instead of seeking after '
+          'the file is already open', () async {
+        await engine.open(
+          Uri.parse('https://stash.example/scene/1.mp4'),
+          startAt: const Duration(seconds: 31, milliseconds: 120),
+        );
+
+        // Ordering is the point: mpv reads `start` when it opens the
+        // file. A seek issued after `open` returns arrives before the
+        // demuxer has the file at all, which is why the real one failed
+        // with `error running command _command(seek, 31.1200, absolute)`
+        // and left the scene playing from zero.
+        expect(port.options['start'], '31.12');
+        expect(port.optionsSetBeforeOpen, contains('start'));
+      });
+
+      test('clears a previous scene\'s resume position, so a scene with no '
+          'resume does not inherit one', () async {
+        await engine.open(
+          Uri.parse('https://stash.example/a.mp4'),
+          startAt: const Duration(seconds: 31),
+        );
+        await engine.open(Uri.parse('https://stash.example/b.mp4'));
+
+        expect(port.options['start'], '0');
+      });
+    });
+
+    group('mpv log forwarding', () {
+      test('forwards what the media backend says it is doing to the console, '
+          'which is where a slow open is actually explained', () async {
+        final lines = <String>[];
+        final logged = MediaKitPlaybackEngine.testable(
+          port: port,
+          log: lines.add,
+        );
+        addTearDown(logged.dispose);
+
+        port.emitLog('cache', 'info', 'Cache is not responding, waiting...');
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          lines,
+          contains(
+            allOf(contains('cache'), contains('Cache is not responding')),
+          ),
+        );
+      });
+
+      test('redacts the API key mpv prints when it opens the stream URL, '
+          'which it does on every single load', () async {
+        final lines = <String>[];
+        final logged = MediaKitPlaybackEngine.testable(
+          port: port,
+          log: lines.add,
+        );
+        addTearDown(logged.dispose);
+
+        port.emitLog(
+          'ffmpeg',
+          'info',
+          'Opening https://stash.example/scene/1/stream?apikey=super-secret-key',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(lines.single, isNot(contains('super-secret-key')));
+        expect(lines.single, contains('apikey=***'));
       });
     });
 

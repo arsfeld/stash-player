@@ -10,7 +10,9 @@ import '../../domain/connection.dart';
 import '../../domain/scene.dart';
 import '../../services/authenticated_url.dart';
 import '../../services/media_kit_playback_engine.dart';
+import '../../shared/diagnostics.dart';
 import 'activity_sync.dart';
+import 'load_diagnostics.dart';
 import 'playback_engine.dart';
 import 'playback_state.dart';
 
@@ -41,6 +43,16 @@ enum PlayerAction {
 /// changes [PlaybackState.volume] by.
 const double playerVolumeStep = 0.05;
 
+/// How long a stall has to run, with nothing arriving, before the player
+/// gives up on the direct stream and retries on Stash's transcode.
+///
+/// Long enough that an ordinary network hiccup rides it out on the
+/// original file, which is always the better picture. Short enough that
+/// the pathological case (measured at 63 seconds of stall, and 70 MB of
+/// header reads libmpv discards) is cut off long before a viewer would
+/// give up on it.
+const Duration defaultStallFallbackDelay = Duration(seconds: 8);
+
 /// Resolves the connection (server URL + API key) [PlaybackController]
 /// should authenticate its stream URLs against. A thunk rather than a
 /// plain value for the same reason `LibraryController`'s `_DeferredStashApi`
@@ -69,6 +81,18 @@ typedef FullscreenRequester = Future<bool> Function(bool fullscreen);
 /// couldn't have supplied that closure yet.
 typedef ActivitySyncFactory =
     ActivitySync Function({required double Function() resumePositionSeconds});
+
+/// Where [PlaybackController]'s load diagnostics go. Production writes to
+/// the console via [logDiagnostic]; tests collect the lines and assert on
+/// them, which is the only way the wording of a report anyone actually
+/// reads gets pinned by a test.
+typedef PlaybackLogger = void Function(String message);
+
+/// Creates the timer [PlaybackController] uses to wait out a stall before
+/// giving up on the direct stream. A factory rather than a bare duration
+/// so a test can fire the deadline deliberately instead of waiting eight
+/// real seconds, and so no real timer is ever left pending.
+typedef StallTimerFactory = Timer Function(Duration, void Function());
 
 /// Owns everything about driving a [PlaybackEngine] for one scene at a
 /// time: resolving and authenticating its stream URL, the resume-on-open
@@ -114,9 +138,17 @@ class PlaybackController extends ChangeNotifier {
     required ConnectionResolver resolveConnection,
     required FullscreenRequester setFullscreenPlatform,
     ActivitySyncFactory? activitySyncFactory,
+    PlaybackLogger? log,
+    DateTime Function()? clock,
+    StallTimerFactory? stallTimerFactory,
+    Duration stallFallbackDelay = defaultStallFallbackDelay,
   }) : _engine = engine,
        _resolveConnection = resolveConnection,
-       _setFullscreenPlatform = setFullscreenPlatform {
+       _setFullscreenPlatform = setFullscreenPlatform,
+       _log = log ?? _defaultLog,
+       _clock = clock ?? DateTime.now,
+       _createStallTimer = stallTimerFactory ?? Timer.new,
+       _stallFallbackDelay = stallFallbackDelay {
     final factory = activitySyncFactory ?? _defaultActivitySyncFactory;
     _activitySync = factory(
       resumePositionSeconds: () => _durationToSeconds(_state.position),
@@ -127,13 +159,51 @@ class PlaybackController extends ChangeNotifier {
     required double Function() resumePositionSeconds,
   }) => ActivitySync(resumePositionSeconds: resumePositionSeconds);
 
+  static void _defaultLog(String message) => logDiagnostic('playback', message);
+
   static double _durationToSeconds(Duration duration) =>
       duration.inMicroseconds / Duration.microsecondsPerSecond;
 
   final PlaybackEngine _engine;
   final ConnectionResolver _resolveConnection;
   final FullscreenRequester _setFullscreenPlatform;
+  final PlaybackLogger _log;
+  final DateTime Function() _clock;
+  final StallTimerFactory _createStallTimer;
+  final Duration _stallFallbackDelay;
   late final ActivitySync _activitySync;
+
+  /// The authenticated direct-stream URI of the scene currently loaded,
+  /// kept so a stalled load can be retried against Stash's transcode of
+  /// the same scene without re-resolving the connection.
+  Uri? _streamUri;
+
+  /// Whether this scene has already been moved onto the transcode. One
+  /// switch per load: a transcode that also stalls must not start the
+  /// cycle again.
+  bool _usingFallbackStream = false;
+
+  /// How far into the scene the currently open stream begins.
+  ///
+  /// Zero for the original file, which mpv opens at an offset within a
+  /// real timeline and reports absolute positions for. Non-zero on the
+  /// transcode, whose own clock always restarts at zero because the
+  /// offset is baked into the URL, so every position the engine reports
+  /// has to have this added back before anyone sees it.
+  Duration _streamStartOffset = Duration.zero;
+
+  /// Armed while a stall is running, cancelled the moment it ends, by a
+  /// new scene, or by teardown. A real pending timer outliving the
+  /// controller is exactly the leak `ActivitySync` already documents
+  /// having had to fix, and Flutter's own test binding fails a test that
+  /// leaves one behind.
+  Timer? _stallTimer;
+
+  /// Times the load currently in flight (or the most recent one, for the
+  /// milestones that land after every stage has closed). Replaced by each
+  /// [loadScene], so a scene's milestones are always reported against its
+  /// own load rather than a previous scene's.
+  LoadTimeline? _timeline;
 
   /// The API key of the most recently resolved [ConnectionConfig], kept
   /// so [_runEngineCommand]'s `catch` — which has no connection in scope
@@ -172,6 +242,7 @@ class PlaybackController extends ChangeNotifier {
 
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
+  StreamSubscription<Duration>? _bufferedSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<String>? _errorsSubscription;
@@ -208,6 +279,12 @@ class PlaybackController extends ChangeNotifier {
         ? _durationToSeconds(_state.position)
         : null;
     _positionEstablished = false;
+    // A fresh scene always gets the original file first: the fallback is
+    // a response to this scene's own stream misbehaving, never a sticky
+    // preference.
+    _usingFallbackStream = false;
+    _streamStartOffset = Duration.zero;
+    _cancelStallWatch();
 
     // Claim this generation synchronously, before any `await` — including
     // the subscription cancellation below. Two `loadScene` calls issued
@@ -218,12 +295,27 @@ class PlaybackController extends ChangeNotifier {
     _state = PlaybackState(
       scene: scene,
       phase: PlaybackPhase.loading,
+      loadStage: LoadStage.connecting,
+      // Known before any video is fetched, so the transport shows the
+      // real length immediately rather than growing into it.
+      duration: scene.knownDuration ?? Duration.zero,
       generation: generation,
       volume: _state.volume,
       muted: _state.muted,
       fullscreen: _state.fullscreen,
     );
     notifyListeners();
+
+    // A fresh timeline per load, started here rather than at the first
+    // `await` below, so the connection resolve (which on a cold launch
+    // includes reading the API key out of the platform keystore) is
+    // inside the measurement rather than before it.
+    final timeline = LoadTimeline(
+      sceneId: scene.id,
+      clock: _clock,
+      media: describeMedia(scene),
+    )..enter(LoadStage.connecting);
+    _timeline = timeline;
 
     // Flush whatever the *previous* scene owes under its own ID (and its
     // own captured position) before this controller starts driving the
@@ -253,9 +345,11 @@ class PlaybackController extends ChangeNotifier {
 
       final source = scene.paths.stream;
       if (source == null) {
+        _finishLoad(timeline);
         _state = _state.copyWith(
           phase: PlaybackPhase.failed,
           failure: 'This scene has no playable video file.',
+          clearLoadStage: true,
         );
         notifyListeners();
         return;
@@ -267,15 +361,23 @@ class PlaybackController extends ChangeNotifier {
         config.apiKey,
       );
 
-      await _engine.open(uri, play: false);
+      final resumeSeconds = scene.effectiveResume;
+      final resumeTarget = resumeSeconds == null
+          ? null
+          : _secondsToDuration(resumeSeconds);
+
+      _streamUri = uri;
+      _enterStage(timeline, LoadStage.opening, generation);
+      // The resume position is handed to `open` rather than seeked to
+      // once it returns. A seek issued after the fact reaches a backend
+      // that may not have the file yet, and the real one rejected it
+      // outright while this controller recorded a successful two
+      // millisecond `resume-seek` and the scene played from zero.
+      await _engine.open(uri, play: false, startAt: resumeTarget);
       if (_disposed || generation != _state.generation) return;
 
-      final resumeSeconds = scene.effectiveResume;
-      if (resumeSeconds != null) {
-        final target = _secondsToDuration(resumeSeconds);
-        await _engine.seek(target);
-        if (_disposed || generation != _state.generation) return;
-        _state = _state.copyWith(position: target);
+      if (resumeTarget != null) {
+        _state = _state.copyWith(position: resumeTarget);
         notifyListeners();
       }
       // Whether or not a resume seek was needed, `_state.position` now
@@ -283,19 +385,153 @@ class PlaybackController extends ChangeNotifier {
       // answer here, not a placeholder) — see `_positionEstablished`'s doc.
       _positionEstablished = true;
 
+      _enterStage(timeline, LoadStage.starting, generation);
       await _engine.play();
       if (_disposed || generation != _state.generation) return;
 
-      _state = _state.copyWith(phase: PlaybackPhase.ready);
+      _finishLoad(timeline);
+      _state = _state.copyWith(
+        phase: PlaybackPhase.ready,
+        clearLoadStage: true,
+      );
+      notifyListeners();
+    } catch (error) {
+      // Reported before the generation guard below returns: a load that
+      // died four seconds into `open` is exactly the load worth having
+      // timings for, and a superseded one still tells you how long the
+      // abandoned attempt cost.
+      _finishLoad(timeline);
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(
+        phase: PlaybackPhase.failed,
+        failure: redactSensitive('$error', apiKey: config?.apiKey ?? ''),
+        clearLoadStage: true,
+      );
+      notifyListeners();
+    }
+  }
+
+  /// Arms the stall watch. Reactive rather than predictive on purpose:
+  /// telling the two kinds of file apart up front would mean reading the
+  /// container's box structure before every scene, costing a round trip
+  /// on every load to serve the roughly one in twenty-four that needs it.
+  /// Waiting costs nothing on the files that work.
+  void _armStallWatch(int generation) {
+    if (_stallTimer != null || _usingFallbackStream) return;
+    _stallTimer = _createStallTimer(_stallFallbackDelay, () {
+      _stallTimer = null;
+      unawaited(_onStallDeadline(generation));
+    });
+  }
+
+  void _cancelStallWatch() {
+    _stallTimer?.cancel();
+    _stallTimer = null;
+  }
+
+  /// The stall has run its full delay. Switch only if it is still running
+  /// and still has nothing to show for it.
+  Future<void> _onStallDeadline(int generation) async {
+    if (_disposed || generation != _state.generation) return;
+    if (!_state.buffering) return;
+    // Data is arriving, just slowly. The original file is the better
+    // picture, so a stall that is winning is left to win.
+    if (_state.buffered > Duration.zero) return;
+    await _fallBackToTranscode(generation);
+  }
+
+  /// Reopens the current scene on Stash's transcode, at the position the
+  /// viewer had reached.
+  ///
+  /// Deliberately does not bump [PlaybackState.generation] or touch
+  /// [ActivitySync]: this is the same scene continuing, not a new one, so
+  /// the activity accounting must carry on uninterrupted.
+  Future<void> _fallBackToTranscode(int generation) async {
+    final direct = _streamUri;
+    if (direct == null || _usingFallbackStream) return;
+    final fallback = transcodedStreamUrl(direct);
+    if (fallback == direct) return;
+
+    _usingFallbackStream = true;
+    final resumeAt = _state.position;
+    _log(
+      'scene ${_state.scene?.id}: direct stream stalled with nothing '
+      'cached, retrying on the transcode at ${resumeAt.inSeconds}s',
+    );
+    await _openFallbackAt(resumeAt, generation);
+  }
+
+  /// Opens (or reopens) the transcode so that it begins at [target].
+  ///
+  /// The offset lives in the URL, not in a seek: Stash produces the
+  /// transcode as it sends it, so there is nothing to seek within. That
+  /// makes every reopen the only way to move around, and makes
+  /// [_streamStartOffset] the bridge between the stream's clock and the
+  /// scene's.
+  Future<void> _openFallbackAt(Duration target, int generation) async {
+    final direct = _streamUri;
+    if (direct == null) return;
+    final uri = transcodedStreamUrl(direct, startAt: target);
+
+    _streamStartOffset = target;
+    _state = _state.copyWith(
+      phase: PlaybackPhase.loading,
+      loadStage: LoadStage.opening,
+      usingFallbackStream: true,
+      buffered: Duration.zero,
+      position: target,
+    );
+    _positionEstablished = true;
+    notifyListeners();
+
+    try {
+      await _engine.open(uri, play: false);
+      if (_disposed || generation != _state.generation) return;
+      await _engine.play();
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(
+        phase: PlaybackPhase.ready,
+        clearLoadStage: true,
+      );
       notifyListeners();
     } catch (error) {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(
         phase: PlaybackPhase.failed,
-        failure: redactSensitive('$error', apiKey: config?.apiKey ?? ''),
+        failure: redactSensitive('$error', apiKey: _lastKnownApiKey),
+        clearLoadStage: true,
       );
       notifyListeners();
     }
+  }
+
+  /// Advances [timeline] and mirrors the stage into [state] so the
+  /// loading overlay can name what is currently taking the time.
+  void _enterStage(LoadTimeline timeline, LoadStage stage, int generation) {
+    timeline.enter(stage);
+    if (_disposed || generation != _state.generation) return;
+    _state = _state.copyWith(loadStage: stage);
+    notifyListeners();
+  }
+
+  /// Closes [timeline] and logs its stage report, exactly once per load.
+  void _finishLoad(LoadTimeline timeline) {
+    if (timeline.isFinished) return;
+    _log(timeline.finish());
+  }
+
+  /// Logs a first-time milestone ("playing after ...", "position
+  /// advancing after ...") against the load currently being timed.
+  ///
+  /// [mark] returns `null` for a milestone already recorded, so a
+  /// four-times-a-second position stream reports its first advance and
+  /// then says nothing, rather than flooding the console with the same
+  /// line for the whole scene.
+  void _logMilestone(String? Function(LoadTimeline timeline) mark) {
+    final timeline = _timeline;
+    if (timeline == null) return;
+    final report = mark(timeline);
+    if (report != null) _log(report);
   }
 
   /// Plays if currently paused, pauses if currently playing — based on
@@ -333,6 +569,15 @@ class PlaybackController extends ChangeNotifier {
       // succeeded.
     }
     if (_disposed || generation != _state.generation) return;
+
+    // On the transcode there is nothing to seek within: Stash generates
+    // the stream as it sends it, so asking the engine to seek fails and
+    // surfaces as "it cannot seek". Moving means asking the server for a
+    // new stream that begins at the target instead.
+    if (_usingFallbackStream) {
+      await _openFallbackAt(clamped, generation);
+      return;
+    }
 
     final succeeded = await _runEngineCommand(
       () => _engine.seek(clamped),
@@ -461,6 +706,7 @@ class PlaybackController extends ChangeNotifier {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _cancelStallWatch();
     _state = _state.copyWith(phase: PlaybackPhase.disposed);
 
     await _cancelSubscriptions();
@@ -505,6 +751,7 @@ class PlaybackController extends ChangeNotifier {
   void _bindStreams(int generation) {
     _playingSubscription = _engine.playing.listen((value) {
       if (_disposed || generation != _state.generation) return;
+      if (value) _logMilestone((timeline) => timeline.markPlaying());
       _state = _state.copyWith(playing: value);
       notifyListeners();
       // "Accepted" per this method's own doc: only events that passed the
@@ -514,18 +761,39 @@ class PlaybackController extends ChangeNotifier {
     });
     _bufferingSubscription = _engine.buffering.listen((value) {
       if (_disposed || generation != _state.generation) return;
+      // The stall is the wait the viewer actually experiences, so it is
+      // timed here rather than inferred from the load stages, every one
+      // of which can close in milliseconds on a scene that takes a
+      // minute to show a frame.
+      if (value) {
+        _timeline?.markStalled();
+        _armStallWatch(generation);
+      } else {
+        _cancelStallWatch();
+        _logMilestone((timeline) => timeline.markUnstalled(_state.buffered));
+      }
       _state = _state.copyWith(buffering: value);
       notifyListeners();
       _activitySync.bufferingChanged(value);
     });
+    _bufferedSubscription = _engine.buffered.listen((value) {
+      if (_disposed || generation != _state.generation) return;
+      _state = _state.copyWith(buffered: value);
+      notifyListeners();
+    });
     _positionSubscription = _engine.position.listen((value) {
       if (_disposed || generation != _state.generation) return;
-      _state = _state.copyWith(position: value);
+      _state = _state.copyWith(position: _streamStartOffset + value);
       _positionEstablished = true;
       notifyListeners();
     });
     _durationSubscription = _engine.duration.listen((value) {
       if (_disposed || generation != _state.generation) return;
+      // The server's scanned duration wins whenever there is one. On a
+      // transcode the engine reports the length of what it has received
+      // so far, which climbs for the whole scene and would drag the
+      // transport's total up with it. See `Scene.knownDuration`.
+      if (_state.scene?.knownDuration != null) return;
       _state = _state.copyWith(duration: value);
       notifyListeners();
     });
@@ -544,12 +812,14 @@ class PlaybackController extends ChangeNotifier {
     final subscriptions = <StreamSubscription<void>?>[
       _playingSubscription,
       _bufferingSubscription,
+      _bufferedSubscription,
       _positionSubscription,
       _durationSubscription,
       _errorsSubscription,
     ];
     _playingSubscription = null;
     _bufferingSubscription = null;
+    _bufferedSubscription = null;
     _positionSubscription = null;
     _durationSubscription = null;
     _errorsSubscription = null;

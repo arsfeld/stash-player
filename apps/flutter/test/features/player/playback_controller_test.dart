@@ -8,6 +8,7 @@ import 'package:stash_player_flutter/services/socks_forward_proxy.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
+import 'package:stash_player_flutter/features/player/load_diagnostics.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
@@ -50,11 +51,15 @@ PlaybackController _buildController({
   Future<void> Function(Duration)? activityDelay,
   void Function(String message)? onActivityWarning,
   Future<bool> Function(bool fullscreen)? setFullscreenPlatform,
+  void Function(String message)? log,
+  StallTimerFactory? stallTimerFactory,
 }) {
   final controller = PlaybackController(
     engine: engine,
     resolveConnection: () async => config,
     setFullscreenPlatform: setFullscreenPlatform ?? (value) async => true,
+    log: log,
+    stallTimerFactory: stallTimerFactory,
     activitySyncFactory: ({required resumePositionSeconds}) => ActivitySync(
       resumePositionSeconds: resumePositionSeconds,
       saveActivity: saveActivity,
@@ -164,6 +169,7 @@ class _RecordingEngine implements PlaybackEngine {
 
   final playingRecorder = _RecordingStream<bool>();
   final bufferingRecorder = _RecordingStream<bool>();
+  final bufferedRecorder = _RecordingStream<Duration>();
   final positionRecorder = _RecordingStream<Duration>();
   final durationRecorder = _RecordingStream<Duration>();
   final errorsRecorder = _RecordingStream<String>();
@@ -173,6 +179,9 @@ class _RecordingEngine implements PlaybackEngine {
 
   @override
   Stream<bool> get buffering => bufferingRecorder;
+
+  @override
+  Stream<Duration> get buffered => bufferedRecorder;
 
   @override
   Stream<Duration> get position => positionRecorder;
@@ -187,8 +196,8 @@ class _RecordingEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) =>
-      inner.open(uri, play: play);
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) =>
+      inner.open(uri, play: play, startAt: startAt);
 
   @override
   Future<void> play() => inner.play();
@@ -244,6 +253,9 @@ class _FaultyEngine implements PlaybackEngine {
   Stream<bool> get buffering => inner.buffering;
 
   @override
+  Stream<Duration> get buffered => inner.buffered;
+
+  @override
   Stream<Duration> get position => inner.position;
 
   @override
@@ -256,9 +268,9 @@ class _FaultyEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) async {
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
     if (openThrows) throw StateError(errorMessage ?? 'engine open() failed');
-    return inner.open(uri, play: play);
+    return inner.open(uri, play: play, startAt: startAt);
   }
 
   @override
@@ -308,17 +320,25 @@ class _FaultyEngine implements PlaybackEngine {
 /// engine failure, so "the call didn't throw" is no longer a reliable
 /// signal either. Counting invocations directly, ahead of anything
 /// [inner] itself might do, sidesteps both.
-class _CallCountingEngine implements PlaybackEngine {
-  _CallCountingEngine(this.inner);
+/// Holds `open` pending on a [Completer] so a test can observe
+/// `PlaybackController`'s state *during* a load stage rather than only
+/// after the whole chain has finished. Nothing else about the load can be
+/// paused from outside: every other stage boundary is an `await` on a
+/// future the controller itself creates.
+class _GatedEngine implements PlaybackEngine {
+  _GatedEngine(this.inner);
 
   final FakePlaybackEngine inner;
-  final List<String> invocations = [];
+  final Completer<void> openGate = Completer<void>();
 
   @override
   Stream<bool> get playing => inner.playing;
 
   @override
   Stream<bool> get buffering => inner.buffering;
+
+  @override
+  Stream<Duration> get buffered => inner.buffered;
 
   @override
   Stream<Duration> get position => inner.position;
@@ -333,9 +353,99 @@ class _CallCountingEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) {
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
+    await openGate.future;
+    await inner.open(uri, play: play, startAt: startAt);
+  }
+
+  @override
+  Future<void> play() => inner.play();
+
+  @override
+  Future<void> pause() => inner.pause();
+
+  @override
+  Future<void> seek(Duration position) => inner.seek(position);
+
+  @override
+  Future<void> setVolume(double zeroToOne) => inner.setVolume(zeroToOne);
+
+  @override
+  Future<void> setMuted(bool muted) => inner.setMuted(muted);
+
+  @override
+  Future<void> dispose() => inner.dispose();
+}
+
+/// A [Timer] a test fires by hand. Keeps the eight-second stall deadline
+/// out of real time, and keeps the test binding's "a Timer is still
+/// pending" check satisfied, since nothing is ever actually scheduled.
+class _ManualTimer implements Timer {
+  _ManualTimer(this._onFire);
+
+  final void Function() _onFire;
+  bool _cancelled = false;
+
+  void fire() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _onFire();
+  }
+
+  @override
+  void cancel() => _cancelled = true;
+
+  @override
+  bool get isActive => !_cancelled;
+
+  @override
+  int get tick => 0;
+}
+
+/// Hands out [_ManualTimer]s and remembers the most recent one.
+class _ManualTimers {
+  final List<_ManualTimer> created = [];
+
+  Timer call(Duration duration, void Function() callback) {
+    final timer = _ManualTimer(callback);
+    created.add(timer);
+    return timer;
+  }
+
+  _ManualTimer get latest => created.last;
+}
+
+class _CallCountingEngine implements PlaybackEngine {
+  _CallCountingEngine(this.inner);
+
+  final FakePlaybackEngine inner;
+  final List<String> invocations = [];
+
+  @override
+  Stream<bool> get playing => inner.playing;
+
+  @override
+  Stream<bool> get buffering => inner.buffering;
+
+  @override
+  Stream<Duration> get buffered => inner.buffered;
+
+  @override
+  Stream<Duration> get position => inner.position;
+
+  @override
+  Stream<Duration> get duration => inner.duration;
+
+  @override
+  Stream<String> get errors => inner.errors;
+
+  @override
+  Widget buildVideoSurface({Key? key}) => inner.buildVideoSurface(key: key);
+
+  @override
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) {
     invocations.add('open');
-    return inner.open(uri, play: play);
+    return inner.open(uri, play: play, startAt: startAt);
   }
 
   @override
@@ -380,7 +490,7 @@ void main() {
 
       await controller.loadScene(_sceneWith(duration: 2000));
 
-      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(engine.commands.whereType<OpenCommand>().single.startAt, isNull);
       expect(controller.state.phase, PlaybackPhase.ready);
     });
 
@@ -390,17 +500,17 @@ void main() {
 
       await controller.loadScene(_sceneWith(resumeTime: 0, duration: 2000));
 
-      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(engine.commands.whereType<OpenCommand>().single.startAt, isNull);
     });
 
-    test('a middle resume seeks to that exact position', () async {
+    test('a middle resume opens at that exact position', () async {
       final engine = FakePlaybackEngine();
       final controller = _buildController(engine: engine);
 
       await controller.loadScene(_sceneWith(resumeTime: 500, duration: 2000));
 
       expect(
-        engine.commands.whereType<SeekCommand>().single.position,
+        engine.commands.whereType<OpenCommand>().single.startAt,
         const Duration(seconds: 500),
       );
     });
@@ -411,7 +521,7 @@ void main() {
 
       await controller.loadScene(_sceneWith(resumeTime: 92, duration: 100));
 
-      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(engine.commands.whereType<OpenCommand>().single.startAt, isNull);
     });
 
     test('a resume at/above 97 percent restarts at zero', () async {
@@ -420,7 +530,7 @@ void main() {
 
       await controller.loadScene(_sceneWith(resumeTime: 970, duration: 1000));
 
-      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(engine.commands.whereType<OpenCommand>().single.startAt, isNull);
     });
 
     test('a resume beyond the known duration restarts at zero', () async {
@@ -429,25 +539,25 @@ void main() {
 
       await controller.loadScene(_sceneWith(resumeTime: 150, duration: 100));
 
-      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(engine.commands.whereType<OpenCommand>().single.startAt, isNull);
     });
 
-    test('a positive resume with unknown duration still seeks', () async {
+    test('a positive resume with unknown duration still opens there', () async {
       final engine = FakePlaybackEngine();
       final controller = _buildController(engine: engine);
 
       await controller.loadScene(_sceneWith(resumeTime: 500, withFile: false));
 
       expect(
-        engine.commands.whereType<SeekCommand>().single.position,
+        engine.commands.whereType<OpenCommand>().single.startAt,
         const Duration(seconds: 500),
       );
     });
   });
 
   group('loadScene ordering and authentication', () {
-    test('the stream URL is authenticated before open, and the resume seek '
-        'happens after open but before play', () async {
+    test('the stream URL is authenticated, and the resume position rides on '
+        'the open rather than following it as a seek', () async {
       final engine = FakePlaybackEngine();
       final controller = _buildController(engine: engine);
 
@@ -455,7 +565,7 @@ void main() {
         _sceneWith(stream: 'video/stream.mp4', resumeTime: 500, duration: 2000),
       );
 
-      expect(engine.commands, hasLength(3));
+      expect(engine.commands, hasLength(2));
       final open = engine.commands[0] as OpenCommand;
       expect(
         open.uri,
@@ -466,11 +576,8 @@ void main() {
         ),
       );
       expect(open.play, isFalse);
-      expect(
-        (engine.commands[1] as SeekCommand).position,
-        const Duration(seconds: 500),
-      );
-      expect(engine.commands[2], isA<PlayCommand>());
+      expect(open.startAt, const Duration(seconds: 500));
+      expect(engine.commands[1], isA<PlayCommand>());
     });
 
     test(
@@ -1972,5 +2079,619 @@ void main() {
       expect(secondController.state.phase, PlaybackPhase.ready);
       expect(engines[1].commands, isNotEmpty);
     });
+  });
+
+  group('load stages', () {
+    test(
+      'reports the connecting stage while the connection is resolving',
+      () async {
+        final engine = FakePlaybackEngine();
+        final connection = Completer<ConnectionConfig>();
+        final controller = PlaybackController(
+          engine: engine,
+          resolveConnection: () => connection.future,
+          setFullscreenPlatform: (_) async => true,
+          activitySyncFactory: ({required resumePositionSeconds}) =>
+              ActivitySync(resumePositionSeconds: resumePositionSeconds),
+        );
+        addTearDown(controller.dispose);
+
+        final load = controller.loadScene(_sceneWith());
+        await pumpEventQueue();
+
+        expect(controller.state.loadStage, LoadStage.connecting);
+
+        connection.complete(_config);
+        await load;
+      },
+    );
+
+    test(
+      'reports the opening stage while the engine is opening the stream',
+      () async {
+        final engine = _GatedEngine(FakePlaybackEngine());
+        final controller = _buildController(engine: engine);
+
+        final load = controller.loadScene(_sceneWith());
+        await pumpEventQueue();
+
+        expect(controller.state.loadStage, LoadStage.opening);
+
+        engine.openGate.complete();
+        await load;
+      },
+    );
+
+    test('never issues a bare seek for the resume, which the real engine '
+        'rejected outright when it arrived before the file was open', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith(resumeTime: 500, duration: 2000));
+
+      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      expect(
+        engine.commands.whereType<OpenCommand>().single.startAt,
+        const Duration(seconds: 500),
+      );
+    });
+
+    test('clears the stage once the scene is ready', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith());
+
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.loadStage, isNull);
+    });
+
+    test('clears the stage when the load fails, rather than leaving it '
+        'stuck on whichever stage threw', () async {
+      final engine = _FaultyEngine(FakePlaybackEngine(), openThrows: true);
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith());
+
+      expect(controller.state.phase, PlaybackPhase.failed);
+      expect(controller.state.loadStage, isNull);
+    });
+  });
+
+  group('load diagnostics logging', () {
+    test(
+      'logs a stage report naming the scene once a load completes',
+      () async {
+        final logs = <String>[];
+        final controller = _buildController(
+          engine: FakePlaybackEngine(),
+          log: logs.add,
+        );
+
+        await controller.loadScene(_sceneWith(id: 's7'));
+
+        expect(logs, contains(allOf(contains('scene s7'), contains('open'))));
+      },
+    );
+
+    test('logs the stage report for a load that failed, not only one that '
+        'succeeded', () async {
+      final logs = <String>[];
+      final controller = _buildController(
+        engine: _FaultyEngine(FakePlaybackEngine(), openThrows: true),
+        log: logs.add,
+      );
+
+      await controller.loadScene(_sceneWith(id: 's8'));
+
+      expect(logs, contains(contains('scene s8')));
+    });
+
+    test('describes the file being loaded so a slow load can be read '
+        'against what caused it', () async {
+      final logs = <String>[];
+      final controller = _buildController(
+        engine: FakePlaybackEngine(),
+        log: logs.add,
+      );
+
+      await controller.loadScene(
+        Scene(
+          id: 's9',
+          paths: const ScenePaths(stream: 'stream.mkv'),
+          files: const [
+            SceneFile(videoCodec: 'h265', audioCodec: 'aac', format: 'mkv'),
+          ],
+        ),
+      );
+
+      expect(logs, contains(contains('h265/aac mkv')));
+    });
+
+    test('times the buffering stall, which is the wait the viewer actually '
+        'sits through when every load stage closed in milliseconds', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine, log: logs.add);
+      await controller.loadScene(_sceneWith(id: 's10'));
+      logs.clear();
+
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      engine.emitBuffered(const Duration(seconds: 12));
+      engine.emitBuffering(false);
+      await pumpEventQueue();
+
+      expect(
+        logs,
+        contains(allOf(contains('scene s10'), contains('first stall lasted'))),
+      );
+    });
+
+    test('reports the cache the stall recovered with, so a stall that was '
+        'making progress is distinguishable from a stuck one', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine, log: logs.add);
+      await controller.loadScene(_sceneWith());
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      engine.emitBuffered(const Duration(seconds: 12));
+      await pumpEventQueue();
+      logs.clear();
+
+      engine.emitBuffering(false);
+      await pumpEventQueue();
+
+      expect(logs, contains(contains('12s cached')));
+    });
+
+    test('a repeated buffering signal does not report a stall twice', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine, log: logs.add);
+      await controller.loadScene(_sceneWith());
+      logs.clear();
+
+      engine.emitBuffering(true);
+      engine.emitBuffering(false);
+      engine.emitBuffering(false);
+      await pumpEventQueue();
+
+      expect(logs.where((line) => line.contains('stall')), hasLength(1));
+    });
+
+    test('does not log a position advance, which fires before there is any '
+        'video and made a 65-second load read as instant', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine, log: logs.add);
+      await controller.loadScene(_sceneWith());
+      logs.clear();
+
+      engine.emitPosition(const Duration(seconds: 1));
+      engine.emitPosition(const Duration(seconds: 2));
+      await pumpEventQueue();
+
+      expect(logs, isEmpty);
+    });
+    test('a new scene gets its own milestones rather than staying silent '
+        'because the previous scene already reported them', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine, log: logs.add);
+      await controller.loadScene(_sceneWith(id: 'first'));
+      engine.emitPlaying(true);
+      await pumpEventQueue();
+
+      await controller.loadScene(_sceneWith(id: 'second'));
+      logs.clear();
+      engine.emitPlaying(true);
+      await pumpEventQueue();
+
+      expect(logs, contains(contains('scene second: engine unpaused')));
+    });
+  });
+
+  group('buffered-ahead reporting', () {
+    test('records how far ahead the engine has buffered', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith());
+
+      engine.emitBuffered(const Duration(seconds: 8));
+      await pumpEventQueue();
+
+      expect(controller.state.buffered, const Duration(seconds: 8));
+    });
+
+    test('a new scene starts from zero rather than inheriting the previous '
+        "scene's buffer", () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith());
+      engine.emitBuffered(const Duration(seconds: 30));
+      await pumpEventQueue();
+      expect(controller.state.buffered, const Duration(seconds: 30));
+
+      await controller.loadScene(_sceneWith(id: 'next'));
+
+      expect(controller.state.buffered, Duration.zero);
+    });
+  });
+
+  group('falling back to the transcode when the direct stream stalls', () {
+    // A minority of mp4s are written with one `mdat` box per chunk, and
+    // libmpv walks every one of them before playing: measured at 63
+    // seconds and 70 MB of discarded header reads for a 331 MB file that
+    // the platform player opens instantly. Nothing client-side stops the
+    // walk without breaking seeking, so the player waits out a stall that
+    // is going nowhere and asks Stash for its transcode instead.
+    /// A scene whose stream URL looks like Stash's real direct route,
+    /// which has no file extension. The shared helper's default does, and
+    /// `transcodedStreamUrl` correctly refuses to append twice.
+    Scene directScene({String id = 's1'}) =>
+        _sceneWith(id: id, stream: 'scene/$id/stream');
+
+    /// Stalls the engine and lets the deadline arrive, the way eight
+    /// seconds of nothing would.
+    Future<void> stall(FakePlaybackEngine engine, _ManualTimers timers) async {
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+    }
+
+    test('reopens on the transcoded URL when a stall goes nowhere', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.commands.clear();
+
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      final opens = engine.commands.whereType<OpenCommand>();
+      expect(opens, hasLength(1));
+      expect(opens.single.uri.path, endsWith('/stream.mp4'));
+      expect(controller.state.usingFallbackStream, isTrue);
+    });
+
+    test('leaves a stall that is actually buffering alone, since the direct '
+        'stream is the better one when it works', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.commands.clear();
+
+      engine.emitBuffering(true);
+      engine.emitBuffered(const Duration(seconds: 4));
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.usingFallbackStream, isFalse);
+    });
+
+    test('leaves a stall that recovers on its own alone', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.commands.clear();
+
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      engine.emitBuffering(false);
+      await pumpEventQueue();
+      // The deadline is cancelled the moment the stall ends, so firing it
+      // afterwards must do nothing.
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(timers.latest.isActive, isFalse);
+    });
+
+    test('switches at most once, so a transcode that also stalls cannot '
+        'loop', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      await stall(engine, timers);
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      engine.emitBuffering(false);
+      await pumpEventQueue();
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+    });
+
+    test(
+      'resumes where the viewer had got to, not from the beginning',
+      () async {
+        final engine = FakePlaybackEngine();
+        final timers = _ManualTimers();
+        final controller = _buildController(
+          engine: engine,
+          stallTimerFactory: timers.call,
+        );
+        await controller.loadScene(directScene());
+        engine.emitPosition(const Duration(seconds: 210));
+        await pumpEventQueue();
+        engine.commands.clear();
+
+        await stall(engine, timers);
+        await pumpEventQueue();
+
+        // The position travels in the URL, not as an engine-level start:
+        // the transcode has no timeline to seek within. See the
+        // "seeking on the transcode" group.
+        expect(
+          engine.commands
+              .whereType<OpenCommand>()
+              .single
+              .uri
+              .queryParameters['start'],
+          '210',
+        );
+        expect(controller.state.position, const Duration(seconds: 210));
+      },
+    );
+
+    test('a new scene starts on the direct stream again, rather than '
+        'inheriting the previous one\'s fallback', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene(id: 'first'));
+      await stall(engine, timers);
+      await pumpEventQueue();
+      expect(controller.state.usingFallbackStream, isTrue);
+      engine.commands.clear();
+
+      await controller.loadScene(directScene(id: 'second'));
+
+      expect(controller.state.usingFallbackStream, isFalse);
+      expect(
+        engine.commands.whereType<OpenCommand>().single.uri.path,
+        isNot(endsWith('.mp4')),
+      );
+    });
+
+    test('says in the log that it gave up on the direct stream', () async {
+      final logs = <String>[];
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        log: logs.add,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene(id: 's12'));
+      logs.clear();
+
+      await stall(engine, timers);
+      await pumpEventQueue();
+
+      expect(logs, contains(contains('transcode')));
+    });
+
+    test('does not switch after the controller is disposed', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+
+      await controller.dispose();
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      expect(controller.state.usingFallbackStream, isFalse);
+      // Teardown cancels the pending deadline rather than leaving a real
+      // eight-second timer alive past the controller.
+      expect(timers.latest.isActive, isFalse);
+    });
+  });
+
+  group('duration comes from the server, not the stream', () {
+    // A transcode is generated as it is sent, so libmpv can only report
+    // the duration of what has arrived so far, and that number climbs for
+    // the whole scene. Stash already scanned the real duration of the
+    // original file, so that is what the transport shows.
+    test('reports the scanned duration as soon as the scene loads, without '
+        'waiting for the engine to say anything', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+
+      await controller.loadScene(_sceneWith(duration: 1800));
+
+      expect(controller.state.duration, const Duration(seconds: 1800));
+    });
+
+    test('ignores a growing engine duration, which is what a transcode '
+        'reports while it is still being produced', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith(duration: 1800));
+
+      engine.emitDuration(const Duration(seconds: 12));
+      await pumpEventQueue();
+      engine.emitDuration(const Duration(seconds: 47));
+      await pumpEventQueue();
+
+      expect(controller.state.duration, const Duration(seconds: 1800));
+    });
+
+    test('still takes the engine duration when the server scanned none, '
+        'rather than showing no duration at all', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith(withFile: false));
+
+      engine.emitDuration(const Duration(seconds: 640));
+      await pumpEventQueue();
+
+      expect(controller.state.duration, const Duration(seconds: 640));
+    });
+
+    test('seekToEnd uses the scanned duration, so it works on a transcode '
+        'whose reported duration is still climbing', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(_sceneWith(duration: 1800));
+      engine.emitDuration(const Duration(seconds: 12));
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      await controller.handleAction(PlayerAction.seekToEnd);
+
+      expect(
+        engine.commands.whereType<SeekCommand>().single.position,
+        const Duration(seconds: 1800),
+      );
+    });
+  });
+
+  group('seeking on the transcode', () {
+    Scene directScene({String id = 's1', double? duration = 1800}) =>
+        _sceneWith(id: id, stream: 'scene/$id/stream', duration: duration);
+
+    test('bakes the position into the URL rather than asking the engine to '
+        'seek inside a stream that has no timeline', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.emitPosition(const Duration(seconds: 210));
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      final open = engine.commands.whereType<OpenCommand>().single;
+      expect(open.uri.queryParameters['start'], '210');
+      expect(open.startAt, isNull);
+    });
+
+    test('reports positions in the scene\'s own timeline, not the '
+        'transcode\'s, which restarts at zero', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.emitPosition(const Duration(seconds: 600));
+      await pumpEventQueue();
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      // The transcode begins at 600s, so its own clock reads 5s here.
+      engine.emitPosition(const Duration(seconds: 5));
+      await pumpEventQueue();
+
+      expect(controller.state.position, const Duration(seconds: 605));
+    });
+
+    test('a seek reopens the transcode at the target instead of failing, '
+        'which is what "it says it cannot seek" was', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      await controller.loadScene(directScene());
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      await controller.seekAbsolute(const Duration(seconds: 900));
+
+      expect(engine.commands.whereType<SeekCommand>(), isEmpty);
+      final open = engine.commands.whereType<OpenCommand>().single;
+      expect(open.uri.queryParameters['start'], '900');
+      expect(controller.state.position, const Duration(seconds: 900));
+      expect(controller.state.controlFailure, isNull);
+    });
+
+    test('a seek on a healthy direct stream still seeks the engine, which is '
+        'far cheaper than reopening', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(directScene());
+      engine.commands.clear();
+
+      await controller.seekAbsolute(const Duration(seconds: 900));
+
+      expect(
+        engine.commands.whereType<SeekCommand>().single.position,
+        const Duration(seconds: 900),
+      );
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+    });
+
+    test(
+      'a new scene clears the offset, so its positions are its own',
+      () async {
+        final engine = FakePlaybackEngine();
+        final timers = _ManualTimers();
+        final controller = _buildController(
+          engine: engine,
+          stallTimerFactory: timers.call,
+        );
+        await controller.loadScene(directScene());
+        engine.emitPosition(const Duration(seconds: 600));
+        await pumpEventQueue();
+        engine.emitBuffering(true);
+        await pumpEventQueue();
+        timers.latest.fire();
+        await pumpEventQueue();
+
+        await controller.loadScene(directScene(id: 'next'));
+        engine.emitPosition(const Duration(seconds: 5));
+        await pumpEventQueue();
+
+        expect(controller.state.position, const Duration(seconds: 5));
+      },
+    );
   });
 }

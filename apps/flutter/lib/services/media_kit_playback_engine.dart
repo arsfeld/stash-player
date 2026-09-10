@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../features/player/playback_engine.dart';
+import '../shared/diagnostics.dart';
 import 'authenticated_url.dart';
 
 /// The narrow surface [MediaKitPlaybackEngine] needs from a real
@@ -18,6 +19,10 @@ import 'authenticated_url.dart';
 abstract interface class MediaKitPlayerPort {
   Stream<bool> get playing;
   Stream<bool> get buffering;
+
+  /// The package's own `stream.buffer`: how much has been demuxed and
+  /// cached ahead.
+  Stream<Duration> get buffer;
   Stream<Duration> get position;
   Stream<Duration> get duration;
 
@@ -26,6 +31,15 @@ abstract interface class MediaKitPlayerPort {
   /// reaches [PlaybackEngine.errors] — this port has no opinion on
   /// credentials.
   Stream<String> get error;
+
+  /// The media backend's own internal log, already flattened to one line
+  /// per message. Raw and not-yet-redacted, exactly like [error]: mpv
+  /// prints the URL it opens, which carries the API key.
+  Stream<String> get log;
+
+  /// Sets one libmpv option/property by name. The engine uses this both
+  /// for one-time network tuning and for per-file options like `start`.
+  Future<void> setOption(String name, String value);
 
   Future<void> open(Uri uri, {required bool play});
   Future<void> play();
@@ -55,6 +69,9 @@ class _RealMediaKitPlayerPort implements MediaKitPlayerPort {
   Stream<bool> get buffering => _player.stream.buffering;
 
   @override
+  Stream<Duration> get buffer => _player.stream.buffer;
+
+  @override
   Stream<Duration> get position => _player.stream.position;
 
   @override
@@ -62,6 +79,20 @@ class _RealMediaKitPlayerPort implements MediaKitPlayerPort {
 
   @override
   Stream<String> get error => _player.stream.error;
+
+  @override
+  Stream<String> get log => _player.stream.log.map(
+    (entry) => '[${entry.prefix}/${entry.level}] ${entry.text}',
+  );
+
+  @override
+  Future<void> setOption(String name, String value) async {
+    final platform = _player.platform;
+    // Only the native (libmpv) backend has properties to set. There is
+    // no web backend in this app today; if one ever appears, it gets
+    // its own tuning rather than silently ignoring mpv's.
+    if (platform is NativePlayer) await platform.setProperty(name, value);
+  }
 
   @override
   Future<void> open(Uri uri, {required bool play}) =>
@@ -126,16 +157,19 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
   /// proxy control it has, which is why the app's own hop is an HTTP proxy
   /// rather than a SOCKS client.
   factory MediaKitPlaybackEngine({String? httpProxyUrl}) {
-    final player = Player();
-    final platform = player.platform;
-    if (httpProxyUrl != null && platform is NativePlayer) {
-      // Fire-and-forget: `setProperty` waits for libmpv to finish starting
-      // up, which happens well before the first `open()` can be issued.
-      unawaited(platform.setProperty('http-proxy', httpProxyUrl));
-    }
+    // `info` rather than the package default of `error`. At `error` the
+    // log stream says nothing at all about a load that is merely slow,
+    // which is the case this engine most needs explained: `info` is
+    // where mpv reports the stream it opened, the demuxer and codecs it
+    // chose, and the cache stalling. Every line is redacted and routed
+    // to `dart:developer` under its own name, so it stays filterable.
+    final player = Player(
+      configuration: const PlayerConfiguration(logLevel: MPVLogLevel.info),
+    );
     final videoController = VideoController(player);
     return MediaKitPlaybackEngine._(
       port: _RealMediaKitPlayerPort(player),
+      httpProxyUrl: httpProxyUrl,
       // `controls: NoVideoControls` is load-bearing, not a default being
       // restated. `Video`'s own default is `AdaptiveVideoControls`, which
       // on macOS resolves to `MaterialDesktopVideoControls`: a second
@@ -161,31 +195,77 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
   factory MediaKitPlaybackEngine.testable({
     required MediaKitPlayerPort port,
     Widget Function({Key? key})? buildVideoSurface,
+    void Function(String message)? log,
+    String? httpProxyUrl,
   }) => MediaKitPlaybackEngine._(
     port: port,
     buildVideoSurface:
         buildVideoSurface ?? ({Key? key}) => SizedBox.shrink(key: key),
+    log: log,
+    httpProxyUrl: httpProxyUrl,
   );
 
   MediaKitPlaybackEngine._({
     required MediaKitPlayerPort port,
     required Widget Function({Key? key}) buildVideoSurface,
+    void Function(String message)? log,
+    String? httpProxyUrl,
   }) : _port = port,
-       _buildVideoSurface = buildVideoSurface {
+       _buildVideoSurface = buildVideoSurface,
+       _log = log ?? _defaultLog {
     _subscriptions = [
       _port.playing.listen(_playingController.add),
       _port.buffering.listen(_bufferingController.add),
+      _port.buffer.listen(_bufferedController.add),
       _port.position.listen(_positionController.add),
       _port.duration.listen(_durationController.add),
       _port.error.listen(
         (message) =>
             _errorsController.add(redactSensitive(message, apiKey: '')),
       ),
+      // Straight to the console, never across `PlaybackEngine`: this is
+      // diagnostic output for whoever is reading logs, not state any UI
+      // layer should be shaping itself around, and keeping it off the
+      // interface means the fake engine every other test uses stays
+      // inert.
+      _port.log.listen((message) => _log(redactSensitive(message, apiKey: ''))),
     ];
+
+    // Fire-and-forget: each `setOption` waits for libmpv to finish
+    // starting up, which happens well before the first `open()` can be
+    // issued. Awaiting here would make constructing an engine async for
+    // no benefit.
+    unawaited(_applyNetworkTuning(httpProxyUrl));
   }
+
+  /// libmpv fetches media itself, in C, so it shares nothing with the
+  /// app's `http.Client` and has to be told about the proxy separately.
+  /// `http-proxy` is the only proxy control it has, which is why the
+  /// app's own hop is an HTTP proxy rather than a SOCKS client.
+  ///
+  /// There is deliberately no throughput tuning alongside it. A previous
+  /// version set `multiple_requests`, `cache`, `stream-buffer-size` and
+  /// `demuxer-readahead-secs` here, on the theory that a slow load was
+  /// connection churn. Measured against the real server, every one of
+  /// them was neutral or worse: `multiple_requests=1` pushed a 53-second
+  /// load past 240 seconds, and an 8 MiB stream buffer made libmpv read
+  /// 255 MB instead of 70 MB. The load is slow because libmpv reads a
+  /// piece of all 194 chunks of a coarsely interleaved mp4 before its
+  /// first frame, and no client-side option tried has any effect on
+  /// that. Do not add options back here without a measurement.
+  Future<void> _applyNetworkTuning(String? httpProxyUrl) async {
+    // Set only when there is one: an empty value is not the same as
+    // absent, and libmpv would try to use it.
+    if (httpProxyUrl != null) {
+      await _port.setOption('http-proxy', httpProxyUrl);
+    }
+  }
+
+  static void _defaultLog(String message) => logDiagnostic('mpv', message);
 
   final MediaKitPlayerPort _port;
   final Widget Function({Key? key}) _buildVideoSurface;
+  final void Function(String message) _log;
 
   late final List<StreamSubscription<void>> _subscriptions;
 
@@ -193,6 +273,8 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
       StreamController<bool>.broadcast();
+  final StreamController<Duration> _bufferedController =
+      StreamController<Duration>.broadcast();
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
   final StreamController<Duration> _durationController =
@@ -213,6 +295,9 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
   Stream<bool> get buffering => _bufferingController.stream;
 
   @override
+  Stream<Duration> get buffered => _bufferedController.stream;
+
+  @override
   Stream<Duration> get position => _positionController.stream;
 
   @override
@@ -225,8 +310,23 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
   Widget buildVideoSurface({Key? key}) => _buildVideoSurface(key: key);
 
   @override
-  Future<void> open(Uri uri, {bool play = false}) =>
-      _port.open(uri, play: play);
+  Future<void> open(Uri uri, {bool play = false, Duration? startAt}) async {
+    // `start` is read when mpv opens the file, so it has to be set
+    // before `open` rather than seeked to afterwards. The old shape
+    // (open, then seek) issued the seek into a demuxer that had no file
+    // yet: mpv rejected it outright (`error running command
+    // _command(seek, 31.1200, absolute)`, seen in a real session) and the
+    // scene played from zero, having also paid for a wasted reconnect.
+    await _port.setOption('start', _startValue(startAt));
+    await _port.open(uri, play: play);
+  }
+
+  /// Always set, never skipped: `start` persists across files, so a scene
+  /// with no resume position has to clear the previous scene's rather
+  /// than inherit it.
+  static String _startValue(Duration? startAt) => startAt == null
+      ? '0'
+      : (startAt.inMilliseconds / Duration.millisecondsPerSecond).toString();
 
   @override
   Future<void> play() => _port.play();
@@ -261,6 +361,7 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
     await Future.wait([
       _playingController.close(),
       _bufferingController.close(),
+      _bufferedController.close(),
       _positionController.close(),
       _durationController.close(),
       _errorsController.close(),
