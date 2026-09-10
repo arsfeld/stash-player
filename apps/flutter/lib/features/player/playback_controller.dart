@@ -257,6 +257,14 @@ class PlaybackController extends ChangeNotifier {
   /// [_openStream], so every attempt (the scene's initial open, an
   /// automatic ladder step, a reopen) starts unproven again.
   ///
+  /// It also decides whether a raw zero is applied to
+  /// [PlaybackState.position] at all: while an attempt is unproven such a
+  /// reading is the open's own reset rather than a place the stream is
+  /// at, and writing it would overwrite the position the opening path
+  /// just set. Once the attempt is proven, a zero is a real reading
+  /// again. The position listener in [_bindStreams] holds both halves of
+  /// that rule and the reasoning behind them.
+  ///
   /// One consequence is deliberate rather than overlooked: a stream
   /// sitting *paused* at raw zero never sets this. That is a real state
   /// and not a hypothetical one, since [loadScene] opens with
@@ -982,25 +990,37 @@ class PlaybackController extends ChangeNotifier {
     });
     _positionSubscription = _engine.position.listen((value) {
       if (_disposed || generation != _state.generation) return;
+      // Opening a stream emits a position of exactly zero on the way
+      // past: the engine stops whatever was playing first, and stopping
+      // resets the position, so this fires before the URL has even been
+      // handed to the decoder. Only a reading past zero is therefore
+      // about playback at all, and it has to be the raw engine reading
+      // rather than the scene-timeline one built below: a transcode
+      // carrying its offset in its URL reports that same reset as the
+      // offset, hundreds of seconds from zero.
+      final advanced = value > Duration.zero;
+
+      // A reset is dropped outright rather than merely disqualified as
+      // evidence, because applying it does real damage. Every path that
+      // opens or seeks ([loadScene], [_switchTo], [_reopenAt]) states
+      // where the stream is being opened itself, so the reset carries no
+      // information any of them needs and can only overwrite a correct
+      // value with a wrong one. On a stream with a real timeline
+      // [_streamStartOffset] is zero, so it overwrites with a literal
+      // zero on a scene that is genuinely minutes in, and marks that zero
+      // established: the next scene load then reports it as the outgoing
+      // scene's resume point and wipes the real one on the server, since
+      // the guard there refuses an *unknown* position but believes a
+      // stated zero. Nothing real is lost by dropping it, precisely
+      // because the value it would write is already there.
+      //
+      // Once the stream has advanced, a zero is genuine again (a seek
+      // back to the start, or a loop) and applies normally.
+      if (!advanced && !_currentStreamAdvanced) return;
+
       _state = _state.copyWith(position: _streamStartOffset + value);
       _positionEstablished = true;
-      // Only a reading past zero proves this attempt is playing, and it
-      // has to be the raw engine reading rather than the scene-timeline
-      // one built above. Opening a stream emits a position of exactly
-      // zero on the way past: the engine stops whatever was playing
-      // first, and stopping resets the position, so the event arrives
-      // before the URL has even been handed to the decoder. Treating any
-      // position event as progress therefore marked every stream as
-      // playing the instant it was opened, and a server's refusal
-      // moments later then read as a mid-playback decode hiccup to be
-      // ignored, so the ladder never walked for the one case it exists
-      // for. A real first tick is always strictly past zero on
-      // either clock (a stream with a timeline reports where it was
-      // opened, a transcode a fraction of a second), so this excludes the
-      // reset and nothing else. The scene-timeline value would not: a
-      // transcode carrying its offset in its URL reports that reset as
-      // the offset, hundreds of seconds from zero.
-      if (value > Duration.zero) _currentStreamAdvanced = true;
+      if (advanced) _currentStreamAdvanced = true;
       notifyListeners();
     });
     _durationSubscription = _engine.duration.listen((value) {

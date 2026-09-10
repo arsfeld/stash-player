@@ -3369,4 +3369,152 @@ void main() {
       },
     );
   });
+
+  group("an open's own position reset must never become a resume point", () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    // Direct plus HLS, so the ladder's one step lands on another stream
+    // with a real timeline. That is the combination at risk: a
+    // real-timeline rung is opened with the offset handed to the engine,
+    // leaving `_streamStartOffset` at zero, so the open's own reset maps
+    // to a literal zero rather than being absorbed by the offset the way
+    // a progressive transcode's is.
+    Scene realTimelineLadder({String id = 'a'}) => _sceneWith(
+      id: id,
+      stream: 'scene/$id/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/$id/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/$id/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+      ],
+    );
+
+    test('a scene ten minutes in keeps its real resume point when the '
+        'ladder steps to HLS and the viewer leaves before it plays', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              calls.add((
+                id: id,
+                resumeTime: resumeTime,
+                playDuration: playDuration,
+              ));
+            },
+      );
+      await controller.loadScene(realTimelineLadder());
+      engine.emitPosition(const Duration(seconds: 600));
+      await pumpEventQueue();
+      calls.clear();
+
+      // The direct stream stalls, so the ladder steps onto HLS, which is
+      // opened at 600s.
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+
+      // The reset that open emits, before HLS has fetched anything.
+      engine.emitPosition(Duration.zero);
+      await pumpEventQueue();
+      expect(controller.state.position, const Duration(seconds: 600));
+
+      // HLS is still fetching its first segment, which is why the viewer
+      // gives up on this scene and opens another one. The window is as
+      // long as that fetch takes, not a matter of microtasks.
+      await controller.loadScene(_sceneWith(id: 'b', duration: 100));
+      await pumpEventQueue();
+
+      expect(calls.where((call) => call.id == 'a'), hasLength(1));
+      expect(
+        calls.firstWhere((call) => call.id == 'a').resumeTime,
+        600.0,
+        reason: 'reporting 0.0 here wipes the real resume point on the server',
+      );
+    });
+
+    test('a scene genuinely at the start still reports a real zero rather '
+        'than going unknown', () async {
+      final engine = FakePlaybackEngine();
+      final calls = <({String id, double resumeTime, double playDuration})>[];
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) async {
+              calls.add((
+                id: id,
+                resumeTime: resumeTime,
+                playDuration: playDuration,
+              ));
+            },
+      );
+      // No resume point, so this scene really is at zero. Dropping the
+      // open's reset must not cost it a *stated* position: `loadScene`
+      // establishes that itself, and zero is a real answer there.
+      await controller.loadScene(realTimelineLadder());
+      engine.emitPosition(Duration.zero);
+      await pumpEventQueue();
+      calls.clear();
+
+      await controller.loadScene(_sceneWith(id: 'b', duration: 100));
+      await pumpEventQueue();
+
+      expect(calls.where((call) => call.id == 'a'), hasLength(1));
+      expect(calls.firstWhere((call) => call.id == 'a').resumeTime, 0.0);
+    });
+
+    test('a zero from a stream that has already played is a real reading '
+        'and still moves the position', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(realTimelineLadder());
+      engine.emitPosition(const Duration(seconds: 600));
+      await pumpEventQueue();
+
+      // Back to the start, under its own power: a loop, or a seek the
+      // engine performed. Nothing about this attempt is unproven any
+      // more, so the reading is believed.
+      engine.emitPosition(Duration.zero);
+      await pumpEventQueue();
+
+      expect(controller.state.position, Duration.zero);
+    });
+
+    test('a transcode reopened at a target keeps it when the reopen emits '
+        'its reset', () async {
+      final engine = FakePlaybackEngine();
+      final timers = _ManualTimers();
+      final controller = _buildController(
+        engine: engine,
+        stallTimerFactory: timers.call,
+      );
+      // No endpoint list, so the ladder is direct -> MP4: one stall lands
+      // on the progressive transcode, where seeking is a reopen.
+      await controller.loadScene(
+        _sceneWith(stream: 'scene/s1/stream', duration: 2000),
+      );
+      engine.emitBuffering(true);
+      await pumpEventQueue();
+      timers.latest.fire();
+      await pumpEventQueue();
+
+      await controller.seekAbsolute(const Duration(seconds: 900));
+      engine.emitPosition(Duration.zero);
+      await pumpEventQueue();
+
+      expect(controller.state.position, const Duration(seconds: 900));
+    });
+  });
 }
