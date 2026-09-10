@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../domain/failure.dart';
 import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
+import '../domain/scene_stream.dart';
 import 'authenticated_url.dart';
 import 'stash_api.dart';
 
@@ -44,6 +45,7 @@ query FindScene($id: ID!) {
     files { path duration width height video_codec audio_codec format size bit_rate frame_rate }
     studio { id name }
     performers { id name }
+    sceneStreams { url label }
   }
 }
 ''';
@@ -262,6 +264,12 @@ Scene _decodeScene(Map<String, Object?> source) => Scene(
             (performer) => _decodePerformer(_asMap(performer, 'performers[]')),
           )
           .toList(growable: false),
+  streams:
+      (source['sceneStreams'] == null
+              ? const <Object?>[]
+              : _asList(source['sceneStreams'], 'sceneStreams'))
+          .map((stream) => _decodeSceneStream(_asMap(stream, 'sceneStreams[]')))
+          .toList(growable: false),
 );
 
 ScenePaths _decodePaths(Map<String, Object?> source) => ScenePaths(
@@ -281,6 +289,12 @@ SceneFile _decodeFile(Map<String, Object?> source) => SceneFile(
   bitRate: _optionalInt(source, 'bit_rate'),
   frameRate: _optionalDouble(source, 'frame_rate'),
 );
+
+SceneStream _decodeSceneStream(Map<String, Object?> source) =>
+    SceneStream.fromEndpoint(
+      url: _requiredString(source, 'url'),
+      label: _optionalString(source, 'label'),
+    );
 
 StudioRef _decodeStudio(Map<String, Object?> source) => StudioRef(
   id: _requiredString(source, 'id'),

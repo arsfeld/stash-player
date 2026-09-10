@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
+import 'package:stash_player_flutter/domain/scene_stream.dart';
 import 'package:stash_player_flutter/services/http_stash_api.dart';
 
 void main() {
@@ -464,6 +465,66 @@ void main() {
     );
 
     expect(() => api.incrementO('1001'), throwsA(isA<FormatFailure>()));
+  });
+
+  group('sceneStreams', () {
+    test('asks for the endpoint list on the single-scene query only, so the '
+        'library page does not pay for it', () {
+      expect(findSceneDocument, contains('sceneStreams { url label }'));
+      expect(findScenesDocument, isNot(contains('sceneStreams')));
+    });
+
+    test(
+      'decodes the endpoints Stash returned, in the order it sent them',
+      () async {
+        final api = HttpStashApi(
+          baseUri: Uri.parse('https://stash.test'),
+          apiKey: '',
+          client: RecordingClient(
+            '{"data":{"findScene":{"id":"1","paths":{},"sceneStreams":['
+            '{"url":"https://stash.test/scene/1/stream","label":"Direct stream"},'
+            '{"url":"https://stash.test/scene/1/stream.m3u8?resolution=ORIGINAL",'
+            '"label":"HLS"}]}}}',
+          ),
+        );
+
+        final scene = await api.findScene('1');
+
+        expect(scene!.streams, hasLength(2));
+        expect(scene.streams.first.kind, StreamKind.direct);
+        expect(scene.streams.last.kind, StreamKind.hls);
+        expect(scene.streams.last.label, 'HLS');
+      },
+    );
+
+    test('an absent field decodes to an empty list, so an older Stash still '
+        'plays', () async {
+      final api = HttpStashApi(
+        baseUri: Uri.parse('https://stash.test'),
+        apiKey: '',
+        client: RecordingClient('{"data":{"findScene":{"id":"1","paths":{}}}}'),
+      );
+
+      final scene = await api.findScene('1');
+
+      expect(scene!.streams, isEmpty);
+    });
+
+    test('a null label falls back to the kind name, since the schema allows '
+        'one', () async {
+      final api = HttpStashApi(
+        baseUri: Uri.parse('https://stash.test'),
+        apiKey: '',
+        client: RecordingClient(
+          '{"data":{"findScene":{"id":"1","paths":{},"sceneStreams":['
+          '{"url":"https://stash.test/scene/1/stream.mp4","label":null}]}}}',
+        ),
+      );
+
+      final scene = await api.findScene('1');
+
+      expect(scene!.streams.single.label, 'MP4');
+    });
   });
 }
 

@@ -1,3 +1,5 @@
+import 'scene_stream.dart';
+
 class ScenePage {
   ScenePage({required this.total, required List<Scene> scenes})
     : scenes = List.unmodifiable(scenes);
@@ -21,8 +23,10 @@ class Scene {
     List<SceneFile> files = const [],
     this.studio,
     List<PerformerRef> performers = const [],
+    List<SceneStream> streams = const [],
   }) : files = List.unmodifiable(files),
-       performers = List.unmodifiable(performers);
+       performers = List.unmodifiable(performers),
+       streams = List.unmodifiable(streams);
 
   final String id;
   final ScenePaths paths;
@@ -43,6 +47,18 @@ class Scene {
   final List<SceneFile> files;
   final StudioRef? studio;
   final List<PerformerRef> performers;
+
+  /// Every way Stash says this scene can be played, in the order it
+  /// listed them: the original file first when its audio codec is valid
+  /// for its container, then the MP4, WEBM, HLS and DASH transcodes at
+  /// each resolution the server will serve.
+  ///
+  /// Empty on an older Stash, or for a scene with no primary file. A
+  /// listing is not a promise: the endpoint list is filtered only on the
+  /// server's maximum transcode size and the file's own resolution, so a
+  /// server with no cache dir advertises HLS here and then refuses to
+  /// serve it.
+  final List<SceneStream> streams;
 
   String get displayTitle {
     if (title case final String value when value.isNotEmpty) return value;
