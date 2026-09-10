@@ -3187,4 +3187,92 @@ void main() {
       expect(controller.state.failure, contains('***'));
     });
   });
+
+  group('telling a load failure apart from a decode hiccup', () {
+    // Local to the group, so no leading underscore: flutter_lints enables
+    // no_leading_underscores_for_local_identifiers and the gate runs
+    // analyze --fatal-infos.
+    //
+    // `PlaybackEngine.errors` is not exclusively a load-failure channel:
+    // the real engine also forwards mpv's own decoder error lines, which
+    // fire on a corrupt or partially-arrived frame mid-playback and which
+    // mpv recovers from on its own. A report that arrives once the
+    // stream has already produced a real position must not be treated as
+    // a load failure.
+    SceneStream endpoint(String url, String label) =>
+        SceneStream.fromEndpoint(url: url, label: label);
+
+    Scene fullScene() => _sceneWith(
+      stream: 'scene/s1/stream',
+      duration: 2000,
+      streams: [
+        endpoint('https://stash.example/scene/s1/stream', 'Direct stream'),
+        endpoint(
+          'https://stash.example/scene/s1/stream.m3u8?resolution=ORIGINAL',
+          'HLS',
+        ),
+        endpoint(
+          'https://stash.example/scene/s1/stream.mp4?resolution=ORIGINAL',
+          'MP4',
+        ),
+      ],
+    );
+
+    test('an error before playback established still advances the '
+        'ladder, as it does today', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.commands.clear();
+
+      // No position event fired yet: the direct stream has never proven
+      // it is actually playing.
+      engine.emitError('503 Live transcoding disabled');
+      await pumpEventQueue();
+
+      final opens = engine.commands.whereType<OpenCommand>();
+      expect(opens, hasLength(1));
+      expect(opens.single.uri.path, endsWith('/stream.m3u8'));
+      expect(controller.state.streams!.current.kind, StreamKind.hls);
+      expect(controller.state.phase, PlaybackPhase.ready);
+    });
+
+    test('an error line after the stream has started playing does not '
+        'walk the ladder and does not reopen', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.emitPosition(const Duration(seconds: 4));
+      await pumpEventQueue(); // the direct stream has genuinely played
+      engine.commands.clear();
+
+      engine.emitError('Error while decoding frame!');
+      await pumpEventQueue();
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.streams!.current.kind, StreamKind.direct);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+    });
+
+    test('a repeating decode error during healthy playback never fails '
+        'the scene', () async {
+      final engine = FakePlaybackEngine();
+      final controller = _buildController(engine: engine);
+      await controller.loadScene(fullScene());
+      engine.emitPosition(const Duration(seconds: 4));
+      await pumpEventQueue();
+      engine.commands.clear();
+
+      for (var i = 0; i < 5; i++) {
+        engine.emitError('Error while decoding frame!');
+        await pumpEventQueue();
+      }
+
+      expect(engine.commands.whereType<OpenCommand>(), isEmpty);
+      expect(controller.state.streams!.current.kind, StreamKind.direct);
+      expect(controller.state.phase, PlaybackPhase.ready);
+      expect(controller.state.failure, isNull);
+    });
+  });
 }

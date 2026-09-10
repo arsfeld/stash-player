@@ -242,6 +242,18 @@ class PlaybackController extends ChangeNotifier {
   /// same-rung reopen, since that rung already had its one trial).
   bool _rungTrialUsed = false;
 
+  /// Whether the currently *open* stream (this specific [_openStream]
+  /// attempt, not the scene as a whole) has produced real evidence of
+  /// playing: a `position` event. Deliberately not `_state.playing`,
+  /// which only tracks the engine's pause state and would already be
+  /// `true` the instant an `open(play: true)` call returns, before a
+  /// single frame has actually arrived. Reset to `false` at the top of
+  /// [_openStream], so every attempt (the scene's initial open, an
+  /// automatic ladder step, a reopen) starts unproven again; set `true`
+  /// by the position listener in [_bindStreams]. See
+  /// [_handleStreamError]'s own doc for what this is protecting against.
+  bool _currentStreamAdvanced = false;
+
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
   StreamSubscription<Duration>? _bufferedSubscription;
@@ -499,6 +511,9 @@ class PlaybackController extends ChangeNotifier {
     if (_disposed || generation != _state.generation) return;
     final config = _connection;
     if (config == null) return;
+
+    // A fresh attempt, unproven again: see this field's own doc.
+    _currentStreamAdvanced = false;
 
     final authenticated = authenticatedUrl(
       Uri.parse(config.serverUrl),
@@ -946,6 +961,7 @@ class PlaybackController extends ChangeNotifier {
       if (_disposed || generation != _state.generation) return;
       _state = _state.copyWith(position: _streamStartOffset + value);
       _positionEstablished = true;
+      _currentStreamAdvanced = true;
       notifyListeners();
     });
     _durationSubscription = _engine.duration.listen((value) {
@@ -962,6 +978,7 @@ class PlaybackController extends ChangeNotifier {
       notifyListeners();
     });
     _rungTrialUsed = false;
+    _currentStreamAdvanced = false;
     _bindErrorsSubscription(generation);
   }
 
@@ -985,6 +1002,23 @@ class PlaybackController extends ChangeNotifier {
   /// fails it after `open` already returned: real playback is
   /// asynchronous, so `open` itself never throws for a refusal, only the
   /// errors stream reports it, later.
+  ///
+  /// [PlaybackEngine.errors] is not exclusively a load-failure channel.
+  /// The real engine forwards mpv's own error-level log lines for
+  /// several source prefixes, two of which (`vd`/`ad`, its video/audio
+  /// decoders) report a corrupt or partially-arrived frame mid-playback:
+  /// mpv recovers from those on its own, by design, and they can repeat
+  /// throughout an otherwise perfectly healthy scene. Nothing on this
+  /// stream says which kind of line a given message is, so this method
+  /// tells them apart the way [_currentStreamAdvanced] already can: a
+  /// report that arrives before the currently open stream has ever
+  /// produced a real position is treated as evidence the *load* failed,
+  /// and the ladder logic below applies; a report arriving after
+  /// playback is already established is a decode hiccup, not a load
+  /// failure, and is ignored outright. A genuine mid-stream death is
+  /// still caught, just through the correct channel: playback actually
+  /// stopping shows up as `buffering` going true with nothing arriving,
+  /// which is [_onStallDeadline]'s job, not this one.
   ///
   /// Unlike a thrown `open`, a message on this stream carries no
   /// identity: there is no way to tell whether it describes the rung
@@ -1022,6 +1056,10 @@ class PlaybackController extends ChangeNotifier {
   /// terminal branch directly.
   Future<void> _handleStreamError(String message, int generation) async {
     if (_disposed || generation != _state.generation) return;
+    // Already proven to be playing: a decode hiccup, not a load failure
+    // (see this method's own doc). mpv handles it; this controller
+    // doesn't need to.
+    if (_currentStreamAdvanced) return;
 
     final selection = _state.streams;
     if (selection != null && !selection.isManual && !_rungTrialUsed) {
