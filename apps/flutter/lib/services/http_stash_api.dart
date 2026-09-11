@@ -81,6 +81,12 @@ query JobQueue {
 }
 ''';
 
+const String findJobDocument = r'''
+query FindJob($input: FindJobInput!) {
+  findJob(input: $input) { id status description progress error }
+}
+''';
+
 const String _versionDocument = 'query Version { version { version } }';
 
 class HttpStashApi implements StashApi {
@@ -163,6 +169,20 @@ class HttpStashApi implements StashApi {
         .map((job) => _decodeJob(_asMap(job, 'jobQueue[]'), apiKey: apiKey))
         .toList(growable: false);
   });
+
+  @override
+  Future<Job?> findJob(String id) => _post(
+    findJobDocument,
+    {
+      'input': {'id': id},
+    },
+    (data) {
+      final job = data['findJob'];
+      return job == null
+          ? null
+          : _decodeJob(_asMap(job, 'findJob'), apiKey: apiKey);
+    },
+  );
 
   /// Both O-counter mutations have the same shape: one `ID!`, one
   /// integer back. Shared so the two can never disagree about how a

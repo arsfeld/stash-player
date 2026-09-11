@@ -636,6 +636,37 @@ void main() {
 
       expect(apiFor(transport).jobQueue(), throwsA(isA<GraphQlFailure>()));
     });
+
+    test('findJob asks for one job by id and decodes how it ended, with its '
+        'error redacted', () async {
+      final transport = RecordingClient(
+        '{"data":{"findJob":{"id":"42","status":"FAILED",'
+        '"description":"Scanning...","progress":null,'
+        '"error":"SECRET could not read"}}}',
+      );
+
+      final job = await apiFor(transport, apiKey: 'SECRET').findJob('42');
+
+      expect(transport.lastQuery, contains('findJob(input: \$input)'));
+      expect(transport.lastVariables, {
+        'input': {'id': '42'},
+      });
+      expect(
+        job,
+        const Job(
+          id: '42',
+          status: JobStatus.failed,
+          description: 'Scanning...',
+          error: '*** could not read',
+        ),
+      );
+    });
+
+    test('findJob returns null for a job Stash no longer knows', () async {
+      final transport = RecordingClient('{"data":{"findJob":null}}');
+
+      expect(await apiFor(transport).findJob('42'), isNull);
+    });
   });
 }
 

@@ -5,7 +5,7 @@ Implements the subset of the Stash schema that stash-player consumes:
   - version
   - findScenes / findScene
   - sceneSaveActivity, sceneIncrementO, sceneResetO
-  - metadataScan / jobQueue (a fake scan that runs for a few seconds)
+  - metadataScan / jobQueue / findJob (a fake scan that runs for a few seconds)
 
 Thumbnails come from `./thumbs/<id>.jpg` (regenerate via gen_thumbs.sh).
 The data set is 12 SFW landscape-themed scenes — safe for screenshots
@@ -43,6 +43,11 @@ ACTIVITY_LOG = []
 SCAN_SECONDS = 6.0
 JOBS = {}
 NEXT_JOB_ID = [100]
+
+# Ids `JobQueue` has popped from `JOBS`, so `FindJob` can still answer for
+# them — mirrors how a real Stash keeps a job's final status reachable by
+# id after `jobQueue` stops listing it.
+ENDED_JOBS = set()
 
 STUDIOS = [
     {"id": "S1", "name": "Open Frame"},
@@ -221,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/__test__/reset":
             ACTIVITY_LOG.clear()
             JOBS.clear()
+            ENDED_JOBS.clear()
             return self._json({"reset": True})
         if not self.path.startswith("/graphql"):
             self.send_response(404); self.end_headers(); return
@@ -292,6 +298,7 @@ class Handler(BaseHTTPRequestHandler):
                 elapsed = now - started
                 if elapsed >= SCAN_SECONDS:
                     JOBS.pop(job_id, None)
+                    ENDED_JOBS.add(job_id)
                     continue
                 queue.append({
                     "id": job_id,
@@ -301,6 +308,22 @@ class Handler(BaseHTTPRequestHandler):
                     "error": None,
                 })
             return self._json({"data": {"jobQueue": queue or None}})
+
+        if op == "FindJob":
+            job_id = str(((variables.get("input") or {}).get("id")))
+            if job_id in JOBS:
+                return self._json({"data": {"findJob": {
+                    "id": job_id, "status": "RUNNING",
+                    "description": "Scanning...", "progress": None,
+                    "error": None,
+                }}})
+            if job_id in ENDED_JOBS:
+                return self._json({"data": {"findJob": {
+                    "id": job_id, "status": "FINISHED",
+                    "description": "Scanning...", "progress": 1,
+                    "error": None,
+                }}})
+            return self._json({"data": {"findJob": None}})
 
         return self._json({"errors": [{"message": f"unknown op: {op!r}"}]}, 400)
 

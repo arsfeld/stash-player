@@ -373,6 +373,9 @@ class _DeferredStashApi implements StashApi {
 
   @override
   Future<List<Job>> jobQueue() async => (await _resolved).jobQueue();
+
+  @override
+  Future<Job?> findJob(String id) async => (await _resolved).findJob(id);
 }
 
 /// The library's controller. Rebuilt from scratch — a fresh

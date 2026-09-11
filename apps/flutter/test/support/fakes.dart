@@ -293,6 +293,23 @@ class FakeStashApi implements StashApi {
     }
     return completer.future;
   }
+
+  /// `findJob` results consumed in call order. Empty means `null`, a job
+  /// Stash no longer knows.
+  final List<Job?> findJobResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [findJobResults].
+  final List<Object> findJobFailures = [];
+
+  /// Every id `findJob` was asked for, in order.
+  final List<String> findJobCalls = [];
+
+  @override
+  Future<Job?> findJob(String id) async {
+    findJobCalls.add(id);
+    if (findJobFailures.isNotEmpty) throw findJobFailures.removeAt(0);
+    return findJobResults.isNotEmpty ? findJobResults.removeAt(0) : null;
+  }
 }
 
 /// One recorded `incrementO`/`resetO` call. [isReset] rather than two

@@ -578,5 +578,114 @@ void main() {
         expect(async.pendingTimers, isEmpty);
       });
     });
+
+    test('a job that leaves the queue is looked up to learn it failed, since '
+        'Stash only lists jobs that have not ended', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.metadataScanResults.add('42');
+        api.jobQueueResults.add([_job('42', JobStatus.running)]);
+        api.findJobResults.add(
+          _job('42', JobStatus.failed, error: 'disk gone'),
+        );
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval);
+
+        expect(api.findJobCalls, ['42']);
+        expect(outcomes, [ScanOutcome.failed]);
+        expect(tasks.rows, [
+          const Job(
+            id: localScanRowId,
+            status: JobStatus.failed,
+            description: 'Scan failed',
+            error: 'disk gone',
+          ),
+        ]);
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('a job looked up as cancelled ends the scan as cancelled', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.metadataScanResults.add('42');
+        api.findJobResults.add(_job('42', JobStatus.cancelled));
+
+        tasks.startScan();
+        async.flushMicrotasks();
+
+        expect(outcomes, [ScanOutcome.cancelled]);
+        expect(tasks.rows.single.description, 'Scan cancelled');
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('a lookup that finds nothing, or fails, ends the scan as '
+        'completed', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.metadataScanResults.addAll(['42', '43']);
+        api.findJobFailures.add(const TransportFailure());
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(outcomes, [ScanOutcome.completed]);
+
+        async.elapse(scanEndedRowDuration);
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(outcomes, [ScanOutcome.completed, ScanOutcome.completed]);
+        expect(api.findJobCalls, ['42', '43']);
+
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('only the followed job is ever looked up, and only once it has '
+        'left the queue', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.jobQueueResults.add([_job('7', JobStatus.running)]);
+
+        tasks.refresh();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval);
+
+        expect(api.findJobCalls, isEmpty);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('listeners already see the ended scan when onScanEnded runs', () {
+      fakeAsync((async) {
+        final events = <String>[];
+        late final TasksController tasks;
+        tasks = TasksController(
+          api: api,
+          onScanEnded: (outcome) => events.add(
+            'ended, rows: ${tasks.rows.map((row) => row.description).join()}',
+          ),
+        );
+        tasks.addListener(() => events.add('notified'));
+        api.metadataScanResults.add('42');
+
+        tasks.startScan();
+        async.flushMicrotasks();
+
+        expect(events.last, 'ended, rows: Scan complete');
+        expect(events[events.length - 2], 'notified');
+        async.elapse(scanEndedRowDuration);
+        tasks.dispose();
+      });
+    });
   });
 }

@@ -36,4 +36,10 @@ abstract interface class StashApi {
   /// Stash's queued and running jobs. Empty when the server reports none.
   /// A job leaves the queue once it ends.
   Future<List<Job>> jobQueue();
+
+  /// The job with [id], whether it is still queued or among the few Stash
+  /// keeps after they end (it forgets all but its ten most recent). Null
+  /// when Stash no longer knows it. A job's final status is only visible
+  /// here: it leaves [jobQueue] the moment it ends.
+  Future<Job?> findJob(String id);
 }

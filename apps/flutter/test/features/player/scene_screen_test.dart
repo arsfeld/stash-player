@@ -152,6 +152,9 @@ class _TestStashApi implements StashApi {
 
   @override
   Future<List<Job>> jobQueue() async => const [];
+
+  @override
+  Future<Job?> findJob(String id) async => null;
 }
 
 class _RecordingUrlLauncher implements ExternalUrlLauncher {

@@ -41,10 +41,15 @@ enum ScanOutcome { completed, failed, cancelled }
 /// what lets a scan queued behind someone else's job end when its own job
 /// ends, not when the whole queue drains. Only a fetch started after the
 /// id is known may judge it: a snapshot asked for before the job existed
-/// would otherwise read as the job having already finished. The scan has
-/// ended once its id is gone from the queue or reaches a status that is
-/// not active; the `onScanEnded` callback then fires once, and a row
-/// saying how it ended is listed for [scanEndedRowDuration].
+/// would otherwise read as the job having already finished. A listed job
+/// with a terminal status ends the scan that way outright; Stash instead
+/// usually drops a job from the queue the moment it ends, so once a
+/// judging fetch finds the id gone, `findJob` is asked how it ended
+/// (`FAILED`, `CANCELLED`, anything else read as completed) before the
+/// scan is called over. The `onScanEnded` callback then fires exactly
+/// once, after listeners have already been told (so the popover already
+/// shows the ended row by the time it runs), and a row saying how the
+/// scan ended is listed for [scanEndedRowDuration].
 ///
 /// **Failed fetches.** A failed fetch keeps the last known jobs. After
 /// [maxConsecutiveFetchFailures] in a row they are too old to act on: the
@@ -184,12 +189,29 @@ class TasksController extends ChangeNotifier {
       // resolving the connection behind `DeferredStashApi`: either way
       // this fetch told us nothing, and `jobs` stays null.
     }
+
+    // The followed job just left this fetch's snapshot: Stash drops a job
+    // from the queue the moment it ends, so its absence says nothing on
+    // its own until `findJob` (which also searches the few most recently
+    // ended jobs) has had a chance to say how. Looked up here, still
+    // inside `_fetching`, so a fetch asked for meanwhile still folds into
+    // `_fetchAgain` instead of racing this lookup.
+    Job? lookedUpJob;
+    final scan = _scan;
+    if (jobs != null &&
+        !_disposed &&
+        scan is _ScanFollowing &&
+        serial > scan.judgeAfter &&
+        !jobs.any((job) => job.id == scan.jobId)) {
+      lookedUpJob = await _lookUpEndedJob(scan.jobId);
+    }
+
     _fetching = false;
     if (_disposed) return;
     if (jobs == null) {
       _fetchFailed();
     } else {
-      _fetched(jobs, serial);
+      _fetched(jobs, serial, lookedUpJob);
     }
     if (_fetchAgain) {
       _fetchAgain = false;
@@ -199,31 +221,45 @@ class TasksController extends ChangeNotifier {
     }
   }
 
-  void _fetched(List<Job> jobs, int serial) {
+  void _fetched(List<Job> jobs, int serial, Job? lookedUpJob) {
     _jobs = List.unmodifiable(jobs);
     _lastFetchFailed = false;
     _consecutiveFailures = 0;
     final scan = _scan;
-    if (scan is _ScanFollowing && serial > scan.judgeAfter) _judge(scan);
+    final endedOutcome = scan is _ScanFollowing && serial > scan.judgeAfter
+        ? _judge(scan, lookedUpJob)
+        : null;
+    // Listeners (the Tasks dot, the popover) hear about the ended state
+    // before the callback runs, so a caller reading `rows` or
+    // `hasActiveWork` from inside `onScanEnded` already sees it, and a
+    // callback that throws still leaves listeners told.
     notifyListeners();
+    if (endedOutcome != null) _onScanEnded(endedOutcome);
   }
 
-  void _judge(_ScanFollowing scan) {
-    final job = _jobs.where((job) => job.id == scan.jobId).firstOrNull;
-    if (job != null && job.isActive) {
+  /// Decides whether the followed job is still going, and if not, how it
+  /// ended. Returns the outcome exactly when the scan just ended, so the
+  /// caller can notify listeners before telling `onScanEnded`.
+  ScanOutcome? _judge(_ScanFollowing scan, Job? lookedUpJob) {
+    final listed = _jobs.where((job) => job.id == scan.jobId).firstOrNull;
+    if (listed != null && listed.isActive) {
       if (!scan.seen) _scan = scan.markSeen();
-      return;
+      return null;
     }
-    // Absent counts as finished: Stash queues the job before
-    // `metadataScan` returns, so an id missing from a fetch started
-    // afterwards is one it has already dropped. An unrecognised status
-    // ends it too, so this client can never follow a job forever.
+    // A listed job past `isActive` (a terminal status Stash reported
+    // before removing it) is trusted outright; otherwise the job is gone
+    // from the queue, and only `lookedUpJob` (from `findJob`, or null
+    // when Stash no longer knows it either) can say how it ended. An
+    // unrecognised status ends it too, so this client can never follow a
+    // job forever.
+    final job = listed ?? lookedUpJob;
     final outcome = switch (job?.status) {
       JobStatus.failed => ScanOutcome.failed,
       JobStatus.cancelled => ScanOutcome.cancelled,
       _ => ScanOutcome.completed,
     };
     _endScan(scan.jobId, outcome, error: job?.error);
+    return outcome;
   }
 
   void _endScan(String jobId, ScanOutcome outcome, {String? error}) {
@@ -251,7 +287,19 @@ class TasksController extends ChangeNotifier {
       _scan = const _ScanIdle();
       notifyListeners();
     });
-    _onScanEnded(outcome);
+  }
+
+  /// How a job that has left the queue ended. Stash drops a job from
+  /// `jobQueue` the moment it ends, final status and all; only `findJob`,
+  /// which also searches its ten most recently ended jobs, can still say.
+  /// Not knowing is no reason to keep following a job that is gone, so a
+  /// failed lookup reads as no answer.
+  Future<Job?> _lookUpEndedJob(String id) async {
+    try {
+      return await _api.findJob(id);
+    } catch (_) {
+      return null;
+    }
   }
 
   void _fetchFailed() {
