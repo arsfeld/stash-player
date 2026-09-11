@@ -77,6 +77,11 @@ class TasksController extends ChangeNotifier {
   bool _lastFetchFailed = false;
   int _consecutiveFailures = 0;
 
+  /// Bumped as each [startScan] starts. Carried on [_ScanRequesting] so a
+  /// continuation resuming after an `await` can tell whether it is still
+  /// the scan in progress, or a later one has since taken its place.
+  int _scanToken = 0;
+
   bool _fetching = false;
   bool _fetchAgain = false;
 
@@ -148,22 +153,33 @@ class TasksController extends ChangeNotifier {
     if (_disposed || hasActiveWork) return;
     _endedRowTimer?.cancel();
     _endedRowTimer = null;
-    _scan = const _ScanRequesting();
+    final token = ++_scanToken;
+    _scan = _ScanRequesting(token);
     notifyListeners();
 
     final String jobId;
     try {
       jobId = await _api.metadataScan();
     } catch (_) {
-      if (!_disposed && _scan is _ScanRequesting) {
+      // Only clear `_scan` back to idle if it is still this scan: a
+      // failure streak, or a newer startScan replacing this one, must not
+      // be undone by this scan's own late failure.
+      final scan = _scan;
+      if (!_disposed && scan is _ScanRequesting && scan.token == token) {
         _scan = const _ScanIdle();
         notifyListeners();
       }
       rethrow;
     }
     // Three failed polls while the mutation was in flight can already have
-    // dropped the scan.
-    if (_disposed || _scan is! _ScanRequesting) return;
+    // dropped the scan, or a later startScan can already have replaced it;
+    // either way only this scan's own token may act on it here.
+    final scan = _scan;
+    if (_disposed || scan is! _ScanRequesting || scan.token != token) return;
+    // A successful mutation is itself proof the server is answering: don't
+    // let a failure streak built up before this scan reach the threshold
+    // and drop a scan that just started.
+    _consecutiveFailures = 0;
     _scan = _ScanFollowing(jobId, judgeAfter: _fetchSerial);
     notifyListeners();
     await _fetch();
@@ -341,9 +357,12 @@ final class _ScanIdle extends _Scan {
   const _ScanIdle();
 }
 
-/// `metadataScan` is in flight.
+/// `metadataScan` is in flight for scan [token].
 final class _ScanRequesting extends _Scan {
-  const _ScanRequesting();
+  const _ScanRequesting(this.token);
+
+  /// See [TasksController._scanToken].
+  final int token;
 }
 
 final class _ScanFollowing extends _Scan {

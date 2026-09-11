@@ -698,6 +698,151 @@ void main() {
         tasks.dispose();
       });
     });
+
+    test('a successful scan clears an existing failure streak', () {
+      // Without the fix, two stale failures left over from an earlier idle
+      // poll, plus one more transient failure right as this scan starts
+      // following, would already reach the threshold and drop it.
+      fakeAsync((async) {
+        final tasks = build();
+        api.jobQueueFailures.addAll([
+          const TransportFailure(),
+          const TransportFailure(),
+        ]);
+
+        tasks.popoverOpened();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval);
+        expect(api.jobQueueCalls, hasLength(2));
+        tasks.popoverClosed();
+        expect(async.pendingTimers, isEmpty);
+
+        api.metadataScanResults.add('42');
+        api.jobQueueFailures.add(const TransportFailure());
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(tasks.hasActiveWork, isTrue);
+        expect(outcomes, isEmpty);
+
+        api.jobQueueResults.add([_job('42', JobStatus.running)]);
+        async.elapse(tasksPollInterval);
+        expect(tasks.hasActiveWork, isTrue);
+
+        // The fake's default idle queue: job 42 has left it.
+        async.elapse(tasksPollInterval);
+        expect(outcomes, [ScanOutcome.completed]);
+        expect(tasks.hasActiveWork, isFalse);
+
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('a late continuation cannot act on a newer scan', () {
+      // Both scans' metadataScan calls are held so each can be resolved
+      // independently, and in an order that lands the first scan's return
+      // while the second is still requesting, not yet following.
+      fakeAsync((async) {
+        final tasks = build();
+        api.holdMetadataScan = true;
+        api.jobQueueFailures.addAll(
+          List.filled(maxConsecutiveFetchFailures, const TransportFailure()),
+        );
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        tasks.popoverOpened();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval * (maxConsecutiveFetchFailures - 1));
+        // The failure streak dropped the first scan while its mutation
+        // was still in flight.
+        expect(tasks.hasActiveWork, isFalse);
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(api.metadataScanCalls, hasLength(2));
+        expect(tasks.hasActiveWork, isTrue);
+        expect(tasks.rows, [_startingRow]);
+
+        // The first scan's mutation finally returns while the second is
+        // still requesting. It must not be adopted as the scan followed.
+        api.metadataScanCalls[0].complete('42');
+        async.flushMicrotasks();
+        expect(tasks.rows, [_startingRow]);
+        expect(outcomes, isEmpty);
+
+        // The second scan's own mutation resolves and is the one followed.
+        api.jobQueueResults.add([_job('99', JobStatus.running)]);
+        api.metadataScanCalls[1].complete('99');
+        async.flushMicrotasks();
+        expect(tasks.rows, [_job('99', JobStatus.running)]);
+
+        async.elapse(tasksPollInterval);
+        expect(outcomes, [ScanOutcome.completed]);
+        expect(api.findJobCalls, ['99']);
+        expect(tasks.hasActiveWork, isFalse);
+
+        tasks.popoverClosed();
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('a late continuation that fails cannot reset a newer requesting '
+        'scan', () {
+      // Mirrors the previous test on the catch path: the first scan's
+      // mutation fails late instead of succeeding late.
+      fakeAsync((async) {
+        final tasks = build();
+        api.holdMetadataScan = true;
+        api.jobQueueFailures.addAll(
+          List.filled(maxConsecutiveFetchFailures, const TransportFailure()),
+        );
+        Object? firstScanError;
+
+        tasks.startScan().catchError((Object error) {
+          firstScanError = error;
+        });
+        async.flushMicrotasks();
+        tasks.popoverOpened();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval * (maxConsecutiveFetchFailures - 1));
+        expect(tasks.hasActiveWork, isFalse);
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(api.metadataScanCalls, hasLength(2));
+        expect(tasks.hasActiveWork, isTrue);
+        expect(tasks.rows, [_startingRow]);
+
+        // The first scan's mutation finally fails while the second is
+        // still requesting. It must not clear the second scan to idle.
+        api.metadataScanCalls[0].completeError(const TransportFailure());
+        async.flushMicrotasks();
+        expect(firstScanError, isA<TransportFailure>());
+        expect(tasks.hasActiveWork, isTrue);
+        expect(tasks.rows, [_startingRow]);
+
+        // The second scan's own mutation resolves and is still followed.
+        api.jobQueueResults.add([_job('99', JobStatus.running)]);
+        api.metadataScanCalls[1].complete('99');
+        async.flushMicrotasks();
+        expect(tasks.rows, [_job('99', JobStatus.running)]);
+        expect(outcomes, isEmpty);
+
+        async.elapse(tasksPollInterval);
+        expect(outcomes, [ScanOutcome.completed]);
+        expect(api.findJobCalls, ['99']);
+        expect(tasks.hasActiveWork, isFalse);
+
+        tasks.popoverClosed();
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
   });
 
   group('tasksControllerProvider', () {
