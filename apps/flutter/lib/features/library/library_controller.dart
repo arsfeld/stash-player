@@ -3,10 +3,10 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/deferred_stash_api.dart';
 import '../../app/providers.dart';
 import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
-import '../../domain/job.dart';
 import '../../domain/scene.dart';
 import '../../domain/scene_filter.dart';
 import '../../services/stash_api.dart';
@@ -252,7 +252,7 @@ class LibraryController extends ChangeNotifier {
     } catch (_) {
       // `_api.findScenes` (by way of `StashApi`) always normalizes to a
       // `Failure`, but the deferred adapter `libraryControllerProvider`
-      // wires up (`_DeferredStashApi`) resolves `stashApiProvider`
+      // wires up (`DeferredStashApi`) resolves `stashApiProvider`
       // *before* reaching that code — and that chain can throw a bare
       // platform exception (e.g. secure storage/keyring access denied),
       // which isn't a `Failure`. Without this fallback that escapes both
@@ -321,63 +321,6 @@ class LibraryController extends ChangeNotifier {
   }
 }
 
-/// Forwards every [StashApi] call to whatever [stashApiProvider] resolves
-/// to, resolving it lazily on each call rather than requiring one
-/// synchronously at construction time.
-///
-/// [stashApiProvider] is a `FutureProvider`, but [libraryControllerProvider]
-/// below is a `ChangeNotifierProvider` and must hand back a
-/// [LibraryController] synchronously — so [LibraryController] is always
-/// constructed with a [StashApi] it can call immediately, and this
-/// adapter is what makes that true even before the real one has resolved.
-class _DeferredStashApi implements StashApi {
-  _DeferredStashApi(this._ref);
-
-  final Ref _ref;
-
-  Future<StashApi> get _resolved => _ref.read(stashApiProvider.future);
-
-  @override
-  Future<String> version() async => (await _resolved).version();
-
-  @override
-  Future<Scene?> findScene(String id) async => (await _resolved).findScene(id);
-
-  @override
-  Future<ScenePage> findScenes(
-    SceneFilter filter, {
-    required int page,
-    required int perPage,
-  }) async =>
-      (await _resolved).findScenes(filter, page: page, perPage: perPage);
-
-  @override
-  Future<void> saveSceneActivity({
-    required String id,
-    required double resumeTime,
-    required double playDuration,
-  }) async => (await _resolved).saveSceneActivity(
-    id: id,
-    resumeTime: resumeTime,
-    playDuration: playDuration,
-  );
-
-  @override
-  Future<int> incrementO(String id) async => (await _resolved).incrementO(id);
-
-  @override
-  Future<int> resetO(String id) async => (await _resolved).resetO(id);
-
-  @override
-  Future<String> metadataScan() async => (await _resolved).metadataScan();
-
-  @override
-  Future<List<Job>> jobQueue() async => (await _resolved).jobQueue();
-
-  @override
-  Future<Job?> findJob(String id) async => (await _resolved).findJob(id);
-}
-
 /// The library's controller. Rebuilt from scratch — a fresh
 /// [LibraryController] with fresh [LibraryState] — whenever
 /// [connectionGenerationProvider] changes, which discards any in-flight
@@ -389,7 +332,7 @@ final libraryControllerProvider = ChangeNotifierProvider<LibraryController>((
 ) {
   ref.watch(connectionGenerationProvider);
   return LibraryController(
-    api: _DeferredStashApi(ref),
+    api: DeferredStashApi(ref),
     seedGenerator: () => Random().nextInt(1 << 32),
   );
 });

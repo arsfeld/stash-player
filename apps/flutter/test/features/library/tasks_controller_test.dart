@@ -1,7 +1,13 @@
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stash_player_flutter/app/notices.dart';
+import 'package:stash_player_flutter/app/providers.dart';
+import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/job.dart';
+import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/features/library/library_controller.dart';
 import 'package:stash_player_flutter/features/library/tasks_controller.dart';
 
 import '../../support/fakes.dart';
@@ -24,6 +30,11 @@ const _startingRow = Job(
   id: localScanRowId,
   status: JobStatus.running,
   description: 'Starting scan…',
+);
+
+List<Scene> _scenes(int count) => List.generate(
+  count,
+  (index) => Scene(id: '$index', paths: const ScenePaths()),
 );
 
 void main() {
@@ -685,6 +696,107 @@ void main() {
         expect(events[events.length - 2], 'notified');
         async.elapse(scanEndedRowDuration);
         tasks.dispose();
+      });
+    });
+  });
+
+  group('tasksControllerProvider', () {
+    ProviderContainer buildContainer(FakeStashApi fakeApi) {
+      final container = ProviderContainer(
+        overrides: [
+          connectionStoreProvider.overrideWithValue(
+            FakeConnectionStore(
+              saved: const ConnectionConfig(
+                serverUrl: 'https://stash.test',
+                apiKey: 'key',
+              ),
+            ),
+          ),
+          environmentProvider.overrideWithValue(const {}),
+          stashApiFactoryProvider.overrideWithValue((config) => fakeApi),
+        ],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('fetches the queue through the deferred stashApiProvider', () {
+      fakeAsync((async) {
+        api.jobQueueResults.add([_job('7', JobStatus.finished)]);
+        final container = buildContainer(api);
+
+        container.read(tasksControllerProvider).refresh();
+        async.flushMicrotasks();
+
+        expect(container.read(tasksControllerProvider).rows, [
+          _job('7', JobStatus.finished),
+        ]);
+      });
+    });
+
+    test('bumping connectionGenerationProvider yields a fresh controller', () {
+      final container = buildContainer(api);
+
+      final first = container.read(tasksControllerProvider);
+      container.read(connectionGenerationProvider.notifier).state++;
+      final second = container.read(tasksControllerProvider);
+
+      expect(identical(first, second), isFalse);
+    });
+
+    test('a scan that completes reloads the library from page 1, with no '
+        'notice', () {
+      fakeAsync((async) {
+        api.pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        api.metadataScanResults.add('42');
+        final container = buildContainer(api);
+        container.read(libraryControllerProvider).loadInitial();
+        async.flushMicrotasks();
+
+        api.pages.add(ScenePage(total: 2, scenes: _scenes(2)));
+        container.read(tasksControllerProvider).startScan();
+        async.flushMicrotasks();
+
+        expect(api.requestedPages, [1, 1]);
+        expect(
+          container.read(libraryControllerProvider).state.scenes,
+          hasLength(2),
+        );
+        expect(container.read(globalNoticeProvider), isNull);
+        async.elapse(scanEndedRowDuration);
+      });
+    });
+
+    test('a failed scan posts an error notice and a cancelled one a '
+        'warning, and both still reload', () {
+      fakeAsync((async) {
+        api.pages.addAll([
+          ScenePage(total: 0, scenes: const []),
+          ScenePage(total: 0, scenes: const []),
+        ]);
+        api.metadataScanResults.addAll(['42', '43']);
+        api.jobQueueResults.addAll([
+          [_job('42', JobStatus.failed, error: 'disk gone')],
+          [_job('43', JobStatus.cancelled)],
+        ]);
+        final container = buildContainer(api);
+        final tasks = container.read(tasksControllerProvider);
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        var notice = container.read(globalNoticeProvider);
+        expect(notice?.message, 'Library scan failed.');
+        expect(notice?.severity, AppNoticeSeverity.error);
+
+        async.elapse(scanEndedRowDuration);
+        tasks.startScan();
+        async.flushMicrotasks();
+        notice = container.read(globalNoticeProvider);
+        expect(notice?.message, 'Library scan was cancelled.');
+        expect(notice?.severity, AppNoticeSeverity.warning);
+
+        expect(api.requestedPages, [1, 1]);
+        async.elapse(scanEndedRowDuration);
       });
     });
   });

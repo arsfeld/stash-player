@@ -400,7 +400,7 @@ void main() {
     test('a non-Failure throw still lands the controller in failed with a '
         'usable retry, rather than wedging it in loading forever', () async {
       // `StashApi` implementations normalize every error to a
-      // `Failure`, but the real `_DeferredStashApi` adapter that
+      // `Failure`, but the real `DeferredStashApi` adapter that
       // `libraryControllerProvider` wires up can throw a bare platform
       // exception (e.g. secure storage/keyring access denied) while
       // resolving the API instance itself, before any `StashApi` code
@@ -793,7 +793,7 @@ void main() {
 
     test('a raw (non-Failure) error resolving the connection lands the '
         'provided controller in failed rather than stuck loading', () async {
-      // Reproduces the real reachable path: `_DeferredStashApi` awaits
+      // Reproduces the real reachable path: `DeferredStashApi` awaits
       // `stashApiProvider`, which awaits `effectiveConnectionProvider`,
       // which reads the connection store — and a store read can throw
       // a bare platform exception (e.g. secure storage/keyring

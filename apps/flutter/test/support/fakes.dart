@@ -100,7 +100,7 @@ class FakeStashApi implements StashApi {
 
   /// Non-`Failure` errors consumed in call order, consulted ahead of
   /// [pageFailures] and [pages] — simulates the real app's
-  /// `_DeferredStashApi` resolving `stashApiProvider` (and, beneath
+  /// `DeferredStashApi` resolving `stashApiProvider` (and, beneath
   /// that, `PlatformConnectionStore`/secure storage) throwing a bare
   /// platform exception before `HttpStashApi` ever gets a chance to
   /// normalize it to a `Failure`.

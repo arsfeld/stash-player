@@ -57,7 +57,7 @@ const Duration defaultStallFallbackDelay = Duration(seconds: 8);
 
 /// Resolves the connection (server URL + API key) [PlaybackController]
 /// should authenticate its stream URLs against. A thunk rather than a
-/// plain value for the same reason `LibraryController`'s `_DeferredStashApi`
+/// plain value for the same reason `DeferredStashApi`
 /// is: [playbackControllerProvider] must hand back a controller
 /// synchronously, but the underlying connection config
 /// (`effectiveConnectionProvider`) resolves asynchronously.

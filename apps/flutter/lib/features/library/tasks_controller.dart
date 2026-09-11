@@ -1,9 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/deferred_stash_api.dart';
+import '../../app/notices.dart';
+import '../../app/providers.dart';
 import '../../domain/job.dart';
 import '../../services/stash_api.dart';
+import 'library_controller.dart';
 
 /// How long [TasksController] waits between job queue fetches while it has
 /// a reason to keep watching.
@@ -369,4 +374,37 @@ final class _ScanEnded extends _Scan {
   /// [row] stands in for it.
   final String jobId;
   final Job row;
+}
+
+/// The library's Tasks controller. Rebuilt from scratch whenever
+/// [connectionGenerationProvider] changes, like
+/// [libraryControllerProvider]: a scan followed on the old connection may
+/// belong to a different server.
+final tasksControllerProvider = ChangeNotifierProvider<TasksController>((ref) {
+  ref.watch(connectionGenerationProvider);
+  return TasksController(
+    api: DeferredStashApi(ref),
+    onScanEnded: (outcome) => _announceScanEnd(ref, outcome),
+  );
+});
+
+/// Reloads the grid, and speaks up when the scan did not simply finish:
+/// the popover is usually closed by the time a scan ends, so a failure
+/// would otherwise go unseen.
+void _announceScanEnd(Ref ref, ScanOutcome outcome) {
+  // Every ending reloads, because a scan that failed or was cancelled part
+  // way through can still have added scenes.
+  unawaited(ref.read(libraryControllerProvider).reload());
+  final notice = switch (outcome) {
+    ScanOutcome.completed => null,
+    ScanOutcome.failed => AppNotice(
+      message: 'Library scan failed.',
+      severity: AppNoticeSeverity.error,
+    ),
+    ScanOutcome.cancelled => AppNotice(
+      message: 'Library scan was cancelled.',
+      severity: AppNoticeSeverity.warning,
+    ),
+  };
+  if (notice != null) ref.read(globalNoticeProvider.notifier).show(notice);
 }

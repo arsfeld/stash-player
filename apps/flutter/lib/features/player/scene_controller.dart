@@ -554,7 +554,7 @@ class SceneController extends ChangeNotifier {
 /// `sceneControllerProvider` is a `ChangeNotifierProvider` and must hand
 /// back a [SceneController] synchronously, before the async
 /// `stashApiProvider` has necessarily resolved. Mirrors
-/// `LibraryController`'s own `_DeferredStashApi` adapter, narrowed to the
+/// the shared `DeferredStashApi` adapter, narrowed to the
 /// one call [SceneController] needs.
 FindScene _deferredFindScene(Ref ref) =>
     (id) async => (await ref.read(stashApiProvider.future)).findScene(id);
