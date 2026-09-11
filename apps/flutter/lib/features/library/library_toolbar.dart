@@ -137,6 +137,17 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
         widget.filter.query != _searchController.text) {
       _searchController.text = widget.filter.query;
     }
+    // Scan disables itself while work runs, including when its own Enter
+    // just started a scan, and a disabled control gives up focus. Flutter
+    // would hand it back to whatever held it last, which can be Play
+    // random, where a second Enter navigates away. Tasks is where the new
+    // dot lit up. Requested here, before the button's rebuild drops its
+    // focusability, so the scope already has Tasks as its latest child.
+    if (oldWidget.onScan != null &&
+        widget.onScan == null &&
+        _scanFocusNode.hasFocus) {
+      _tasksFocusNode.requestFocus();
+    }
   }
 
   @override

@@ -1286,6 +1286,69 @@ void main() {
       expect(find.byType(SceneTile), findsNWidgets(2));
     });
 
+    // Enter on Scan starts a scan, which disables Scan while it holds focus.
+    // Focus has to land on Tasks, not on whatever control held it before.
+    Future<void> expectEnterOnScanFocusesTasks(
+      WidgetTester tester, {
+      required Size size,
+      required int tabsToScan,
+    }) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await _pumpLibrary(tester, api: api, size: size);
+      await tester.pumpAndSettle();
+
+      for (var i = 0; i < tabsToScan; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-scan');
+
+      api.metadataScanResults.add('42');
+      api.jobQueueResults.add([_job('42', JobStatus.running)]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      expect(api.metadataScanCalls, hasLength(1));
+      final scan = tester.widget<AppIconAction>(
+        find.widgetWithIcon(AppIconAction, Icons.library_add_outlined),
+      );
+      expect(scan.onPressed, isNull);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-tasks');
+
+      // The scan ends (the fake's default idle queue), the grid reloads, and
+      // the ended row runs out, so no timer is left pending.
+      api.pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+      await tester.pump(scanEndedRowDuration);
+      await tester.pumpAndSettle();
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
+    }
+
+    testWidgets('at a wide width Enter on Scan hands focus to Tasks', (
+      tester,
+    ) async {
+      await expectEnterOnScanFocusesTasks(
+        tester,
+        size: const Size(1200, 900),
+        // Sort, direction, minimum rating, organized, hide tracked,
+        // random, search, scan.
+        tabsToScan: 8,
+      );
+    });
+
+    testWidgets('at a narrow width Enter on Scan hands focus to Tasks', (
+      tester,
+    ) async {
+      await expectEnterOnScanFocusesTasks(
+        tester,
+        size: const Size(620, 900),
+        // Search, filters, random, scan.
+        tabsToScan: 4,
+      );
+    });
+
     testWidgets('a scan that cannot start shows an error notice', (
       tester,
     ) async {
