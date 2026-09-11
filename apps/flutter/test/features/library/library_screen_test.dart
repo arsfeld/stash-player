@@ -9,12 +9,14 @@ import 'package:stash_player_flutter/app/notices.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/job.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/library/library_controller.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/library/library_state.dart';
 import 'package:stash_player_flutter/features/library/library_toolbar.dart';
+import 'package:stash_player_flutter/features/library/tasks_controller.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
@@ -41,6 +43,13 @@ Scene _scene({
 
 List<Scene> _scenes(int count, {int start = 0}) =>
     List.generate(count, (i) => _scene(id: '${start + i}'));
+
+Job _job(
+  String id,
+  JobStatus status, {
+  String description = 'Scanning...',
+  double? progress,
+}) => Job(id: id, status: status, description: description, progress: progress);
 
 /// A minimal, genuinely decodable 1x1 transparent PNG — used wherever a
 /// test needs `Image.memory` to actually succeed rather than merely
@@ -142,6 +151,7 @@ Future<_Harness> _pumpLibrary(
   final container = ProviderContainer(
     overrides: [
       libraryControllerProvider.overrideWith((ref) => controller),
+      stashApiProvider.overrideWith((ref) async => fakeApi),
       thumbnailRepositoryProvider.overrideWith(
         (ref) async => thumbnailRepository ?? FakeThumbnailRepository(),
       ),
@@ -709,6 +719,8 @@ void main() {
       ];
       const expectedActions = <(String, String)>[
         ('Play random', 'Play a random scene'),
+        ('Scan library for new files', 'Scan library'),
+        ('Background tasks', 'Background tasks'),
         ('Connection settings', 'Connection settings'),
       ];
       const expectedMenus = ['Sort by', 'Minimum rating'];
@@ -976,8 +988,8 @@ void main() {
 
   group('keyboard reachability', () {
     testWidgets('Tab reaches sort, direction, minimum rating, organized, hide '
-        'tracked, random, search, settings, and the first scene card, in '
-        'the order they render', (tester) async {
+        'tracked, random, search, scan, tasks, settings, and the first scene '
+        'card, in the order they render', (tester) async {
       final api = FakeStashApi()
         ..pages.add(ScenePage(total: 2, scenes: _scenes(2)));
       await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
@@ -995,6 +1007,8 @@ void main() {
         'library-hide-tracked',
         'library-random',
         'library-search',
+        'library-scan',
+        'library-tasks',
         'library-settings',
         'scene-tile-0',
       ];
@@ -1022,7 +1036,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      for (var i = 0; i < 9; i++) {
+      for (var i = 0; i < 11; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
       }
@@ -1170,6 +1184,186 @@ void main() {
       expect(cycleOrganized(null), isTrue);
       expect(cycleOrganized(true), isFalse);
       expect(cycleOrganized(false), isNull);
+    });
+  });
+
+  group('scan and tasks', () {
+    testWidgets(
+      'both buttons fit the strip at the narrowest macOS window',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await _pumpLibrary(tester, api: api, size: const Size(480, 900));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.byTooltip('Scan library for new files'), findsOneWidget);
+        expect(find.byTooltip('Background tasks'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
+    testWidgets('at a narrow width Tab walks random, scan, tasks, then '
+        'settings', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await _pumpLibrary(tester, api: api, size: const Size(620, 900));
+      await tester.pumpAndSettle();
+
+      for (final label in [
+        'library-search',
+        'library-filters',
+        'library-random',
+        'library-scan',
+        'library-tasks',
+        'library-settings',
+      ]) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          label,
+          reason: 'expected focus to reach $label next',
+        );
+      }
+    });
+
+    testWidgets('a job already running when the library loads lights the '
+        'dot, disables Scan, and Tab skips it', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)))
+        ..jobQueueResults.add([_job('7', JobStatus.running)]);
+      await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      expect(api.jobQueueCalls, hasLength(1));
+      expect(find.byKey(AppIconAction.badgeKey), findsOneWidget);
+      expect(find.byTooltip('A task is already running'), findsOneWidget);
+      final scan = tester.widget<AppIconAction>(
+        find.widgetWithIcon(AppIconAction, Icons.library_add_outlined),
+      );
+      expect(scan.onPressed, isNull);
+
+      for (var i = 0; i < 8; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-tasks');
+
+      // The job ends (the fake's default idle queue) and everything clears.
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
+      expect(find.byTooltip('Scan library for new files'), findsOneWidget);
+    });
+
+    testWidgets('Scan starts a scan, and its end reloads the grid', (
+      tester,
+    ) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      api.metadataScanResults.add('42');
+      api.jobQueueResults.add([_job('42', JobStatus.running, progress: 0.5)]);
+      await tester.tap(find.byTooltip('Scan library for new files'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(api.metadataScanCalls, hasLength(1));
+      expect(find.byKey(AppIconAction.badgeKey), findsOneWidget);
+
+      api.pages.add(ScenePage(total: 2, scenes: _scenes(2, start: 10)));
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+
+      expect(api.requestedPages, [1, 1]);
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
+
+      await tester.pump(scanEndedRowDuration);
+      await tester.pumpAndSettle();
+      expect(find.byType(SceneTile), findsNWidgets(2));
+    });
+
+    testWidgets('a scan that cannot start shows an error notice', (
+      tester,
+    ) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)))
+        ..metadataScanFailures.add(const TransportFailure());
+      final harness = await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Scan library for new files'));
+      await tester.pumpAndSettle();
+
+      final notice = harness.container.read(globalNoticeProvider);
+      expect(notice?.message, 'Could not reach the Stash server.');
+      expect(notice?.severity, AppNoticeSeverity.error);
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
+    });
+
+    testWidgets('Tasks opens a popover that updates while open, and Esc '
+        'closes it with focus back on Tasks', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      await _pumpLibrary(tester, api: api);
+      await tester.pumpAndSettle();
+
+      api.jobQueueResults.addAll([
+        [
+          _job(
+            '7',
+            JobStatus.running,
+            description: 'Generating previews',
+            progress: 0.2,
+          ),
+        ],
+        [
+          _job(
+            '7',
+            JobStatus.running,
+            description: 'Generating previews',
+            progress: 0.6,
+          ),
+        ],
+      ]);
+
+      // Reach Tasks the way a keyboard user would: nine Tabs at this width.
+      for (var i = 0; i < 9; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-tasks');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Tasks'), findsOneWidget);
+      expect(find.text('Generating previews'), findsOneWidget);
+      LinearProgressIndicator bar() => tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(bar().value, 0.2);
+
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+      expect(bar().value, 0.6);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Generating previews'), findsNothing);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-tasks');
+
+      // The job was still running when the popover closed, so polling
+      // carries on until the fake's default idle queue ends it.
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
     });
   });
 }

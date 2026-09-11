@@ -13,6 +13,8 @@ import 'library_controller.dart';
 import 'library_state.dart';
 import 'library_toolbar.dart';
 import 'scene_grid.dart';
+import 'tasks_controller.dart';
+import 'tasks_popover.dart';
 
 /// The adaptive scene library: toolbar plus grid, driven entirely by
 /// [libraryControllerProvider]'s [LibraryState].
@@ -48,6 +50,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(libraryControllerProvider).loadInitial();
+      // One look at the job queue per load is all the Tasks dot gets when
+      // nothing is running, so a job started from Stash's web UI shows up
+      // on the next load without the app polling all the time.
+      ref.read(tasksControllerProvider).refresh();
     });
   }
 
@@ -84,6 +90,22 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     }
   }
 
+  /// Surfaces a scan that could not start as an error notice, the same
+  /// way [_handlePlayRandom] does. How a started scan ends is reported by
+  /// `tasksControllerProvider` itself, since the popover is usually closed
+  /// by then.
+  Future<void> _handleScan(TasksController tasks) async {
+    try {
+      await tasks.startScan();
+    } on Failure catch (failure) {
+      if (!mounted) return;
+      _showNotice(failure.userMessage, AppNoticeSeverity.error);
+    } catch (_) {
+      if (!mounted) return;
+      _showNotice('Could not start a scan.', AppNoticeSeverity.error);
+    }
+  }
+
   void _showNotice(String message, AppNoticeSeverity severity) {
     ref
         .read(globalNoticeProvider.notifier)
@@ -105,6 +127,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     });
     final controller = ref.watch(libraryControllerProvider);
     final state = controller.state;
+    final tasks = ref.watch(tasksControllerProvider);
     final thumbnailRepository = ref
         .watch(thumbnailRepositoryProvider)
         .valueOrNull;
@@ -122,6 +145,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             onOrganizedChanged: controller.setOrganized,
             onHideTrackedChanged: controller.setHideTracked,
             onPlayRandom: () => _handlePlayRandom(controller),
+            tasksActive: tasks.hasActiveWork,
+            onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
+            onOpenTasks: showTasksPopover,
             onOpenSettings: widget.onOpenSettings,
           ),
           Expanded(

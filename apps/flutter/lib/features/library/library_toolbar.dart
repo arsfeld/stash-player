@@ -9,10 +9,11 @@ import '../../ui/widgets/window_chrome.dart';
 
 /// Width, in logical pixels, at and above which every control renders
 /// directly in the strip. Below it only search, the filters trigger,
-/// "Play random" and settings stay there; sort, direction, minimum
-/// rating, organized and hide-tracked move into a collapsible second row
-/// underneath, toggled by a "Filters" button. See [LibraryToolbar]'s own
-/// doc for why that row is an ordinary descendant rather than a popup.
+/// "Play random", Scan, Tasks and settings stay there; sort, direction,
+/// minimum rating, organized and hide-tracked move into a collapsible
+/// second row underneath, toggled by a "Filters" button. See
+/// [LibraryToolbar]'s own doc for why that row is an ordinary descendant
+/// rather than a popup.
 const double libraryToolbarWideBreakpoint = 760;
 
 /// Advances the tristate "organized" filter one step: any, yes, no, any.
@@ -58,6 +59,9 @@ class LibraryToolbar extends StatefulWidget {
     required this.onOrganizedChanged,
     required this.onHideTrackedChanged,
     required this.onPlayRandom,
+    required this.tasksActive,
+    required this.onScan,
+    required this.onOpenTasks,
     required this.onOpenSettings,
     super.key,
   });
@@ -70,6 +74,18 @@ class LibraryToolbar extends StatefulWidget {
   final ValueChanged<bool?> onOrganizedChanged;
   final ValueChanged<bool> onHideTrackedChanged;
   final VoidCallback onPlayRandom;
+
+  /// Whether Stash has work in flight: lights the Tasks dot and disables
+  /// Scan.
+  final bool tasksActive;
+
+  /// Starts a scan. Null while one cannot start, which disables the button.
+  final VoidCallback? onScan;
+
+  /// Opens the Tasks popover, anchored to the context it is handed (the
+  /// Tasks button's own).
+  final void Function(BuildContext anchor) onOpenTasks;
+
   final VoidCallback onOpenSettings;
 
   @override
@@ -94,6 +110,8 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   final _organizedFocusNode = FocusNode(debugLabel: 'library-organized');
   final _hideTrackedFocusNode = FocusNode(debugLabel: 'library-hide-tracked');
   final _randomFocusNode = FocusNode(debugLabel: 'library-random');
+  final _scanFocusNode = FocusNode(debugLabel: 'library-scan');
+  final _tasksFocusNode = FocusNode(debugLabel: 'library-tasks');
   final _settingsFocusNode = FocusNode(debugLabel: 'library-settings');
   final _filtersFocusNode = FocusNode(debugLabel: 'library-filters');
 
@@ -132,6 +150,8 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _organizedFocusNode.dispose();
     _hideTrackedFocusNode.dispose();
     _randomFocusNode.dispose();
+    _scanFocusNode.dispose();
+    _tasksFocusNode.dispose();
     _settingsFocusNode.dispose();
     _filtersFocusNode.dispose();
     super.dispose();
@@ -192,7 +212,11 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     const SizedBox(width: AppTokens.space3),
     Expanded(child: _ordered(7, _searchField())),
     const SizedBox(width: AppTokens.space3),
-    _ordered(8, _settingsButton()),
+    _ordered(8, _scanButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(9, _tasksButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(10, _settingsButton()),
   ];
 
   /// The strip below [libraryToolbarWideBreakpoint].
@@ -208,7 +232,11 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     const SizedBox(width: AppTokens.space2),
     _ordered(8, _playRandomButton()),
     const SizedBox(width: AppTokens.space2),
-    _ordered(9, _settingsButton()),
+    _ordered(9, _scanButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(10, _tasksButton()),
+    const SizedBox(width: AppTokens.space2),
+    _ordered(11, _settingsButton()),
   ];
 
   Widget _secondaryRow() => Padding(
@@ -333,6 +361,34 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     semanticLabel: 'Play a random scene',
     onPressed: widget.onPlayRandom,
   );
+
+  Widget _scanButton() => AppIconAction(
+    focusNode: _scanFocusNode,
+    icon: Icons.library_add_outlined,
+    tooltip: widget.onScan == null
+        ? 'A task is already running'
+        : 'Scan library for new files',
+    semanticLabel: 'Scan library',
+    onPressed: widget.onScan,
+  );
+
+  /// A [Builder], so the popover can be anchored to this button's own
+  /// context rather than the whole strip's.
+  Widget _tasksButton() {
+    final label = widget.tasksActive
+        ? 'Background tasks, running'
+        : 'Background tasks';
+    return Builder(
+      builder: (anchor) => AppIconAction(
+        focusNode: _tasksFocusNode,
+        icon: Icons.list_alt,
+        tooltip: label,
+        semanticLabel: label,
+        badge: widget.tasksActive,
+        onPressed: () => widget.onOpenTasks(anchor),
+      ),
+    );
+  }
 
   Widget _settingsButton() => AppIconAction(
     focusNode: _settingsFocusNode,
