@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/job.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/domain/scene_stream.dart';
@@ -524,6 +525,116 @@ void main() {
       final scene = await api.findScene('1');
 
       expect(scene!.streams.single.label, 'MP4');
+    });
+  });
+
+  group('jobs', () {
+    HttpStashApi apiFor(RecordingClient transport, {String apiKey = ''}) =>
+        HttpStashApi(
+          baseUri: Uri.parse('https://stash.test'),
+          apiKey: apiKey,
+          client: transport,
+        );
+
+    test(
+      'metadataScan posts a bare scan and returns the queued job id',
+      () async {
+        final transport = RecordingClient(fixture('metadata_scan.json'));
+
+        final jobId = await apiFor(transport, apiKey: 'SECRET').metadataScan();
+
+        expect(jobId, '42');
+        expect(transport.lastQuery, contains('mutation MetadataScan'));
+        expect(transport.lastQuery, contains('metadataScan(input: {})'));
+        expect(transport.lastVariables, isEmpty);
+        expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+      },
+    );
+
+    test('metadataScan rejects a response with no job id', () async {
+      final transport = RecordingClient('{"data":{"metadataScan":null}}');
+
+      expect(apiFor(transport).metadataScan(), throwsA(isA<FormatFailure>()));
+    });
+
+    test('jobQueue asks for every field the popover shows and decodes typed '
+        'jobs', () async {
+      final transport = RecordingClient(fixture('job_queue.json'));
+
+      final jobs = await apiFor(transport, apiKey: 'SECRET').jobQueue();
+
+      expect(transport.lastQuery, contains('query JobQueue'));
+      for (final field in ['status', 'description', 'progress', 'error']) {
+        expect(transport.lastQuery, contains(field));
+      }
+      expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+      expect(jobs, const [
+        Job(
+          id: '42',
+          status: JobStatus.running,
+          description: 'Scanning for new files',
+          progress: 0.35,
+        ),
+        Job(
+          id: '43',
+          status: JobStatus.ready,
+          description: 'Generating previews',
+        ),
+      ]);
+    });
+
+    test('a null queue decodes as no jobs', () async {
+      final transport = RecordingClient('{"data":{"jobQueue":null}}');
+
+      expect(await apiFor(transport).jobQueue(), isEmpty);
+    });
+
+    test('decodes every Stash status, keeps an unrecognised one as unknown, '
+        'and defaults a missing description to empty', () async {
+      final transport = RecordingClient(fixture('job_queue_statuses.json'));
+
+      final jobs = await apiFor(transport, apiKey: 'SECRET').jobQueue();
+
+      expect(jobs.map((job) => job.status), [
+        JobStatus.stopping,
+        JobStatus.finished,
+        JobStatus.cancelled,
+        JobStatus.failed,
+        JobStatus.unknown,
+      ]);
+      expect(jobs.map((job) => job.isActive), [
+        true,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(jobs[1].progress, 1.0);
+      expect(jobs.last.description, '');
+    });
+
+    test("a failed job's error arrives with the API key redacted", () async {
+      final transport = RecordingClient(fixture('job_queue_statuses.json'));
+
+      final jobs = await apiFor(transport, apiKey: 'SECRET').jobQueue();
+
+      expect(jobs[3].error, 'could not read *** /media/a.mp4');
+    });
+
+    test('a status that is not a string is a FormatFailure', () async {
+      final transport = RecordingClient(
+        '{"data":{"jobQueue":[{"id":"1","status":7,"description":"x"}]}}',
+      );
+
+      expect(apiFor(transport).jobQueue(), throwsA(isA<FormatFailure>()));
+    });
+
+    test('a GraphQL error from jobQueue surfaces as GraphQlFailure', () async {
+      final transport = RecordingClient(
+        '{"errors":[{"message":"boom"}],"data":null}',
+      );
+
+      expect(apiFor(transport).jobQueue(), throwsA(isA<GraphQlFailure>()));
     });
   });
 }

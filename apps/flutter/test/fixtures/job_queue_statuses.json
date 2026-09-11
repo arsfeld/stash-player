@@ -1,0 +1,7 @@
+{"data": {"jobQueue": [
+  {"id": "50", "status": "STOPPING", "description": "Auto tagging", "progress": 0.5, "error": null},
+  {"id": "51", "status": "FINISHED", "description": "Scanning...", "progress": 1, "error": null},
+  {"id": "52", "status": "CANCELLED", "description": "Generating", "progress": null, "error": null},
+  {"id": "53", "status": "FAILED", "description": "Scanning...", "progress": null, "error": "could not read SECRET /media/a.mp4"},
+  {"id": "54", "status": "PAUSED", "progress": null, "error": null}
+]}}

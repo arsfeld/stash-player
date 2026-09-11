@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/providers.dart';
 import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
+import '../../domain/job.dart';
 import '../../domain/scene.dart';
 import '../../domain/scene_filter.dart';
 import '../../services/stash_api.dart';
@@ -358,6 +359,12 @@ class _DeferredStashApi implements StashApi {
 
   @override
   Future<int> resetO(String id) async => (await _resolved).resetO(id);
+
+  @override
+  Future<String> metadataScan() async => (await _resolved).metadataScan();
+
+  @override
+  Future<List<Job>> jobQueue() async => (await _resolved).jobQueue();
 }
 
 /// The library's controller. Rebuilt from scratch — a fresh

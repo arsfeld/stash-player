@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/failure.dart';
+import '../domain/job.dart';
 import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
 import '../domain/scene_stream.dart';
@@ -65,6 +66,18 @@ mutation SceneIncrementO($id: ID!) {
 const String sceneResetODocument = r'''
 mutation SceneResetO($id: ID!) {
   sceneResetO(id: $id)
+}
+''';
+
+const String metadataScanDocument = r'''
+mutation MetadataScan {
+  metadataScan(input: {})
+}
+''';
+
+const String jobQueueDocument = r'''
+query JobQueue {
+  jobQueue { id status description progress error }
 }
 ''';
 
@@ -134,6 +147,22 @@ class HttpStashApi implements StashApi {
   @override
   Future<int> resetO(String id) =>
       _mutateO(sceneResetODocument, 'sceneResetO', id);
+
+  @override
+  Future<String> metadataScan() => _post(
+    metadataScanDocument,
+    const {},
+    (data) => _requiredString(data, 'metadataScan'),
+  );
+
+  @override
+  Future<List<Job>> jobQueue() => _post(jobQueueDocument, const {}, (data) {
+    final queue = data['jobQueue'];
+    if (queue == null) return const <Job>[];
+    return _asList(queue, 'jobQueue')
+        .map((job) => _decodeJob(_asMap(job, 'jobQueue[]'), apiKey: apiKey))
+        .toList(growable: false);
+  });
 
   /// Both O-counter mutations have the same shape: one `ID!`, one
   /// integer back. Shared so the two can never disagree about how a
@@ -305,6 +334,37 @@ PerformerRef _decodePerformer(Map<String, Object?> source) => PerformerRef(
   id: _requiredString(source, 'id'),
   name: _requiredString(source, 'name'),
 );
+
+Job _decodeJob(Map<String, Object?> source, {required String apiKey}) {
+  final error = _optionalString(source, 'error');
+  return Job(
+    id: _requiredString(source, 'id'),
+    status: _decodeJobStatus(source['status']),
+    // The schema says `String!`, but `_requiredString` rejects an empty
+    // string, and a job with no summary is not a reason to drop the whole
+    // queue.
+    description: _optionalString(source, 'description') ?? '',
+    progress: _optionalDouble(source, 'progress'),
+    // Server text on its way to the UI, so it gets the same redaction as
+    // every error message.
+    error: error == null ? null : redactSensitive(error, apiKey: apiKey),
+  );
+}
+
+JobStatus _decodeJobStatus(Object? value) {
+  if (value is! String) {
+    throw const FormatFailure('Expected a string at status.');
+  }
+  return switch (value) {
+    'READY' => JobStatus.ready,
+    'RUNNING' => JobStatus.running,
+    'STOPPING' => JobStatus.stopping,
+    'FINISHED' => JobStatus.finished,
+    'CANCELLED' => JobStatus.cancelled,
+    'FAILED' => JobStatus.failed,
+    _ => JobStatus.unknown,
+  };
+}
 
 Map<String, Object?> _asMap(Object? value, String path) {
   if (value is! Map) {

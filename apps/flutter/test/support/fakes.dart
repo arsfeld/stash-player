@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/job.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/services/connection_store.dart';
@@ -56,6 +57,12 @@ class FindSceneCall {
 
   final String id;
   final Completer<Scene?> completer = Completer<Scene?>();
+}
+
+/// One recorded `jobQueue` call, with its own [completer] so a test can
+/// hold a fetch open (a slow server) and resolve it later.
+class JobQueueCall {
+  final Completer<List<Job>> completer = Completer<List<Job>>();
 }
 
 class FakeStashApi implements StashApi {
@@ -226,6 +233,65 @@ class FakeStashApi implements StashApi {
     oCalls.add(OMutationCall(id: id, isReset: isReset));
     if (oFailures.isNotEmpty) throw oFailures.removeAt(0);
     return oResults.isNotEmpty ? oResults.removeAt(0) : 0;
+  }
+
+  /// `jobQueue` results consumed in call order. When this and
+  /// [jobQueueFailures] are both empty, a call reports an idle server (an
+  /// empty queue) instead of failing: the library screen asks for the
+  /// queue on every load, and most tests never care what it holds. Set
+  /// [holdJobQueue] to leave calls pending instead, and resolve them
+  /// through [jobQueueCalls].
+  final List<List<Job>> jobQueueResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [jobQueueResults].
+  final List<Object> jobQueueFailures = [];
+
+  bool holdJobQueue = false;
+
+  /// Every `jobQueue` call, in the order received.
+  final List<JobQueueCall> jobQueueCalls = [];
+
+  @override
+  Future<List<Job>> jobQueue() {
+    final call = JobQueueCall();
+    jobQueueCalls.add(call);
+    if (jobQueueFailures.isNotEmpty) {
+      call.completer.completeError(jobQueueFailures.removeAt(0));
+    } else if (jobQueueResults.isNotEmpty) {
+      call.completer.complete(jobQueueResults.removeAt(0));
+    } else if (!holdJobQueue) {
+      call.completer.complete(const <Job>[]);
+    }
+    return call.completer.future;
+  }
+
+  /// Job ids `metadataScan` returns, consumed in call order. Empty means
+  /// `'1'`.
+  final List<String> metadataScanResults = [];
+
+  /// Errors consumed in call order, consulted ahead of
+  /// [metadataScanResults].
+  final List<Object> metadataScanFailures = [];
+
+  /// Set to leave `metadataScan` calls pending; complete them through
+  /// [metadataScanCalls].
+  bool holdMetadataScan = false;
+
+  /// Every `metadataScan` call, in the order received.
+  final List<Completer<String>> metadataScanCalls = [];
+
+  @override
+  Future<String> metadataScan() {
+    final completer = Completer<String>();
+    metadataScanCalls.add(completer);
+    if (metadataScanFailures.isNotEmpty) {
+      completer.completeError(metadataScanFailures.removeAt(0));
+    } else if (!holdMetadataScan) {
+      completer.complete(
+        metadataScanResults.isNotEmpty ? metadataScanResults.removeAt(0) : '1',
+      );
+    }
+    return completer.future;
   }
 }
 

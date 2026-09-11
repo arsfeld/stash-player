@@ -1,0 +1,4 @@
+{"data": {"jobQueue": [
+  {"id": "42", "status": "RUNNING", "description": "Scanning for new files", "progress": 0.35, "error": null},
+  {"id": "43", "status": "READY", "description": "Generating previews", "progress": null, "error": null}
+]}}

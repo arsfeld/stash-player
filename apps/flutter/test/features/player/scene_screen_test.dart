@@ -11,6 +11,7 @@ import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/job.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
@@ -145,6 +146,12 @@ class _TestStashApi implements StashApi {
 
   @override
   Future<int> resetO(String id) async => 0;
+
+  @override
+  Future<String> metadataScan() async => '1';
+
+  @override
+  Future<List<Job>> jobQueue() async => const [];
 }
 
 class _RecordingUrlLauncher implements ExternalUrlLauncher {
