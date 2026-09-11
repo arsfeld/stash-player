@@ -126,6 +126,14 @@ class LibraryController extends ChangeNotifier {
     await _fetchNextPage();
   }
 
+  /// Fetches page 1 again with the filter already in force, for when the
+  /// library itself may have changed underneath it (a scan has just
+  /// ended). Bumps the generation, so a page response still in flight is
+  /// dropped instead of being appended to the fresh grid. A random sort
+  /// keeps its seed: [_prepareRandomSeed] only mints one for a filter that
+  /// has none, so the shuffle does not change under the reader.
+  Future<void> reload() => _resetAndFetch(_state.filter, bumpGeneration: true);
+
   /// Loads one more page if the currently accepted content doesn't fill
   /// the viewport, more results remain, and nothing is already in
   /// flight.

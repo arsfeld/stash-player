@@ -457,6 +457,60 @@ void main() {
     );
   });
 
+  group('reload', () {
+    test('fetches page 1 again with the same filter, keeping a random '
+        "sort's seed, at the next generation", () async {
+      api.pages.add(ScenePage(total: 100, scenes: scenes(48)));
+      await controller.setSort(SceneSort.random);
+      api.pages.add(ScenePage(total: 100, scenes: scenes(48, start: 48)));
+      await controller.ensureViewportFilled(
+        contentExtent: 0,
+        viewportExtent: 1,
+      );
+      expect(controller.state.page, 2);
+      final filter = controller.state.filter;
+      final generation = controller.state.generation;
+
+      api.pages.add(ScenePage(total: 100, scenes: scenes(48, start: 500)));
+      await controller.reload();
+
+      expect(filter.randomSeed, isNotNull);
+      expect(api.requestedPages.last, 1);
+      expect(api.requestedFilters.last, filter);
+      expect(controller.state.generation, generation + 1);
+      expect(controller.state.page, 1);
+      expect(controller.state.scenes.first.id, '500');
+    });
+
+    test('drops a page response still in flight when it was called', () async {
+      api.pages.add(ScenePage(total: 100, scenes: scenes(48)));
+      await controller.loadInitial();
+      api.allowManualCompletion = true;
+      final stale = controller.ensureViewportFilled(
+        contentExtent: 0,
+        viewportExtent: 1,
+      );
+      final staleCall = api.calls.last;
+      expect(staleCall.page, 2);
+
+      final reloading = controller.reload();
+      final reloadCall = api.calls.last;
+      expect(reloadCall.page, 1);
+
+      staleCall.completer.complete(
+        ScenePage(total: 100, scenes: scenes(48, start: 48)),
+      );
+      reloadCall.completer.complete(
+        ScenePage(total: 100, scenes: scenes(48, start: 900)),
+      );
+      await Future.wait([stale, reloading]);
+
+      expect(controller.state.page, 1);
+      expect(controller.state.scenes, hasLength(48));
+      expect(controller.state.scenes.first.id, '900');
+    });
+  });
+
   group('disposal', () {
     test(
       'a response landing after dispose is discarded rather than throwing',
