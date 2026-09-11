@@ -156,6 +156,101 @@ void main() {
     });
   });
 
+  group('AppIconAction', () {
+    testWidgets('with no onPressed it is disabled: no tap, no focus, and '
+        'semantics say so', (tester) async {
+      final focusNode = FocusNode(debugLabel: 'probe');
+      addTearDown(focusNode.dispose);
+      await _pump(
+        tester,
+        AppIconAction(
+          icon: Icons.library_add_outlined,
+          tooltip: 'A task is already running',
+          semanticLabel: 'Scan library',
+          focusNode: focusNode,
+          onPressed: null,
+        ),
+      );
+
+      await tester.tap(find.byType(AppIconAction));
+      await tester.pump();
+      focusNode.requestFocus();
+      await tester.pump();
+
+      expect(focusNode.hasFocus, isFalse);
+      final node = tester.getSemantics(find.byType(AppIconAction));
+      expect(node.label, contains('Scan library'));
+      // `isSemantics` checks only the flags named, unlike `matchesSemantics`,
+      // which expects every unnamed flag to be off.
+      expect(
+        node,
+        isSemantics(isButton: true, hasEnabledState: true, isEnabled: false),
+      );
+      expect(find.byTooltip('A task is already running'), findsOneWidget);
+    });
+
+    testWidgets('an enabled action reports itself enabled', (tester) async {
+      await _pump(
+        tester,
+        AppIconAction(
+          icon: Icons.shuffle,
+          tooltip: 'Play random',
+          semanticLabel: 'Play a random scene',
+          onPressed: () {},
+        ),
+      );
+
+      expect(
+        tester.getSemantics(find.byType(AppIconAction)),
+        isSemantics(hasEnabledState: true, isEnabled: true),
+      );
+    });
+
+    testWidgets('draws the badge only when asked', (tester) async {
+      await _pump(
+        tester,
+        AppIconAction(
+          icon: Icons.list_alt,
+          tooltip: 'Background tasks',
+          semanticLabel: 'Background tasks',
+          onPressed: () {},
+        ),
+      );
+      expect(find.byKey(AppIconAction.badgeKey), findsNothing);
+
+      await _pump(
+        tester,
+        AppIconAction(
+          icon: Icons.list_alt,
+          tooltip: 'Background tasks, running',
+          semanticLabel: 'Background tasks, running',
+          badge: true,
+          onPressed: () {},
+        ),
+      );
+      expect(find.byKey(AppIconAction.badgeKey), findsOneWidget);
+    });
+
+    testWidgets('the badge does not swallow taps', (tester) async {
+      var taps = 0;
+      await _pump(
+        tester,
+        AppIconAction(
+          icon: Icons.list_alt,
+          tooltip: 'Background tasks, running',
+          semanticLabel: 'Background tasks, running',
+          badge: true,
+          onPressed: () => taps++,
+        ),
+      );
+
+      await tester.tap(find.byKey(AppIconAction.badgeKey));
+      await tester.pump();
+
+      expect(taps, 1);
+    });
+  });
+
   group('pointer feedback', () {
     // The strip used to be a row of flat rectangles that did not respond
     // to the pointer at all: every control drew its own opaque fill

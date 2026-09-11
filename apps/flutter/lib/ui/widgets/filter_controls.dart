@@ -237,12 +237,20 @@ class AppIconToggle extends StatelessWidget {
 
 /// A square icon control that performs an action rather than holding a
 /// state. Same geometry and same labelling rules as [AppIconToggle].
+///
+/// A null [onPressed] disables it: the icon dims, the ink goes, and it
+/// drops out of focus traversal, so Tab skips it. The tooltip still shows
+/// on hover, which is where a disabled control can say why.
+///
+/// [badge] draws a small accent dot in the top-right corner, for a control
+/// with something waiting behind it.
 class AppIconAction extends StatelessWidget {
   const AppIconAction({
     required this.icon,
     required this.tooltip,
     required this.semanticLabel,
     required this.onPressed,
+    this.badge = false,
     this.focusNode,
     super.key,
   }) : assert(tooltip != '', 'an icon-only control needs a tooltip'),
@@ -251,21 +259,27 @@ class AppIconAction extends StatelessWidget {
          'an icon-only control needs a semantics label',
        );
 
+  /// On the badge dot, so a test can find it.
+  static const Key badgeKey = Key('app-icon-action-badge');
+
   final IconData icon;
   final String tooltip;
   final String semanticLabel;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
+  final bool badge;
   final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final tokens = AppTokens.of(context);
+    final enabled = onPressed != null;
 
     // See the matching note in AppIconToggle.build: Semantics has to be the
     // outer widget so this node stays reachable by widget type.
     return Semantics(
       button: true,
+      enabled: enabled,
       label: semanticLabel,
       child: Tooltip(
         message: tooltip,
@@ -276,22 +290,56 @@ class AppIconAction extends StatelessWidget {
             color: tokens.controlSurface,
             borderRadius: BorderRadius.circular(AppTokens.radiusControl),
           ),
-          // See the matching note in AppMenuButton.build: this Material
-          // has to sit between the fill and the InkWell for ink to be
-          // visible at all.
-          child: Material(
-            type: MaterialType.transparency,
-            child: InkWell(
-              focusNode: focusNode,
-              onTap: onPressed,
-              hoverColor: tokens.controlHover,
-              highlightColor: tokens.controlActive,
-              splashColor: tokens.controlActive,
-              borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-              child: Center(
-                child: Icon(icon, size: 16, color: scheme.onSurfaceVariant),
+          child: Stack(
+            children: [
+              // See the matching note in AppMenuButton.build: this Material
+              // has to sit between the fill and the InkWell for ink to be
+              // visible at all.
+              Positioned.fill(
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    focusNode: focusNode,
+                    onTap: onPressed,
+                    hoverColor: tokens.controlHover,
+                    highlightColor: tokens.controlActive,
+                    splashColor: tokens.controlActive,
+                    borderRadius: BorderRadius.circular(
+                      AppTokens.radiusControl,
+                    ),
+                    child: Center(
+                      child: Icon(
+                        icon,
+                        size: 16,
+                        color: enabled
+                            ? scheme.onSurfaceVariant
+                            : scheme.onSurfaceVariant.withValues(alpha: 0.38),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              if (badge)
+                Positioned(
+                  top: 3,
+                  right: 4,
+                  child: IgnorePointer(
+                    child: Container(
+                      key: badgeKey,
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        shape: BoxShape.circle,
+                        // A ring in the control's own fill keeps the dot
+                        // legible where it overlaps the icon, in both
+                        // themes.
+                        border: Border.all(color: tokens.controlSurface),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
