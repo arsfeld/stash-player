@@ -5,6 +5,7 @@ Implements the subset of the Stash schema that stash-player consumes:
   - version
   - findScenes / findScene
   - sceneSaveActivity, sceneIncrementO, sceneResetO
+  - metadataScan / jobQueue (a fake scan that runs for a few seconds)
 
 Thumbnails come from `./thumbs/<id>.jpg` (regenerate via gen_thumbs.sh).
 The data set is 12 SFW landscape-themed scenes — safe for screenshots
@@ -24,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 THUMB_DIR = os.path.join(HERE, "thumbs")
@@ -34,6 +36,13 @@ PORT = int(os.environ.get("MOCK_STASH_PORT", "9999"))
 # test-only observability, see the module docstring. Never persisted, and
 # cleared only by `POST /__test__/reset` (not by any GraphQL mutation).
 ACTIVITY_LOG = []
+
+# Fake jobs started by `MetadataScan`, keyed by id, valued by start time.
+# Each reports RUNNING with rising progress for SCAN_SECONDS of wall time,
+# then leaves the queue, which is how Stash reports a job that has ended.
+SCAN_SECONDS = 6.0
+JOBS = {}
+NEXT_JOB_ID = [100]
 
 STUDIOS = [
     {"id": "S1", "name": "Open Frame"},
@@ -211,6 +220,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/__test__/reset":
             ACTIVITY_LOG.clear()
+            JOBS.clear()
             return self._json({"reset": True})
         if not self.path.startswith("/graphql"):
             self.send_response(404); self.end_headers(); return
@@ -268,6 +278,29 @@ class Handler(BaseHTTPRequestHandler):
                 if s["id"] == sid:
                     s["o_counter"] = 0
             return self._json({"data": {"sceneResetO": 0}})
+
+        if op == "MetadataScan":
+            job_id = str(NEXT_JOB_ID[0])
+            NEXT_JOB_ID[0] += 1
+            JOBS[job_id] = time.monotonic()
+            return self._json({"data": {"metadataScan": job_id}})
+
+        if op == "JobQueue":
+            now = time.monotonic()
+            queue = []
+            for job_id, started in list(JOBS.items()):
+                elapsed = now - started
+                if elapsed >= SCAN_SECONDS:
+                    JOBS.pop(job_id, None)
+                    continue
+                queue.append({
+                    "id": job_id,
+                    "status": "RUNNING",
+                    "description": "Scanning...",
+                    "progress": round(elapsed / SCAN_SECONDS, 2),
+                    "error": None,
+                })
+            return self._json({"data": {"jobQueue": queue or None}})
 
         return self._json({"errors": [{"message": f"unknown op: {op!r}"}]}, 400)
 
