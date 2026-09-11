@@ -16,8 +16,9 @@ import 'scene_grid.dart';
 import 'tasks_controller.dart';
 import 'tasks_popover.dart';
 
-/// The adaptive scene library: toolbar plus grid, driven entirely by
-/// [libraryControllerProvider]'s [LibraryState].
+/// The adaptive scene library: toolbar plus grid, driven by
+/// [libraryControllerProvider]'s [LibraryState], plus [tasksControllerProvider]
+/// for the toolbar's Scan button and Tasks popover.
 ///
 /// Consumes [AppController.openScene] directly (via [ref] — a card tap or
 /// a resolved "play random" both navigate the same way) since that

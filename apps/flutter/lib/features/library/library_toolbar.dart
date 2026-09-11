@@ -27,15 +27,17 @@ bool? cycleOrganized(bool? current) => switch (current) {
   false => null,
 };
 
-/// The library's filter/sort/paging controls.
+/// The library's filter/sort/paging controls, plus the Scan button and
+/// Tasks popover trigger.
 ///
 /// Purely presentational: it receives the active [filter] and forwards
 /// every change through a typed callback — no business logic beyond the
 /// 250 ms search debounce (cancelled on [dispose], so a timer can never
-/// fire against a disposed widget's callbacks) lives here. Every callback
-/// signature intentionally matches a [LibraryController] intent 1:1 so
-/// the owning screen can pass the controller's methods straight through
-/// as tear-offs.
+/// fire against a disposed widget's callbacks) lives here. Most callback
+/// signatures intentionally match a [LibraryController] intent 1:1 so the
+/// owning screen can pass the controller's methods straight through as
+/// tear-offs; [tasksActive], [onScan] and [onOpenTasks] are the exception —
+/// they belong to the tasks controller and the Tasks popover instead.
 ///
 /// The secondary controls at a narrow width are an **in-tree collapsible
 /// row**, not a [MenuAnchor] popup. An earlier version used `MenuAnchor`
@@ -203,11 +205,11 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   /// The strip at [libraryToolbarWideBreakpoint] and above.
   ///
-  /// Tab order follows the visual order: the filter group, then the
-  /// search field, then settings. That is what WCAG 2.4.3 asks for, and
-  /// the two layouts read in different orders, so the order values
-  /// belong to a layout rather than to a control. See [_narrowControls]
-  /// for the other one.
+  /// Tab order follows the visual order: the filter group, then Play
+  /// random, then the search field, then Scan, Tasks and settings. That
+  /// is what WCAG 2.4.3 asks for, and the two layouts read in different
+  /// orders, so the order values belong to a layout rather than to a
+  /// control. See [_narrowControls] for the other one.
   List<Widget> _wideControls() => [
     _ordered(1, _sortMenu()),
     const SizedBox(width: AppTokens.space2),

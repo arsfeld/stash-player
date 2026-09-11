@@ -10,11 +10,11 @@ import 'providers.dart';
 /// to, resolving it lazily on each call rather than requiring one
 /// synchronously at construction time.
 ///
-/// [stashApiProvider] is a `FutureProvider`, but the library's controllers
-/// come from `ChangeNotifierProvider`s and must be handed back
-/// synchronously. Each is constructed with a [StashApi] it can call
-/// immediately, and this adapter is what makes that true even before the
-/// real one has resolved.
+/// [stashApiProvider] is a `FutureProvider`, but the library and tasks
+/// providers share this adapter and their `ChangeNotifierProvider`s must
+/// be handed back synchronously. Each is constructed with a [StashApi] it
+/// can call immediately, and this adapter is what makes that true even
+/// before the real one has resolved.
 ///
 /// Resolving can throw a bare platform exception (secure storage or
 /// keyring access denied, say) that is not a `Failure`, because it fails
