@@ -1638,6 +1638,37 @@ void main() {
     );
 
     testWidgets(
+      'the click that brings the window forward reveals the controls but '
+      'leaves playback alone',
+      (tester) async {
+        final harness = _harness();
+        addTearDown(harness.container.dispose);
+        final scene = _scene();
+        await _pumpReadyScene(tester, harness, scene);
+        await tester.pump(const Duration(seconds: 4));
+        expect(_controlsOpacity(tester), 0.0);
+
+        // The viewer switches to another app and then clicks the player
+        // to come back. macOS reports the window focused just before it
+        // delivers that click.
+        tester.binding
+          ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+          ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        harness.engine.commands.clear();
+        await tester.tap(
+          find.byKey(const Key('player-video')),
+          warnIfMissed: false,
+        );
+        await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 50));
+
+        expect(harness.engine.commands.whereType<PauseCommand>(), isEmpty);
+        expect(harness.engine.commands.whereType<PlayCommand>(), isEmpty);
+        expect(_controlsOpacity(tester), 1.0);
+        await _tearDownScene(tester, harness);
+      },
+    );
+
+    testWidgets(
       'dragging the seek bar commits exactly one seek, on release — not '
       'one per pointer sample (final review I2)',
       (tester) async {

@@ -18,6 +18,7 @@ import 'player_top_bar.dart';
 import 'scene_controller.dart';
 import 'scene_metadata_drawer.dart';
 import 'video_surface.dart';
+import 'window_activation_guard.dart';
 
 /// The video-first scene screen: a full-bleed `Stack` with the video
 /// surface behind everything, an auto-hiding transport overlay docked to
@@ -109,9 +110,32 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   int _lastOFailureSequence = 0;
   int _lastBrowseFailureSequence = 0;
 
+  late final WindowActivationGuard _activationGuard;
+  late final AppLifecycleListener _lifecycleListener;
+
+  /// What [_activationGuard] said about the latest press on the video,
+  /// held for that press's tap. The tap only fires once the double-tap
+  /// window has passed, long after focus has landed, so the press is the
+  /// only moment the two can still be told apart.
+  bool _pressActivatedWindow = false;
+
+  /// Desktop Flutter reports window focus through the app lifecycle:
+  /// `resumed` while the window has focus, `inactive` once something else
+  /// does. A state not yet reported counts as focused, so a missing report
+  /// can never swallow a click.
+  static bool _isFocused(AppLifecycleState? state) =>
+      state == null || state == AppLifecycleState.resumed;
+
   @override
   void initState() {
     super.initState();
+    _activationGuard = WindowActivationGuard(
+      focused: _isFocused(WidgetsBinding.instance.lifecycleState),
+    );
+    _lifecycleListener = AppLifecycleListener(
+      onStateChange: (state) =>
+          _activationGuard.focusChanged(_isFocused(state)),
+    );
     _controlsFadeController = AnimationController(
       vsync: this,
       duration: _fadeDuration,
@@ -133,6 +157,7 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
 
   @override
   void dispose() {
+    _lifecycleListener.dispose();
     _controlsFadeController.dispose();
     _hideTimer?.cancel();
     // No explicit teardown of `sceneControllerProvider` here: Riverpod
@@ -482,24 +507,34 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
             Positioned.fill(
               child: MouseRegion(
                 onHover: (_) => _registerActivity(playback),
-                // `media_kit`'s own `MaterialDesktopVideoControls` (now
-                // replaced by this chrome, see `NoVideoControls` at the
-                // engine layer) also gave click-to-play/pause and
-                // double-click-to-fullscreen on the video itself; nothing
-                // else took over those two gestures when that transport
-                // was disabled, so they are restored here directly rather
-                // than left unreachable by mouse.
-                child: GestureDetector(
+                // Translucent so a press anywhere on the video is recorded,
+                // not only one that lands on the surface itself.
+                child: Listener(
                   behavior: HitTestBehavior.translucent,
-                  onTap: () {
-                    _registerActivity(playback);
-                    playbackController.playPause();
-                  },
-                  onDoubleTap: () {
-                    _registerActivity(playback);
-                    playbackController.setFullscreen(!playback.fullscreen);
-                  },
-                  child: VideoSurface(controller: playbackController),
+                  onPointerDown: (_) =>
+                      _pressActivatedWindow = _activationGuard.recordPress(),
+                  // `media_kit`'s own `MaterialDesktopVideoControls` (now
+                  // replaced by this chrome, see `NoVideoControls` at the
+                  // engine layer) also gave click-to-play/pause and
+                  // double-click-to-fullscreen on the video itself; nothing
+                  // else took over those two gestures when that transport
+                  // was disabled, so they are restored here directly rather
+                  // than left unreachable by mouse.
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () {
+                      _registerActivity(playback);
+                      // A viewer clicking the player to bring it forward
+                      // means "focus", not "pause".
+                      if (_pressActivatedWindow) return;
+                      playbackController.playPause();
+                    },
+                    onDoubleTap: () {
+                      _registerActivity(playback);
+                      playbackController.setFullscreen(!playback.fullscreen);
+                    },
+                    child: VideoSurface(controller: playbackController),
+                  ),
                 ),
               ),
             ),
