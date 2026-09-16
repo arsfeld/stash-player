@@ -17,11 +17,17 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 flutter_dir := justfile_directory() / "apps/flutter"
 app_bundle := flutter_dir / "build/macos/Build/Products/Debug/Stash Player Flutter.app"
+linux_arch := if arch() == "x86_64" { "x64" } else if arch() == "aarch64" { "arm64" } else { arch() }
+linux_bundle := flutter_dir / "build/linux" / linux_arch / "debug/bundle/stash_player_flutter"
 
 # Resolved once, in the ambient shell, so the clean-env recipes below can
 # still find these after `env -i` drops PATH.
 flutter_bin := `command -v flutter 2>/dev/null || true`
 pod_bin := `command -v pod 2>/dev/null || true`
+
+# Check if CMake and Ninja are present (i.e. already inside `nix develop .#flutter`).
+_in_flutter_shell := `if command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then echo 1; else echo 0; fi`
+_nix_flutter := if _in_flutter_shell == "1" { "" } else { "nix develop " + justfile_directory() + "/.#flutter --command " }
 
 # Where the Flutter client should look for Stash. Defaults to the mock.
 stash_url := env("STASH_URL", "http://127.0.0.1:9999")
@@ -47,7 +53,15 @@ stash-down:
 
 # ----------------------------------------------------------------- flutter
 
-# Show which toolchain the Flutter macOS recipes will actually use.
+# Show which toolchain the Flutter recipes will actually use.
+[linux]
+flutter-env:
+    @echo "flutter : {{ if flutter_bin == "" { "NOT FOUND" } else { flutter_bin } }}"
+    @echo "in nix  : {{ if _in_flutter_shell == "1" { "yes" } else { "no (recipes will wrap in nix develop .#flutter)" } }}"
+    @echo "bundle  : {{ linux_bundle }}"
+    @echo "stash   : {{ stash_url }}"
+    @echo "socks   : ${STASH_SOCKS_PROXY-(app setting)}"
+
 [macos]
 flutter-env:
     @echo "flutter : {{ if flutter_bin == "" { "NOT FOUND" } else { flutter_bin } }}"
@@ -58,26 +72,77 @@ flutter-env:
     @echo "socks   : ${STASH_SOCKS_PROXY-(app setting)}"
 
 # Everything CI checks, in CI's order.
+[linux]
+flutter-check:
+    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze --fatal-infos --fatal-warnings && flutter test"
+
+[macos]
 flutter-check: _needs-flutter
     cd {{ flutter_dir }} && {{ _flutter }} pub get
     cd {{ flutter_dir }} && {{ _dart }} format --output=none --set-exit-if-changed .
     cd {{ flutter_dir }} && {{ _flutter }} analyze --fatal-infos --fatal-warnings
     cd {{ flutter_dir }} && {{ _flutter }} test
 
+[linux]
+flutter-fmt:
+    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && dart format ."
+
+[macos]
 flutter-fmt: _needs-flutter
     cd {{ flutter_dir }} && {{ _dart }} format .
 
-# Build the debug .app outside the Nix shell.
+# Build the debug binary.
+[linux]
+flutter-build:
+    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && flutter build linux --debug"
+
 [macos]
 flutter-build: _needs-flutter
     cd {{ flutter_dir }} && {{ _flutter }} build macos --debug
 
 # Build, then launch with the environment overrides actually applied.
+[linux]
+flutter-run: flutter-build flutter-launch
+
 [macos]
 flutter-run: flutter-build flutter-launch
 
-# Launch the already-built .app. Rebuild with `flutter-build` after Dart edits.
+# Launch the already-built binary. Rebuild with `flutter-build` after Dart edits.
 # Single shell (shebang recipe) because the key lookup has to reach the exec.
+[linux]
+flutter-launch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f "{{ linux_bundle }}" ]; then
+      echo "No build at {{ linux_bundle }} — run: just flutter-build" >&2
+      exit 2
+    fi
+
+    export STASH_URL="{{ stash_url }}"
+
+    # Only forward STASH_API_KEY if present in environment; absent leaves persisted value untouched.
+    if [ -n "${STASH_API_KEY+set}" ]; then
+      export STASH_API_KEY="$STASH_API_KEY"
+    fi
+
+    route=""
+    if [ -n "${STASH_SOCKS_PROXY+set}" ]; then
+      export STASH_SOCKS_PROXY="$STASH_SOCKS_PROXY"
+      if [ -n "$STASH_SOCKS_PROXY" ]; then
+        route=" via SOCKS $STASH_SOCKS_PROXY"
+      else
+        route=" directly (proxy explicitly disabled)"
+      fi
+    fi
+
+    if [ "{{ stash_url }}" = "http://127.0.0.1:9999" ] && ! nc -z 127.0.0.1 9999 2>/dev/null; then
+      echo "warning: nothing is listening on the mock's port, so the app will" >&2
+      echo "         report that it cannot reach Stash. Start it with 'just mock'," >&2
+      echo "         or point STASH_URL at a real server (see .env)." >&2
+    fi
+    echo "launching against {{ stash_url }}$route"
+    exec {{ _nix_flutter }}"{{ linux_bundle }}"
+
 [macos]
 flutter-launch:
     #!/usr/bin/env bash
@@ -147,11 +212,13 @@ _needs-flutter:
     fi
 
 # Escapes the Nix dev shell so Xcode's own linker and xcrun win.
+pod_dir := if pod_bin != "" { parent_directory(pod_bin) + ":" } else { "" }
+flutter_dir_bin := if flutter_bin != "" { parent_directory(flutter_bin) + ":" } else { "" }
 [private]
-_clean := "env -i HOME=$HOME USER=$USER TMPDIR=/tmp LANG=en_US.UTF-8 PATH=" + parent_directory(flutter_bin) + ":" + parent_directory(pod_bin) + ":/usr/bin:/bin:/usr/sbin:/sbin DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"
+_clean := "env -i HOME=$HOME USER=$USER TMPDIR=/tmp LANG=en_US.UTF-8 PATH=" + flutter_dir_bin + pod_dir + "/usr/bin:/bin:/usr/sbin:/sbin DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"
 
 [private]
 _flutter := _clean + " " + flutter_bin
 
 [private]
-_dart := _clean + " " + parent_directory(flutter_bin) / "dart"
+_dart := _clean + " " + if flutter_bin != "" { parent_directory(flutter_bin) / "dart" } else { "dart" }
