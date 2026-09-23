@@ -86,8 +86,10 @@ libmpv.
     Install the bundle to `/app/stash-player/` and symlink
     `/app/bin/stash-player` to it. Install the desktop file, metainfo,
     and icons from `data/` as today.
-- **finish-args:** unchanged (Wayland/fallback-X11, IPC, network,
-  PulseAudio, `--device=dri`, `org.freedesktop.secrets`).
+- **finish-args:** Wayland/fallback-X11, IPC, network, PulseAudio,
+  `--device=dri`, and `org.freedesktop.secrets`, as before. The legacy
+  `xdg-config/stash-player` permission becomes `:ro` (it's only read, for
+  the import), and `xdg-cache/stash-player` is dropped.
 
 **Tooling:** `.github/workflows/flatpak.yml` keeps the same container,
 action, and `stash-player.flatpak` release asset. Its cache key moves to
@@ -114,7 +116,12 @@ offline sources, the Flathub path.
 - **`DebugProfile.entitlements`:** keeps `allow-jit`. The sandbox is
   dropped here too, so debug and release behave the same.
 - **Deployment target:** 14.0, matching the SwiftUI app. Release builds
-  are arm64-only via `EXCLUDED_ARCHS[sdk=macosx*] = x86_64`.
+  are arm64-only via `ARCHS=arm64` on the CI `xcodebuild` command line, as the SwiftUI build did.
+- **Keychain mode:** `flutter_secure_storage` uses the file-based login
+  keychain (`MacOsOptions(usesDataProtectionKeychain: false)`). The
+  data-protection keychain it defaults to needs a `keychain-access-groups`
+  entitlement that a Developer ID build without a provisioning profile
+  doesn't have.
 - **Sparkle 2** (added via the Podfile):
   - `AppDelegate` owns an `SPUStandardUpdaterController`.
   - `MainMenu.xib` gets a "Check for Updates…" app-menu item wired to
@@ -161,7 +168,7 @@ else.
 
 | | URL + proxy (`config.toml`: `stash_url`, `proxy_url`) | API key |
 |---|---|---|
-| Linux | `$XDG_CONFIG_HOME/stash-player/config.toml`. Same sandbox path under the shared Flatpak app ID | Secret Service item, attributes `application=stash-player`, `key=stash-api-key` |
+| Linux | `$XDG_CONFIG_HOME/stash-player/config.toml` (the Flatpak's per-app path), then the host's `~/.config/stash-player/config.toml`, which the manifest exposes read-only | Secret Service item, attributes `application=stash-player`, `key=stash-api-key` |
 | macOS | `~/Library/Application Support/one.arsfeld.stash-player/config.toml` | Keychain generic password, service `stash-player`, account `stash-api-key` |
 
 **Components** (in `apps/flutter/lib/services/`)
@@ -169,7 +176,8 @@ else.
 - **`LegacyConfigReader`:** resolves the platform path and parses it with
   the `toml` package. Returns `stash_url` and `proxy_url`. It strips the
   scheme from `proxy_url` (`socks5h://host:port` → `host:port`) to match
-  the Flutter proxy setting.
+  the Flutter proxy setting. HTTP proxies and proxies with credentials map
+  to no proxy, because the Flutter client can't honour them.
 - **`LegacySecretReader`:** a Dart interface over the method channel
   `stash_player/legacy_secret`, method `readApiKey` → `String?`.
   - **Linux runner (C):** `secret_password_lookup_sync` with a schema
