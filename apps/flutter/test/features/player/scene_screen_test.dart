@@ -17,6 +17,7 @@ import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
 import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
+import 'package:stash_player_flutter/features/player/player_bar.dart';
 import 'package:stash_player_flutter/features/player/player_icon_button.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart';
@@ -1401,6 +1402,40 @@ void main() {
         expect(drawerWidth, lessThan(SceneMetadataDrawer.maxWidth));
       },
     );
+  });
+
+  group('SceneScreen: player bar width', () {
+    Future<Rect> pumpWide(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      await _pumpReadyScene(tester, harness, _scene(), play: false);
+      return tester.getRect(find.byKey(const Key('scene-player-bar-frame')));
+    }
+
+    testWidgets('on a wide window the frame stops at its max width and '
+        'sits centred', (tester) async {
+      final frame = await pumpWide(tester);
+
+      expect(frame.width, AppTokens.playerBarMaxWidth);
+      expect(frame.center.dx, 700);
+    });
+
+    testWidgets('the empty space beside a capped bar belongs to the video, '
+        'not the bar', (tester) async {
+      final frame = await pumpWide(tester);
+
+      final bar = tester.renderObject(find.byType(PlayerBar));
+      final beside = tester.hitTestOnBinding(Offset(40, frame.center.dy));
+      expect(beside.path.map((entry) => entry.target), isNot(contains(bar)));
+
+      final inside = tester.hitTestOnBinding(frame.center);
+      expect(inside.path.map((entry) => entry.target), contains(bar));
+    });
   });
 
   group('SceneScreen: engine lifecycle across mount/unmount (fix round 1, '

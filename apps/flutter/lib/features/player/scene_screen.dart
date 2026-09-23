@@ -637,37 +637,49 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                       left: 0,
                       right: 0,
                       bottom: 0,
-                      child: IgnorePointer(
-                        ignoring: !effectiveVisible,
-                        child: FadeTransition(
-                          key: const Key('scene-controls-overlay-player-bar'),
-                          opacity: _controlsFadeController,
-                          child: MouseRegion(
-                            onEnter: (_) => _setHovering(true, playback),
-                            onExit: (_) => _setHovering(false, playback),
-                            child: PlayerBar(
-                              playback: playback,
-                              actions: SceneActionState(
-                                canGoPrevious:
-                                    !sceneState.navigating &&
-                                    (sceneState.browse?.canGoPrevious ?? false),
-                                canGoNext:
-                                    !sceneState.navigating &&
-                                    (sceneState.browse?.canGoNext ?? false),
-                                oCount: sceneState.oCount,
+                      // The bar caps its own width and this centres it.
+                      // The `Align` sits outside the bar's `MouseRegion`
+                      // so the empty space either side of a capped bar
+                      // is not bar: hovering or tapping there reaches the
+                      // video. `heightFactor: 1` keeps it from growing to
+                      // the whole stack's height, which would do the same
+                      // to the video above it.
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        heightFactor: 1,
+                        child: IgnorePointer(
+                          ignoring: !effectiveVisible,
+                          child: FadeTransition(
+                            key: const Key('scene-controls-overlay-player-bar'),
+                            opacity: _controlsFadeController,
+                            child: MouseRegion(
+                              onEnter: (_) => _setHovering(true, playback),
+                              onExit: (_) => _setHovering(false, playback),
+                              child: PlayerBar(
+                                playback: playback,
+                                actions: SceneActionState(
+                                  canGoPrevious:
+                                      !sceneState.navigating &&
+                                      (sceneState.browse?.canGoPrevious ??
+                                          false),
+                                  canGoNext:
+                                      !sceneState.navigating &&
+                                      (sceneState.browse?.canGoNext ?? false),
+                                  oCount: sceneState.oCount,
+                                ),
+                                onTogglePlayPause: playbackController.playPause,
+                                onSeek: playbackController.seekAbsolute,
+                                onVolumeChanged: playbackController.setVolume,
+                                onToggleMute: playbackController.toggleMute,
+                                onPrevious: sceneController.goPrevious,
+                                onNext: sceneController.goNext,
+                                onSkipBackward: () => playbackController
+                                    .seekRelative(const Duration(seconds: -10)),
+                                onSkipForward: () => playbackController
+                                    .seekRelative(const Duration(seconds: 10)),
+                                onIncrementO: sceneController.incrementO,
+                                onResetO: sceneController.resetO,
                               ),
-                              onTogglePlayPause: playbackController.playPause,
-                              onSeek: playbackController.seekAbsolute,
-                              onVolumeChanged: playbackController.setVolume,
-                              onToggleMute: playbackController.toggleMute,
-                              onPrevious: sceneController.goPrevious,
-                              onNext: sceneController.goNext,
-                              onSkipBackward: () => playbackController
-                                  .seekRelative(const Duration(seconds: -10)),
-                              onSkipForward: () => playbackController
-                                  .seekRelative(const Duration(seconds: 10)),
-                              onIncrementO: sceneController.incrementO,
-                              onResetO: sceneController.resetO,
                             ),
                           ),
                         ),
