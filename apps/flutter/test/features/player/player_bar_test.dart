@@ -233,6 +233,27 @@ void main() {
     expect(fired, isEmpty);
   });
 
+  testWidgets('play/pause sits at the centre of the bar, whatever the '
+      'side groups weigh', (tester) async {
+    tester.view.physicalSize = const Size(700, 400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    // Volume slider on the left, a one-digit O-counter and its reset on
+    // the right: the two sides are very different widths.
+    await _pumpBar(
+      tester,
+      playback: const PlaybackState(playing: true),
+      actions: const SceneActionState(oCount: 3),
+    );
+    expect(find.byKey(const Key('scene-volume-slider')), findsOneWidget);
+
+    expect(
+      tester.getCenter(find.byTooltip('Pause')).dx,
+      tester.getCenter(find.byKey(const Key('scene-player-bar-frame'))).dx,
+    );
+  });
+
   group('narrow-width reflow', () {
     // The pre-existing metadata-drawer test window this task's own fix
     // round found overflowing (`scene_screen_test.dart`'s "below 420
@@ -276,7 +297,7 @@ void main() {
 
         expect(sizeOf('Previous scene'), const Size(28, 28));
         expect(sizeOf('Back 10 seconds'), const Size(28, 28));
-        expect(sizeOf('Pause'), const Size(34, 34));
+        expect(sizeOf('Pause'), const Size(38, 38));
         expect(sizeOf('Forward 10 seconds'), const Size(28, 28));
         expect(sizeOf('Next scene'), const Size(28, 28));
 
@@ -305,11 +326,11 @@ void main() {
     testWidgets(
       'the volume slider drops first, before the O-counter loses anything',
       (tester) async {
-        // 396 logical pixels leaves 340 of content width: below
-        // `_playerBarVolumeBreakpoint` (393.5) so the slider is gone, but
-        // above `_playerBarResetBreakpoint` (297.5) so the O-counter
-        // still shows its reset button and its digits.
-        tester.view.physicalSize = const Size(396, 700);
+        // 438 logical pixels leaves 382 of content width, so each side
+        // of the 182px transport gets 100: short of the volume group
+        // (124) so the slider is gone, but enough for a full two-digit
+        // O-counter (59.5 + 32 = 91.5), reset button and digits included.
+        tester.view.physicalSize = const Size(438, 700);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
@@ -358,16 +379,14 @@ void main() {
       'a three-digit O-count does not overflow the reset-button band a '
       'two-digit budget would wrongly clear',
       (tester) async {
-        // 354 logical pixels leaves 298 of content width: at or just
-        // above the fixed, two-digit-budgeted reset threshold this fix
-        // round's first draft used (206 base + 59.5 two-digit bump + 32
-        // reset = 297.5), so that draft would already have allowed the
-        // reset button here. A three-digit count's own bump button is
-        // wider (71.75, not 59.5), so the real reset threshold for three
-        // digits is 206 + 71.75 + 32 = 309.75, above 298 by about 12
-        // pixels: exactly the band a fixed, representative-count budget
-        // cannot see coming.
-        tester.view.physicalSize = const Size(354, 700);
+        // 428 logical pixels leaves 372 of content width, so each side
+        // of the 182px transport gets 95: enough for a full two-digit
+        // O-counter (59.5 + 32 = 91.5), so a budget fixed at two digits
+        // would allow the reset button here. A three-digit count's own
+        // bump button is wider (71.75, not 59.5), so its full O-counter
+        // needs 103.75, about 9 pixels more than this side has: exactly
+        // the band a fixed, representative-count budget cannot see coming.
+        tester.view.physicalSize = const Size(428, 700);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
@@ -385,7 +404,7 @@ void main() {
 
         expect(sizeOf('Previous scene'), const Size(28, 28));
         expect(sizeOf('Back 10 seconds'), const Size(28, 28));
-        expect(sizeOf('Pause'), const Size(34, 34));
+        expect(sizeOf('Pause'), const Size(38, 38));
         expect(sizeOf('Forward 10 seconds'), const Size(28, 28));
         expect(sizeOf('Next scene'), const Size(28, 28));
         expect(tester.takeException(), isNull);

@@ -30,7 +30,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
   // Corner radii.
   static const double radiusControl = 7;
   static const double radiusPanel = 10;
-  static const double radiusPlayerBar = 13;
+  static const double radiusPlayerBar = 16;
 
   /// The top strip's total height, and the control band inside it. The
   /// band is 28 because that is the height a compact control reads well
@@ -69,6 +69,11 @@ class AppTokens extends ThemeExtension<AppTokens> {
   static const double sceneTileMaxWidth = 280;
   static const double drawerMaxWidth = 420;
 
+  /// The player bar's widest its frame gets. Past this it stops
+  /// stretching and sits centred, so a wide window does not spread the
+  /// controls into a strip across the whole picture.
+  static const double playerBarMaxWidth = 560;
+
   static const Duration hoverDuration = Duration(milliseconds: 120);
   static const Duration controlsFadeDuration = Duration(milliseconds: 200);
   static const Duration drawerDuration = Duration(milliseconds: 220);
@@ -80,6 +85,16 @@ class AppTokens extends ThemeExtension<AppTokens> {
   static const Color playerText = Color(0xFFFFFFFF);
   static const Color playerTextDim = Color(0xD1FFFFFF);
   static const Color playerTrack = Color(0x42FFFFFF);
+
+  /// The player bar's tint, laid over a blur of the video behind it.
+  /// Lighter than [playerPanel] because the blur already does most of the
+  /// work of separating the controls from the picture.
+  static const Color playerBarFill = Color(0x8C101114);
+
+  /// Glyph colour for the player's secondary controls (volume, skips,
+  /// reset), a step below [playerText] so play/pause and prev/next lead.
+  static const Color playerGlyphSubdued = Color(0xB8FFFFFF);
+  static const Color playerBufferedTrack = Color(0x66FFFFFF);
 
   final Color controlSurface;
   final Color controlHover;

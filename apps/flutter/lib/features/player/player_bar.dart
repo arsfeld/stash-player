@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
 import '../../shared/formatters.dart';
@@ -5,11 +7,21 @@ import '../../ui/theme/app_tokens.dart';
 import 'playback_state.dart';
 import 'player_icon_button.dart';
 
-// The breakpoints below share one fixed baseline: the mute button (28)
-// plus the five-button transport cluster (four 8px gaps plus one filled
-// play/pause button at 34 instead of 28, which never shrinks or drops at
-// any width) is 206. This part is genuinely count-independent.
-const double _playerBarBaseWidth = 206;
+// The control row puts the transport at its true centre, between two
+// equal side slots: volume on the left, the O-counter on the right. Each
+// side therefore gets half of whatever the transport leaves, whatever the
+// other side needs, and every narrow-width concession below is a side
+// group measured against that one half.
+//
+// The transport itself (four 28px buttons, one 38px primary play/pause,
+// four 8px gaps) never shrinks or drops at any width: 182.
+const double _transportWidth =
+    PlayerIconButton.size * 4 +
+    PlayerIconButton.primarySize +
+    AppTokens.space2 * 4;
+
+/// The mute button plus the fixed 96px volume slider beside it.
+const double _volumeGroupWidth = PlayerIconButton.size + 96;
 
 // The O-counter's own bump button is not fixed-width: `oCount` is an
 // unbounded `int?` straight from Stash's mutation, and its digits render
@@ -35,49 +47,36 @@ double _oCounterBumpWidth(int digitCount) =>
 /// independent: the reset button itself never changes size.
 const double _oCounterResetWidth = 32;
 
-/// Width, in logical pixels available to the bar's bottom control row
-/// (inside its own padding and border, so this is directly comparable to
-/// the `LayoutBuilder` constraints in [_PlayerBarState.build]), at and
-/// above which the volume slider renders alongside everything else, for
-/// an O-counter showing [digitCount] digits.
+/// What the bottom control row shows on each side of the transport, for
+/// a row [available] logical pixels wide (inside the frame's padding, so
+/// directly the `LayoutBuilder` constraint in [_PlayerBarState.build])
+/// and an O-counter showing [digitCount] digits.
 ///
-/// Below it the slider drops and only the mute button remains, which
-/// already covers the urgent case. [_playerBarBaseWidth] (206) + the
-/// fixed 96px volume slider + a full O-counter (bump button plus reset
-/// button) at [digitCount] digits.
-double _playerBarVolumeBreakpoint(int digitCount) =>
-    _playerBarBaseWidth +
-    96 +
-    _oCounterBumpWidth(digitCount) +
-    _oCounterResetWidth;
-
-/// Below [_playerBarVolumeBreakpoint] the volume slider is already gone.
-/// Below this second, lower threshold (for the same [digitCount]) the
-/// O-counter's reset button drops too, leaving only its count and bump
-/// icon. [_playerBarBaseWidth] (206) + a full O-counter (bump button
-/// plus reset button) at [digitCount] digits.
-double _playerBarResetBreakpoint(int digitCount) =>
-    _playerBarBaseWidth + _oCounterBumpWidth(digitCount) + _oCounterResetWidth;
-
-/// Below [_playerBarResetBreakpoint] the reset button is already gone.
-/// Below this third, lowest threshold (for the same [digitCount]) the
-/// O-counter's own digit count drops too, leaving a bare icon-only bump
-/// button (a fixed 31: [_oCounterFixedWidth] minus the one 4px gap that
-/// only exists to lead into digits that are no longer there, since that
-/// gap is itself conditional on `showCount` in [_OCounterGroup]).
-/// [_playerBarBaseWidth] (206) + the bump button alone (digits shown but
-/// no reset) at [digitCount] digits.
+/// Things drop in priority order, each only once its side no longer fits
+/// it: the volume slider first (the mute button alone still covers the
+/// urgent case), then the O-counter's reset button, then its digits,
+/// leaving a bare icon-only bump button (a fixed 31: [_oCounterFixedWidth]
+/// minus the 4px gap that only leads into digits, which is itself
+/// conditional on `showCount` in [_OCounterGroup]).
 ///
-/// This is the tier the pre-existing 300px-wide drawer test
-/// (`scene_screen_test.dart`) lands in at any digit count: the bar's own
-/// padding takes 56 of that 300 (32 from the panel's own `Padding`, 24
-/// from the inner one; the `DecoratedBox` border is paint-only and costs
-/// no layout width), leaving 244 of content width, which fits the
-/// transport cluster plus the compact O-counter (206 + 31 = 237 at any
-/// digit count, since the icon-only tier never renders a digit) but not
-/// one still showing even a single digit (206 + 47.25 = 253.25).
-double _playerBarCountBreakpoint(int digitCount) =>
-    _playerBarBaseWidth + _oCounterBumpWidth(digitCount);
+/// The narrowest case is the pre-existing 300px-wide drawer test
+/// (`scene_screen_test.dart`): the bar's padding takes 56 of that 300 (32
+/// from its outer `Padding`, 24 from the frame's inner one), leaving 244,
+/// so each side gets (244 - 182) / 2 = 31, exactly the icon-only bump
+/// button at any digit count.
+({bool showVolume, bool allowReset, bool showCount}) _controlRowLayout(
+  double available,
+  int digitCount,
+) {
+  final side = (available - _transportWidth) / 2;
+  final bump = _oCounterBumpWidth(digitCount);
+  final fullOCounter = bump + _oCounterResetWidth;
+  return (
+    showVolume: side >= _volumeGroupWidth && side >= fullOCounter,
+    allowReset: side >= fullOCounter,
+    showCount: side >= bump,
+  );
+}
 
 /// The scene-level controls' state: what prev/next and the O-counter
 /// should show, decided by whoever owns the scene and handed to this bar
@@ -100,9 +99,11 @@ class SceneActionState {
   final int? oCount;
 }
 
-/// The scene screen's transport: one rounded translucent panel inset from
-/// the video's bottom, left and right edges, so the picture's corners stay
-/// clean.
+/// The scene screen's transport: a compact frosted frame floating above
+/// the video's bottom edge. It stretches with the window up to
+/// [AppTokens.playerBarMaxWidth] and no further, so on a wide window it
+/// sits centred instead of spanning the picture. The caller centres it;
+/// this widget only caps its own width.
 ///
 /// Two lines. The upper one is elapsed time, the scrubber and duration.
 /// The lower one is three groups in one row: volume leading, the
@@ -112,11 +113,14 @@ class SceneActionState {
 /// Purely presentational: every field is an immutable [PlaybackState] or a
 /// callback. This widget never touches a controller or a provider.
 ///
-/// Stateful only for the scrubber's local drag position: committing a
-/// seek on every `onChanged` sample turns one drag gesture into dozens of
-/// GraphQL writes, so the thumb is tracked here and [PlayerBar.onSeek]
-/// fires exactly once, from `onChangeEnd`. Tracking it locally also stops
-/// the thumb snapping back to the stale pre-seek position between samples.
+/// Stateful for the scrubber's local drag position, and for which slider
+/// the pointer is over. Committing a seek on every `onChanged` sample
+/// turns one drag gesture into dozens of GraphQL writes, so the thumb is
+/// tracked here and [PlayerBar.onSeek] fires exactly once, from
+/// `onChangeEnd`. Tracking it locally also stops the thumb snapping back
+/// to the stale pre-seek position between samples. The hover flags let
+/// both sliders rest as a thin bare track and only grow a thumb when the
+/// pointer is on them.
 class PlayerBar extends StatefulWidget {
   const PlayerBar({
     required this.playback,
@@ -164,10 +168,51 @@ class _PlayerBarState extends State<PlayerBar> {
   /// [PlaybackState.position] directly.
   double? _dragValueSeconds;
 
+  bool _seekHovered = false;
+  bool _volumeHovered = false;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      AppTokens.space4,
+      0,
+      AppTokens.space4,
+      AppTokens.space5,
+    ),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: AppTokens.playerBarMaxWidth),
+      child: _FrostedFrame(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTokens.space3,
+            vertical: AppTokens.space2,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildScrubberRow(),
+              // A `LayoutBuilder` rather than a fixed row: at a narrow
+              // window (the metadata drawer's own width tests go down to
+              // 300px) the mute button, volume slider, transport cluster
+              // and O-counter no longer fit their natural size together.
+              // The transport cluster is the reason this bar exists and
+              // never shrinks or drops; everything else yields, in
+              // priority order, before it would ever overflow. See
+              // [_controlRowLayout] for the measured widths this is
+              // built from.
+              LayoutBuilder(
+                builder: (context, constraints) =>
+                    _buildControlRow(constraints.maxWidth),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildScrubberRow() {
     final playback = widget.playback;
-    final actions = widget.actions;
     final durationSeconds = playback.duration.inMilliseconds / 1000;
     final actualPositionSeconds = playback.position.inMilliseconds / 1000;
     final hasKnownDuration = playback.duration > Duration.zero;
@@ -176,195 +221,256 @@ class _PlayerBarState extends State<PlayerBar> {
       0.0,
       sliderMax,
     );
+    // media_kit reports libmpv's `demuxer-cache-time`, the timestamp the
+    // cache runs up to, so it is already a position on this track.
+    final bufferedSeconds = (playback.buffered.inMilliseconds / 1000).clamp(
+      0.0,
+      sliderMax,
+    );
 
-    return Padding(
-      padding: const EdgeInsets.all(AppTokens.space4),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: AppTokens.playerPanel,
-          borderRadius: BorderRadius.circular(AppTokens.radiusPlayerBar),
-          border: Border.all(color: AppTokens.playerHairline),
+    return Row(
+      children: [
+        Semantics(
+          label: 'Elapsed time',
+          child: Text(formatDuration(positionSeconds), style: _timeStyle),
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppTokens.space3,
-            AppTokens.space3,
-            AppTokens.space3,
-            AppTokens.space2,
+        Expanded(
+          // A label rather than a tooltip: a hover popup would sit over
+          // the transport right under the pointer, and the thumb that
+          // grows on hover already says this is the scrubber.
+          child: Semantics(
+            label: 'Seek',
+            child: _PlayerSlider(
+              active: _seekHovered || _dragValueSeconds != null,
+              onHoverChanged: (hovered) =>
+                  setState(() => _seekHovered = hovered),
+              slider: Slider(
+                key: const Key('scene-seek-bar'),
+                value: positionSeconds,
+                max: sliderMax,
+                secondaryTrackValue: hasKnownDuration ? bufferedSeconds : null,
+                label: formatDuration(positionSeconds),
+                onChanged: hasKnownDuration
+                    ? (value) => setState(() {
+                        _dragValueSeconds = value;
+                      })
+                    : null,
+                onChangeEnd: hasKnownDuration
+                    ? (value) {
+                        widget.onSeek(
+                          Duration(milliseconds: (value * 1000).round()),
+                        );
+                        setState(() {
+                          _dragValueSeconds = null;
+                        });
+                      }
+                    : null,
+              ),
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+        ),
+        Semantics(
+          label: 'Duration',
+          child: Text(
+            formatDuration(durationSeconds),
+            style: _timeStyle.copyWith(color: AppTokens.playerTextDim),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildControlRow(double available) {
+    final playback = widget.playback;
+    final actions = widget.actions;
+    // The O-counter's own width (and so every breakpoint downstream of
+    // it) depends on how many digits it is about to render, not on a
+    // fixed representative count: `oCount` is an unbounded `int?`
+    // straight from Stash's mutation, and a wider count that a
+    // fixed-width budget did not see coming is exactly what would
+    // otherwise overflow this row.
+    final digitCount = (actions.oCount ?? 0).toString().length;
+    final layout = _controlRowLayout(available, digitCount);
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Semantics(
-                    label: 'Elapsed time',
-                    child: Text(
-                      formatDuration(positionSeconds),
-                      style: _timeStyle,
-                    ),
-                  ),
-                  Expanded(
-                    child: Tooltip(
-                      message: 'Seek',
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: AppTokens.playerText,
-                          thumbColor: AppTokens.playerText,
-                          inactiveTrackColor: AppTokens.playerTrack,
-                        ),
-                        child: Slider(
-                          key: const Key('scene-seek-bar'),
-                          value: positionSeconds,
-                          max: sliderMax,
-                          label: formatDuration(positionSeconds),
-                          onChanged: hasKnownDuration
-                              ? (value) => setState(() {
-                                  _dragValueSeconds = value;
-                                })
-                              : null,
-                          onChangeEnd: hasKnownDuration
-                              ? (value) {
-                                  widget.onSeek(
-                                    Duration(
-                                      milliseconds: (value * 1000).round(),
-                                    ),
-                                  );
-                                  setState(() {
-                                    _dragValueSeconds = null;
-                                  });
-                                }
-                              : null,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Semantics(
-                    label: 'Duration',
-                    child: Text(
-                      formatDuration(durationSeconds),
-                      style: _timeStyle.copyWith(
-                        color: AppTokens.playerTextDim,
-                      ),
-                    ),
-                  ),
-                ],
+              PlayerIconButton(
+                icon: playback.muted
+                    ? Icons.volume_off_rounded
+                    : Icons.volume_up_rounded,
+                tooltip: playback.muted ? 'Unmute' : 'Mute',
+                variant: PlayerIconButtonVariant.subdued,
+                onPressed: widget.onToggleMute,
               ),
-              const SizedBox(height: AppTokens.space2),
-              // A `LayoutBuilder` rather than a fixed row: at a narrow
-              // window (the metadata drawer's own width tests go down to
-              // 300px) the mute button, volume slider, transport cluster
-              // and O-counter no longer fit their natural size together.
-              // The transport cluster is the reason this bar exists and
-              // never shrinks or drops; everything else yields, in
-              // priority order, before it would ever overflow. See
-              // [_playerBarVolumeBreakpoint] and its neighbours for the
-              // measured widths this is built from.
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final available = constraints.maxWidth;
-                  // The O-counter's own width (and so every breakpoint
-                  // downstream of it) depends on how many digits it is
-                  // about to render, not on a fixed representative
-                  // count: `oCount` is an unbounded `int?` straight from
-                  // Stash's mutation, and a wider count that a
-                  // fixed-width budget did not see coming is exactly
-                  // what would otherwise overflow this row.
-                  final digitCount = (actions.oCount ?? 0).toString().length;
-                  final showVolume =
-                      available >= _playerBarVolumeBreakpoint(digitCount);
-                  final allowReset =
-                      available >= _playerBarResetBreakpoint(digitCount);
-                  final showCount =
-                      available >= _playerBarCountBreakpoint(digitCount);
-                  return Row(
-                    children: [
-                      PlayerIconButton(
-                        icon: playback.muted
-                            ? Icons.volume_off
-                            : Icons.volume_up,
-                        tooltip: playback.muted ? 'Unmute' : 'Mute',
-                        onPressed: widget.onToggleMute,
+              if (layout.showVolume)
+                SizedBox(
+                  width: 96,
+                  child: Semantics(
+                    label: 'Volume',
+                    child: _PlayerSlider(
+                      active: _volumeHovered,
+                      onHoverChanged: (hovered) =>
+                          setState(() => _volumeHovered = hovered),
+                      slider: Slider(
+                        key: const Key('scene-volume-slider'),
+                        value: playback.volume.clamp(0.0, 1.0),
+                        onChanged: widget.onVolumeChanged,
                       ),
-                      if (showVolume)
-                        SizedBox(
-                          width: 96,
-                          child: Tooltip(
-                            message: 'Volume',
-                            child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                activeTrackColor: AppTokens.playerText,
-                                thumbColor: AppTokens.playerText,
-                                inactiveTrackColor: AppTokens.playerTrack,
-                              ),
-                              child: Slider(
-                                key: const Key('scene-volume-slider'),
-                                value: playback.volume.clamp(0.0, 1.0),
-                                onChanged: widget.onVolumeChanged,
-                              ),
-                            ),
-                          ),
-                        ),
-                      Expanded(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            PlayerIconButton(
-                              icon: Icons.skip_previous,
-                              tooltip: 'Previous scene',
-                              onPressed: actions.canGoPrevious
-                                  ? widget.onPrevious
-                                  : null,
-                            ),
-                            const SizedBox(width: AppTokens.space2),
-                            PlayerIconButton(
-                              icon: Icons.replay_10,
-                              tooltip: 'Back 10 seconds',
-                              onPressed: widget.onSkipBackward,
-                            ),
-                            const SizedBox(width: AppTokens.space2),
-                            PlayerIconButton(
-                              icon: playback.playing
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
-                              tooltip: playback.playing ? 'Pause' : 'Play',
-                              filled: true,
-                              onPressed: widget.onTogglePlayPause,
-                            ),
-                            const SizedBox(width: AppTokens.space2),
-                            PlayerIconButton(
-                              icon: Icons.forward_10,
-                              tooltip: 'Forward 10 seconds',
-                              onPressed: widget.onSkipForward,
-                            ),
-                            const SizedBox(width: AppTokens.space2),
-                            PlayerIconButton(
-                              icon: Icons.skip_next,
-                              tooltip: 'Next scene',
-                              onPressed: actions.canGoNext
-                                  ? widget.onNext
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                      _OCounterGroup(
-                        count: actions.oCount,
-                        onIncrement: widget.onIncrementO,
-                        onReset: widget.onResetO,
-                        allowReset: allowReset,
-                        showCount: showCount,
-                      ),
-                    ],
-                  );
-                },
-              ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
-      ),
+        _buildTransport(),
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: _OCounterGroup(
+              count: actions.oCount,
+              onIncrement: widget.onIncrementO,
+              onReset: widget.onResetO,
+              allowReset: layout.allowReset,
+              showCount: layout.showCount,
+            ),
+          ),
+        ),
+      ],
     );
   }
+
+  Widget _buildTransport() {
+    final playing = widget.playback.playing;
+    final actions = widget.actions;
+    const gap = SizedBox(width: AppTokens.space2);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PlayerIconButton(
+          icon: Icons.skip_previous_rounded,
+          tooltip: 'Previous scene',
+          variant: PlayerIconButtonVariant.bare,
+          onPressed: actions.canGoPrevious ? widget.onPrevious : null,
+        ),
+        gap,
+        PlayerIconButton(
+          icon: Icons.replay_10_rounded,
+          tooltip: 'Back 10 seconds',
+          variant: PlayerIconButtonVariant.subdued,
+          onPressed: widget.onSkipBackward,
+        ),
+        gap,
+        PlayerIconButton(
+          icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          tooltip: playing ? 'Pause' : 'Play',
+          variant: PlayerIconButtonVariant.primary,
+          onPressed: widget.onTogglePlayPause,
+        ),
+        gap,
+        PlayerIconButton(
+          icon: Icons.forward_10_rounded,
+          tooltip: 'Forward 10 seconds',
+          variant: PlayerIconButtonVariant.subdued,
+          onPressed: widget.onSkipForward,
+        ),
+        gap,
+        PlayerIconButton(
+          icon: Icons.skip_next_rounded,
+          tooltip: 'Next scene',
+          variant: PlayerIconButtonVariant.bare,
+          onPressed: actions.canGoNext ? widget.onNext : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// The bar's surface: a blur of the video behind it under a light tint,
+/// with a soft shadow in place of a border, so the frame reads as glass
+/// over the picture rather than a slab on top of it.
+class _FrostedFrame extends StatelessWidget {
+  const _FrostedFrame({required this.child});
+
+  final Widget child;
+
+  static const _radius = BorderRadius.all(
+    Radius.circular(AppTokens.radiusPlayerBar),
+  );
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    key: const Key('scene-player-bar-frame'),
+    decoration: const BoxDecoration(
+      borderRadius: _radius,
+      boxShadow: [
+        BoxShadow(
+          color: Color(0x4D000000),
+          blurRadius: 24,
+          offset: Offset(0, 8),
+        ),
+      ],
+    ),
+    child: ClipRRect(
+      borderRadius: _radius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: ColoredBox(color: AppTokens.playerBarFill, child: child),
+      ),
+    ),
+  );
+}
+
+/// A player slider that rests as a thin bare track and eases into a
+/// thicker one with a thumb while [active].
+///
+/// [active] is decided by the caller, not by this widget's own hover,
+/// because the seek bar also stays active for the length of a drag even
+/// if the pointer wanders off it mid-gesture.
+class _PlayerSlider extends StatelessWidget {
+  const _PlayerSlider({
+    required this.active,
+    required this.onHoverChanged,
+    required this.slider,
+  });
+
+  final bool active;
+  final ValueChanged<bool> onHoverChanged;
+  final Slider slider;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => onHoverChanged(true),
+    onExit: (_) => onHoverChanged(false),
+    child: TweenAnimationBuilder<double>(
+      tween: Tween(end: active ? 1 : 0),
+      duration: AppTokens.hoverDuration,
+      curve: Curves.easeOut,
+      builder: (context, t, child) => SliderTheme(
+        data: SliderTheme.of(context).copyWith(
+          trackHeight: 3 + 2 * t,
+          activeTrackColor: AppTokens.playerText,
+          inactiveTrackColor: AppTokens.playerTrack,
+          secondaryActiveTrackColor: AppTokens.playerBufferedTrack,
+          thumbColor: AppTokens.playerText,
+          overlayColor: AppTokens.playerText.withValues(alpha: 0.12),
+          // Explicit shapes so the look does not drift with the
+          // framework's own Material 3 slider defaults. A 12px overlay
+          // radius keeps the row 24px tall rather than the stock 48.
+          trackShape: const RoundedRectSliderTrackShape(),
+          thumbShape: RoundSliderThumbShape(
+            enabledThumbRadius: 6 * t,
+            elevation: 0,
+            pressedElevation: 0,
+          ),
+          overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+        ),
+        child: child!,
+      ),
+      child: slider,
+    ),
+  );
 }
 
 /// The O-counter: a button showing the current count, and a reset button
@@ -374,8 +480,7 @@ class _PlayerBarState extends State<PlayerBar> {
 /// bar does not reflow every time a prev/next fetch is in flight.
 ///
 /// [allowReset] and [showCount] are the bar's own narrow-width
-/// concessions (see [_playerBarResetBreakpoint] and
-/// [_playerBarCountBreakpoint]), applied on top of the data-driven
+/// concessions (see [_controlRowLayout]), applied on top of the data-driven
 /// `count! > 0` check below: a reset only ever shows when both the width
 /// allows it and there is something to reset, and the digit count itself
 /// is the last thing dropped, leaving a bare icon-only bump button that
@@ -398,7 +503,11 @@ class _OCounterGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = count != null;
-    final glyph = AppTokens.playerText.withValues(alpha: enabled ? 1 : 0.38);
+    // Subdued like the bar's other secondary controls, so it does not
+    // pull the eye away from the transport.
+    final glyph = enabled
+        ? AppTokens.playerGlyphSubdued
+        : AppTokens.playerText.withValues(alpha: 0.38);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -421,7 +530,9 @@ class _OCounterGroup extends StatelessWidget {
                 hoverColor: AppTokens.playerText.withValues(alpha: 0.1),
                 highlightColor: AppTokens.playerText.withValues(alpha: 0.18),
                 splashColor: AppTokens.playerText.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+                // A pill, matching the round washes of the bar's bare
+                // icon buttons.
+                borderRadius: BorderRadius.circular(PlayerIconButton.size / 2),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppTokens.space2,
@@ -464,6 +575,7 @@ class _OCounterGroup extends StatelessWidget {
           PlayerIconButton(
             icon: Icons.backspace_outlined,
             tooltip: 'Reset O-counter to 0',
+            variant: PlayerIconButtonVariant.subdued,
             onPressed: onReset,
           ),
         ],
