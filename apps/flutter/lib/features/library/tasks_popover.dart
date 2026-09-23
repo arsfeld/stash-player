@@ -319,7 +319,7 @@ String taskSemanticsLabel(Job job) {
     taskStatusWord(job.status),
     if (job.isActive && progress != null && progress > 0)
       '${(progress * 100).round()} percent',
-    if (job.error case final error? when job.status == JobStatus.failed) error,
+    if (job.status == JobStatus.failed) ?job.error,
   ].join(', ');
 }
 
