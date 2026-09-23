@@ -14,6 +14,7 @@ use stash_api::{
     ScenePaths, SortDirection, SortKey, StudioRef,
 };
 use stash_player_core::{Config, cache, secrets};
+use stash_player_proxy::MediaProxy;
 
 uniffi::setup_scaffolding!();
 
@@ -52,6 +53,7 @@ impl From<stash_api::Error> for FfiError {
             stash_api::Error::InvalidUrl(e) => FfiError::InvalidUrl(e.to_string()),
             stash_api::Error::Http(e) => FfiError::Network(e.to_string()),
             stash_api::Error::InvalidHeader(e) => FfiError::InvalidUrl(e.to_string()),
+            stash_api::Error::InvalidProxy(e) => FfiError::InvalidUrl(e.to_string()),
             stash_api::Error::Status { status, body } => {
                 FfiError::Network(format!("HTTP {status}: {body}"))
             }
@@ -79,10 +81,25 @@ impl From<std::io::Error> for FfiError {
     }
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct FfiCredentials {
     pub base_url: String,
     pub api_key: String,
+    /// Empty means "no proxy configured"; the resolver then consults the
+    /// standard environment variables.
+    pub proxy_url: String,
+}
+
+impl std::fmt::Debug for FfiCredentials {
+    /// Hand-written: `api_key` is a secret, and `proxy_url` may itself
+    /// carry `user:pass@` credentials, so neither belongs in `{:?}`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfiCredentials")
+            .field("base_url", &self.base_url)
+            .field("api_key_set", &!self.api_key.is_empty())
+            .field("proxy_url_set", &!self.proxy_url.is_empty())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -330,6 +347,20 @@ impl From<Job> for FfiJob {
     }
 }
 
+/// Explain a connection failure caused by a `socks5://` proxy unable to
+/// resolve the server's hostname, if `proxy_url` looks like one. Empty
+/// string means "no proxy configured", matching the convention used
+/// elsewhere on this bridge (`connect`, `save_credentials`). `None` from
+/// the underlying `stash_api` helper (no hint applies) becomes `None` here.
+#[uniffi::export]
+pub fn proxy_failure_hint(proxy_url: String) -> Option<String> {
+    let trimmed = proxy_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    stash_api::proxy_failure_hint(Some(trimmed)).map(str::to_owned)
+}
+
 /// Idempotent tracing-subscriber setup. Safe to call from `App.init()` on
 /// the Swift side at every launch.
 #[uniffi::export]
@@ -348,6 +379,12 @@ pub fn init_logging() {
 #[derive(uniffi::Object)]
 pub struct StashPlayer {
     inner: Mutex<Option<Client>>,
+    /// Bound lazily: unlike the GTK app there is no single startup point
+    /// here to bind from.
+    proxy: Mutex<Option<Arc<MediaProxy>>>,
+    /// Serialises `connect` so a slow connection cannot interleave with a
+    /// later one and leave the media proxy pointed at a superseded server.
+    connect_lock: Mutex<()>,
 }
 
 #[uniffi::export]
@@ -356,6 +393,8 @@ impl StashPlayer {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(None),
+            proxy: Mutex::new(None),
+            connect_lock: Mutex::new(()),
         })
     }
 
@@ -363,15 +402,32 @@ impl StashPlayer {
     /// the URL/key actually work. On success the client is cached for
     /// subsequent calls and the server's reported version string is
     /// returned to the foreign caller.
-    pub fn connect(&self, base_url: String, api_key: String) -> Result<String, FfiError> {
-        let client = Client::new(&base_url, &api_key)?;
+    ///
+    /// `proxy_url` may be empty, in which case the standard proxy
+    /// environment variables are consulted.
+    pub fn connect(
+        &self,
+        base_url: String,
+        api_key: String,
+        proxy_url: String,
+    ) -> Result<String, FfiError> {
+        let _serialise = self.connect_lock.lock();
+        let proxy = stash_player_core::resolve_proxy(Some(&proxy_url));
+        let client = Client::with_proxy(&base_url, &api_key, proxy.as_deref())?;
         let version = rt().block_on(client.version())?;
-        *self.inner.lock() = Some(client);
+        *self.inner.lock() = Some(client.clone());
+        // Keep the media proxy pointed at the same server the API uses.
+        self.proxy()?.set_client(Some(client));
         Ok(version)
     }
 
     pub fn disconnect(&self) {
+        let _serialise = self.connect_lock.lock();
         *self.inner.lock() = None;
+        let proxy = self.proxy.lock().clone();
+        if let Some(proxy) = proxy {
+            proxy.set_client(None);
+        }
     }
 
     pub fn is_connected(&self) -> bool {
@@ -421,11 +477,16 @@ impl StashPlayer {
         Ok(ok)
     }
 
-    /// Bake `?apikey=` into a stream URL so AVPlayer (which can't carry an
-    /// `ApiKey` request header) can hit it.
-    pub fn authenticated_url(&self, url: String) -> Result<String, FfiError> {
-        let client = self.client()?;
-        Ok(client.authenticated_url(&url)?)
+    /// Rewrite a stream URL to point at the loopback media proxy. AVPlayer
+    /// fetches the URL itself, so it can carry neither our `ApiKey` header
+    /// nor the upstream proxy setting; the loopback hop gives it both and
+    /// keeps the API key out of AVFoundation's error strings.
+    pub fn playback_url(&self, url: String) -> Result<String, FfiError> {
+        let proxy = self.proxy()?;
+        proxy.playback_url(&url).map_err(|e| match e {
+            stash_player_proxy::Error::NotConfigured => FfiError::NotConnected,
+            other => FfiError::Network(other.to_string()),
+        })
     }
 
     pub fn load_saved_credentials(&self) -> Result<Option<FfiCredentials>, FfiError> {
@@ -441,14 +502,24 @@ impl StashPlayer {
             return Ok(None);
         }
         Ok(Some(FfiCredentials {
+            proxy_url: cfg.proxy_url.clone().unwrap_or_default(),
             base_url: cfg.stash_url,
             api_key: key.unwrap_or_default(),
         }))
     }
 
-    pub fn save_credentials(&self, base_url: String, api_key: String) -> Result<(), FfiError> {
+    pub fn save_credentials(
+        &self,
+        base_url: String,
+        api_key: String,
+        proxy_url: String,
+    ) -> Result<(), FfiError> {
         let mut cfg = Config::load().unwrap_or_default();
         cfg.stash_url = base_url;
+        // Store None rather than Some("") so the config file stays clean
+        // and the resolver sees a genuine absence.
+        let trimmed = proxy_url.trim();
+        cfg.proxy_url = (!trimmed.is_empty()).then(|| trimmed.to_owned());
         cfg.save()?;
         rt().block_on(secrets::store_api_key(&api_key))?;
         Ok(())
@@ -488,6 +559,33 @@ impl StashPlayer {
 impl StashPlayer {
     fn client(&self) -> Result<Client, FfiError> {
         self.inner.lock().clone().ok_or(FfiError::NotConnected)
+    }
+
+    /// Get the media proxy, binding it on first use.
+    ///
+    /// The client is cloned out of `inner` before the proxy lock is
+    /// taken. Never hold both locks: `connect` takes them in the opposite
+    /// order and holding both would deadlock under concurrent calls from
+    /// Swift.
+    fn proxy(&self) -> Result<Arc<MediaProxy>, FfiError> {
+        let current = self.inner.lock().clone();
+
+        // Held across the `block_on` below on purpose: this is what makes
+        // the bind-and-store sequence atomic. Two threads racing to bind
+        // would otherwise each start a listener and only one `Arc` would
+        // survive into `guard`, leaking the other's bound port.
+        let mut guard = self.proxy.lock();
+        if let Some(existing) = guard.as_ref() {
+            return Ok(Arc::clone(existing));
+        }
+
+        let proxy = rt()
+            .block_on(MediaProxy::bind())
+            .map(Arc::new)
+            .map_err(|e| FfiError::Io(e.to_string()))?;
+        proxy.set_client(current);
+        *guard = Some(Arc::clone(&proxy));
+        Ok(proxy)
     }
 }
 

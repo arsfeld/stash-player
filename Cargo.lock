@@ -2233,6 +2233,7 @@ dependencies = [
  "base64",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -2252,12 +2253,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
 ]
 
@@ -2658,8 +2661,10 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "stash-player-core",
  "thiserror",
  "tokio",
+ "tracing",
  "url",
  "wiremock",
 ]
@@ -2684,11 +2689,32 @@ dependencies = [
  "parking_lot",
  "stash-api",
  "stash-player-core",
+ "stash-player-proxy",
  "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uniffi",
+]
+
+[[package]]
+name = "stash-player-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "rand",
+ "reqwest",
+ "stash-api",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -2704,6 +2730,7 @@ dependencies = [
  "relm4",
  "stash-api",
  "stash-player-core",
+ "stash-player-proxy",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3360,6 +3387,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4e0100b01e9f0d03189a92b96772a1fb998639d981193d7dbab487302513441"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

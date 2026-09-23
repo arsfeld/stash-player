@@ -70,7 +70,11 @@ final class AppState: ObservableObject {
             guard let creds else { return }
             status = .connecting
             let version = try await offMain {
-                try player.connect(baseUrl: creds.baseUrl, apiKey: creds.apiKey)
+                try player.connect(
+                    baseUrl: creds.baseUrl,
+                    apiKey: creds.apiKey,
+                    proxyUrl: creds.proxyUrl
+                )
             }
             status = .connected(version: version)
         } catch {
@@ -79,13 +83,13 @@ final class AppState: ObservableObject {
     }
 
     /// Save creds + verify them + cache the live client.
-    func connect(baseUrl: String, apiKey: String) async throws -> String {
+    func connect(baseUrl: String, apiKey: String, proxyUrl: String) async throws -> String {
         let player = self.player
         status = .connecting
         do {
             let version = try await offMain {
-                try player.saveCredentials(baseUrl: baseUrl, apiKey: apiKey)
-                return try player.connect(baseUrl: baseUrl, apiKey: apiKey)
+                try player.saveCredentials(baseUrl: baseUrl, apiKey: apiKey, proxyUrl: proxyUrl)
+                return try player.connect(baseUrl: baseUrl, apiKey: apiKey, proxyUrl: proxyUrl)
             }
             status = .connected(version: version)
             return version
@@ -139,8 +143,11 @@ final class AppState: ObservableObject {
         return try await offMain { try player.resetO(id: id) }
     }
 
-    func authenticatedUrl(_ raw: String) throws -> String {
-        try player.authenticatedUrl(url: raw)
+    /// Rewrite a stream URL to point at the loopback media proxy. AVPlayer
+    /// fetches the URL itself, so it can carry neither the ApiKey header
+    /// nor the proxy setting; the loopback hop gives it both.
+    func playbackUrl(_ raw: String) throws -> String {
+        try player.playbackUrl(url: raw)
     }
 
     func fetchThumbnail(url: String) async throws -> NSImage? {

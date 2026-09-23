@@ -34,6 +34,7 @@ enum Status {
 pub(crate) enum SettingsMsg {
     UrlChanged(String),
     ApiKeyChanged(String),
+    ProxyChanged(String),
     TestConnection,
 }
 
@@ -95,7 +96,13 @@ impl Component for SettingsPage {
                                 set_title: "Connection",
                                 set_description: Some(
                                     "Where to find your Stash server. The optional API key is \
-                                     stored in your Linux Secret Service keyring."
+                                     stored in your Linux Secret Service keyring. The optional \
+                                     proxy accepts http://, https://, socks5:// and socks5h:// \
+                                     and is used for both API calls and video playback. Prefer \
+                                     socks5h:// over socks5:// when the server's name only \
+                                     resolves through the proxy, such as a Tailscale MagicDNS \
+                                     name, since socks5h:// has the proxy resolve it instead of \
+                                     this machine."
                                 ),
 
                                 #[name = "url_row"]
@@ -111,6 +118,14 @@ impl Component for SettingsPage {
                                     set_title: "API key (optional)",
                                     connect_changed[sender] => move |entry| {
                                         sender.input(SettingsMsg::ApiKeyChanged(entry.text().to_string()));
+                                    },
+                                },
+
+                                #[name = "proxy_row"]
+                                adw::EntryRow {
+                                    set_title: "Proxy (optional)",
+                                    connect_changed[sender] => move |entry| {
+                                        sender.input(SettingsMsg::ProxyChanged(entry.text().to_string()));
                                     },
                                 },
                             },
@@ -159,6 +174,17 @@ impl Component for SettingsPage {
 
         widgets.url_row.set_text(&model.config.stash_url);
         widgets.key_row.set_text(&model.api_key);
+        widgets.proxy_row.set_text(model.config.proxy_url.as_deref().unwrap_or_default());
+        // If the field is empty but the environment supplies a proxy, show
+        // it as a placeholder so the user isn't left wondering why their
+        // traffic is being proxied.
+        if model.config.proxy_url.as_deref().unwrap_or_default().is_empty()
+            && let Some(from_env) = stash_player_core::resolve_proxy(None)
+        {
+            widgets
+                .proxy_row
+                .set_title(&format!("Proxy (optional, environment: {from_env})"));
+        }
 
         ComponentParts { model, widgets }
     }
@@ -167,12 +193,19 @@ impl Component for SettingsPage {
         match msg {
             SettingsMsg::UrlChanged(s) => self.config.stash_url = s,
             SettingsMsg::ApiKeyChanged(s) => self.api_key = s,
+            SettingsMsg::ProxyChanged(s) => {
+                // Store None rather than Some("") so the config file stays
+                // clean and `resolve_proxy` sees a genuine absence.
+                let trimmed = s.trim();
+                self.config.proxy_url = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+            }
             SettingsMsg::TestConnection => {
                 self.status = Status::Connecting;
                 let url = self.config.stash_url.clone();
                 let key = self.api_key.clone();
+                let proxy = stash_player_core::resolve_proxy(self.config.proxy_url.as_deref());
                 sender.oneshot_command(async move {
-                    let result = match stash_api::Client::new(&url, &key) {
+                    let result = match stash_api::Client::with_proxy(&url, &key, proxy.as_deref()) {
                         Ok(client) => match client.version().await {
                             Ok(version) => Ok(Box::new(ConnectionEstablished { client, version })),
                             Err(e) => Err(e.to_string()),
@@ -214,7 +247,14 @@ impl Component for SettingsPage {
                 });
             }
             SettingsCmd::Connection(Err(e)) => {
-                self.status = Status::Failed(e);
+                // Mirrors the resolution `TestConnection` used to build the
+                // request, so the hint reflects what was actually dialed.
+                let proxy = stash_player_core::resolve_proxy(self.config.proxy_url.as_deref());
+                self.status =
+                    Status::Failed(match stash_api::proxy_failure_hint(proxy.as_deref()) {
+                        Some(hint) => format!("{e}. {hint}"),
+                        None => e,
+                    });
             }
             SettingsCmd::Saved(Ok(())) => {
                 tracing::debug!("api key saved to keyring");

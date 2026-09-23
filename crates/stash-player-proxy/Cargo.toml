@@ -1,0 +1,27 @@
+[package]
+name = "stash-player-proxy"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+stash-api = { path = "../stash-api" }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream"] }
+hyper = { version = "1.9", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt", "net", "macros"] }
+parking_lot = "0.12"
+rand = "0.9"
+url = "2.5"
+tracing = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

@@ -22,6 +22,8 @@ pub enum Error {
     Http(#[from] reqwest::Error),
     #[error("invalid header value: {0}")]
     InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
+    #[error("invalid proxy URL: {0}")]
+    InvalidProxy(String),
     #[error("server returned HTTP {status}: {body}")]
     Status { status: u16, body: String },
     #[error("server returned GraphQL errors: {0}")]
@@ -32,7 +34,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     endpoint: Url,
@@ -40,17 +42,111 @@ pub struct Client {
     api_key: String,
 }
 
+impl std::fmt::Debug for Client {
+    /// Hand-written so the API key never ends up in a log line via `{:?}`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .field("api_key_set", &!self.api_key.is_empty())
+            .finish()
+    }
+}
+
+/// Proxy schemes `reqwest` can actually dial with the features we enable.
+/// A userspace `tailscaled` exposes both a SOCKS5 server and an HTTP
+/// CONNECT proxy, so either spelling works.
+const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
+
+/// Check the proxy URL before handing it to `reqwest`, so a typo in the
+/// Settings field produces a message naming what would have worked
+/// instead of a generic transport error at first request.
+fn validate_proxy(raw: &str) -> Result<()> {
+    let parsed = Url::parse(raw).map_err(|e| Error::InvalidProxy(format!("{raw}: {e}")))?;
+    if !SUPPORTED_PROXY_SCHEMES.contains(&parsed.scheme()) {
+        return Err(Error::InvalidProxy(format!(
+            "{raw}: scheme `{}` is not supported (use http, https, socks5, or socks5h)",
+            parsed.scheme()
+        )));
+    }
+    Ok(())
+}
+
+/// Render a proxy URL for logging with any credentials removed. Proxy URLs
+/// may carry `user:pass@`, and a proxy password is not something to write
+/// into a log file.
+pub fn redact_proxy(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.into()
+        }
+        Err(_) => "<unparseable proxy url>".to_owned(),
+    }
+}
+
+/// If a connection failed while a name-resolving-locally SOCKS proxy is
+/// configured, explain the most likely cause. `socks5://` resolves the
+/// hostname on this machine; when the server's name only resolves
+/// through the proxy the lookup fails before any traffic is sent, and
+/// the underlying transport error says nothing about why.
+pub fn proxy_failure_hint(proxy_url: Option<&str>) -> Option<&'static str> {
+    let is_socks5 = proxy_url
+        .map(str::trim)
+        .is_some_and(|p| p.to_ascii_lowercase().starts_with("socks5://"));
+    is_socks5.then_some(
+        "socks5:// resolves the server's hostname on this machine, which fails if \
+         the name only resolves through the proxy (for example, a Tailscale \
+         MagicDNS name). Try socks5h:// instead so the proxy resolves it.",
+    )
+}
+
 impl Client {
+    /// Build a client that talks to Stash directly, with no proxy at all —
+    /// not even one picked up from the environment. Callers that want a
+    /// user-configured proxy, or an environment-derived fallback such as
+    /// `HTTPS_PROXY`, should resolve that themselves and pass it to
+    /// `with_proxy` instead.
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        Self::with_proxy(base_url, api_key, None)
+    }
+
+    /// Build a client that reaches Stash through `proxy_url`, which may be
+    /// `http://`, `https://`, `socks5://`, or `socks5h://`. `None` or an
+    /// empty string means direct.
+    ///
+    /// `reqwest` would otherwise auto-detect proxies from the environment
+    /// and race with whatever the caller passed here. `.no_proxy()` turns
+    /// that off so the caller's resolution is the only thing in effect.
+    pub fn with_proxy(base_url: &str, api_key: &str, proxy_url: Option<&str>) -> Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         if !api_key.is_empty() {
             headers.insert("ApiKey", api_key.parse()?);
         }
-        let http = reqwest::Client::builder()
+
+        let mut builder = reqwest::Client::builder()
             .user_agent(concat!("stash-player/", env!("CARGO_PKG_VERSION")))
             .default_headers(headers)
-            .build()?;
+            .no_proxy()
+            // Bounds only TCP connect + TLS handshake (including the proxy
+            // handshake for a SOCKS/HTTP proxy), so a proxy that accepts
+            // connections but can't route to Stash fails in 10s instead of
+            // hanging on the OS TCP timeout. Deliberately not `.timeout(...)`:
+            // that bounds the whole request including the response body, and
+            // this client's `http()` is reused to stream media bytes through
+            // the loopback proxy, so a total timeout would cut off any
+            // playback longer than the limit.
+            .connect_timeout(std::time::Duration::from_secs(10));
 
+        if let Some(proxy) = proxy_url.map(str::trim).filter(|p| !p.is_empty()) {
+            validate_proxy(proxy)?;
+            let configured = reqwest::Proxy::all(proxy)
+                .map_err(|e| Error::InvalidProxy(format!("{proxy}: {e}")))?;
+            builder = builder.proxy(configured);
+            tracing::debug!("stash client will use proxy {}", redact_proxy(proxy));
+        }
+
+        let http = builder.build()?;
         let base = Url::parse(base_url)?;
         // Tolerate a trailing slash on the base URL by joining instead of
         // string-concat. Stash exposes GraphQL at /graphql.
@@ -73,20 +169,37 @@ impl Client {
 
     /// Underlying HTTP client. Reusing it for thumbnail fetches inherits the
     /// `ApiKey` header so authenticated screenshot URLs work.
+    ///
+    /// This client is built with no response-decompression feature enabled,
+    /// and callers that forward response bodies byte-for-byte (with a
+    /// `Content-Length` copied from the upstream response) depend on that:
+    /// enabling `gzip`/`brotli`/`deflate`/`zstd` would make reqwest
+    /// transparently decode compressed responses, so the decoded body length
+    /// would no longer match the `Content-Length` header copied alongside
+    /// it.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
 
+    /// Resolve a relative or absolute URL from the Stash API against the
+    /// base URL, attaching no credentials. The media proxy uses this: it
+    /// authenticates upstream with the `ApiKey` header instead, which
+    /// keeps the key out of GStreamer logs and AVPlayer error strings.
+    pub fn absolute_url(&self, url: &str) -> Result<Url> {
+        match Url::parse(url) {
+            Ok(u) => Ok(u),
+            Err(url::ParseError::RelativeUrlWithoutBase) => Ok(self.base.join(url)?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Take an absolute or relative URL from the Stash API and produce one
-    /// that's authenticated via the `apikey=` query param. Use this when the
-    /// consumer (GStreamer's media backend, a `<video>` tag) won't carry
-    /// our `ApiKey` request header.
+    /// that's authenticated via the `apikey=` query param. Use this for
+    /// consumers that can't carry our `ApiKey` request header and don't go
+    /// through the media proxy, such as image widgets and "open in Stash"
+    /// links.
     pub fn authenticated_url(&self, url: &str) -> Result<String> {
-        let mut parsed = match Url::parse(url) {
-            Ok(u) => u,
-            Err(url::ParseError::RelativeUrlWithoutBase) => self.base.join(url)?,
-            Err(e) => return Err(e.into()),
-        };
+        let mut parsed = self.absolute_url(url)?;
         // Stash bakes `apikey=` into URLs it hands back (e.g. `paths.stream`),
         // so re-appending ours produces a doubled query param that some
         // server-side parsers reject.

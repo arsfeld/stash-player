@@ -43,6 +43,12 @@ pub struct Config {
     /// toolbar toggle survives app restarts.
     #[serde(default)]
     pub hide_interactive: bool,
+    /// Upstream HTTP or SOCKS5 proxy for all Stash traffic. Set this when
+    /// the server is only reachable through something like a userspace
+    /// tailscaled. Absent or empty means "consult the environment", not
+    /// "force a direct connection" — see `resolve_proxy`.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
 }
 
 fn default_volume() -> f64 {
@@ -57,6 +63,7 @@ impl Default for Config {
             volume: default_volume(),
             muted: false,
             hide_interactive: false,
+            proxy_url: None,
         }
     }
 }
@@ -95,6 +102,39 @@ fn config_path() -> Result<PathBuf> {
     Ok(project_dirs()?.config_dir().join("config.toml"))
 }
 
+/// Environment variables consulted when no proxy is configured, in
+/// priority order. Both spellings of each name are conventional, so both
+/// are checked.
+pub(crate) const PROXY_ENV_VARS: [&str; 6] = [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+];
+
+/// Resolve the proxy that should actually be used: the configured value
+/// wins, then the standard environment variables, then none.
+///
+/// `reqwest` does its own environment-proxy detection, which would race
+/// with an explicitly configured value and make the effective proxy
+/// unpredictable. Callers disable that detection and apply this result
+/// instead, so there is exactly one answer to "what proxy am I using".
+///
+/// `NO_PROXY` is deliberately not honoured: all traffic goes to a single
+/// Stash host, so per-host bypass rules have nothing to act on.
+pub fn resolve_proxy(configured: Option<&str>) -> Option<String> {
+    if let Some(explicit) = configured.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(explicit.to_owned());
+    }
+    PROXY_ENV_VARS
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +147,7 @@ mod tests {
         assert_eq!(c.volume, 1.0);
         assert!(!c.muted);
         assert!(!c.hide_interactive);
+        assert_eq!(c.proxy_url, None);
     }
 
     #[test]
@@ -117,6 +158,7 @@ mod tests {
             volume: 0.42,
             muted: true,
             hide_interactive: true,
+            proxy_url: None,
         };
         let text = toml::to_string_pretty(&original).unwrap();
         let parsed: Config = toml::from_str(&text).unwrap();
@@ -139,6 +181,7 @@ mod tests {
         assert_eq!(parsed.volume, 1.0);
         assert!(!parsed.muted);
         assert!(!parsed.hide_interactive);
+        assert_eq!(parsed.proxy_url, None);
     }
 
     #[test]
@@ -158,6 +201,7 @@ mod tests {
             volume: 1.0,
             muted: false,
             hide_interactive: false,
+            proxy_url: None,
         }
         .has_custom_stash_url());
         assert!(Config {
@@ -166,7 +210,68 @@ mod tests {
             volume: 1.0,
             muted: false,
             hide_interactive: false,
+            proxy_url: None,
         }
         .has_custom_stash_url());
+    }
+
+    #[test]
+    fn proxy_url_defaults_to_none_and_round_trips() {
+        assert_eq!(Config::default().proxy_url, None);
+
+        let original = Config {
+            stash_url: "https://stash.example.test".into(),
+            autoplay: true,
+            volume: 0.42,
+            muted: true,
+            hide_interactive: true,
+            proxy_url: Some("socks5://127.0.0.1:1055".into()),
+        };
+        let text = toml::to_string_pretty(&original).unwrap();
+        let parsed: Config = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.proxy_url, original.proxy_url);
+    }
+
+    #[test]
+    fn config_without_proxy_url_still_loads() {
+        // Config files written before this field existed must keep working.
+        let parsed: Config = toml::from_str(r#"stash_url = "https://x.test""#).unwrap();
+        assert_eq!(parsed.proxy_url, None);
+    }
+
+    #[test]
+    fn configured_proxy_wins_over_environment() {
+        // Env vars are read process-wide, so this test asserts precedence
+        // using an explicitly configured value, which short-circuits before
+        // any env lookup happens.
+        assert_eq!(
+            resolve_proxy(Some("socks5://127.0.0.1:1055")),
+            Some("socks5://127.0.0.1:1055".to_owned())
+        );
+    }
+
+    #[test]
+    fn blank_configured_proxy_falls_through_rather_than_disabling() {
+        // Clearing the Settings field must mean "fall back to the
+        // environment", not "force direct". An empty string is how both
+        // frontends represent an empty text field.
+        let from_env = resolve_proxy(None);
+        assert_eq!(resolve_proxy(Some("")), from_env);
+        assert_eq!(resolve_proxy(Some("   ")), from_env);
+    }
+
+    #[test]
+    fn proxy_env_var_names_are_checked_in_priority_order() {
+        assert_eq!(
+            PROXY_ENV_VARS,
+            [
+                "ALL_PROXY",
+                "all_proxy",
+                "HTTPS_PROXY",
+                "https_proxy",
+                "HTTP_PROXY",
+                "http_proxy",
+            ]
+        );
     }
 }

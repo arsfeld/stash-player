@@ -15,6 +15,7 @@ path = "src/bin/uniffi-bindgen.rs"
 [dependencies]
 stash-api = { path = "../stash-api" }
 stash-player-core = { path = "../stash-player-core" }
+stash-player-proxy = { path = "../stash-player-proxy" }
 uniffi = { version = "0.29", features = ["cli"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 parking_lot = "0.12"

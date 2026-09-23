@@ -6,12 +6,15 @@ mod metadata;
 
 use metadata::{build_stream_url, page_title, populate_scene, stash_scene_url};
 
+use std::sync::Arc;
+
 use relm4::prelude::*;
 use relm4::{adw, gtk};
 
 use adw::prelude::*;
 
 use stash_api::{Scene, SceneFilter};
+use stash_player_proxy::MediaProxy;
 
 use crate::widgets::video_player::{
     SceneAction, SceneActionState, VideoPlayer, VideoPlayerInit, VideoPlayerMsg,
@@ -32,6 +35,9 @@ pub(crate) struct SceneNavContext {
 #[derive(Debug)]
 pub(crate) struct SceneInit {
     pub client: stash_api::Client,
+    /// Loopback media server. Video URLs are rewritten through this so
+    /// GStreamer reaches Stash the same way the API client does.
+    pub proxy: Arc<MediaProxy>,
     pub scene_id: String,
     pub context: Option<SceneNavContext>,
     pub autoplay: bool,
@@ -43,6 +49,7 @@ pub(crate) struct SceneInit {
 
 pub(crate) struct ScenePage {
     client: stash_api::Client,
+    proxy: Arc<MediaProxy>,
     scene_id: String,
     state: State,
     context: Option<SceneNavContext>,
@@ -395,6 +402,7 @@ impl Component for ScenePage {
 
         let model = ScenePage {
             client: init.client,
+            proxy: init.proxy,
             scene_id: init.scene_id,
             state: State::Loading,
             context: init.context,
@@ -542,7 +550,7 @@ impl Component for ScenePage {
                     self.scene_id = scene.id.clone();
                     populate_scene(widgets, &scene);
                     self.player.emit(VideoPlayerMsg::SetUrl {
-                        url: build_stream_url(&self.client, &scene),
+                        url: build_stream_url(&self.proxy, &scene),
                         resume_secs: scene.effective_resume_secs(),
                         show_loading: false,
                     });
@@ -571,7 +579,7 @@ impl Component for ScenePage {
                         }
                         populate_scene(widgets, &scene);
                         self.player.emit(VideoPlayerMsg::SetUrl {
-                            url: build_stream_url(&self.client, &scene),
+                            url: build_stream_url(&self.proxy, &scene),
                             resume_secs: scene.effective_resume_secs(),
                             show_loading: false,
                         });

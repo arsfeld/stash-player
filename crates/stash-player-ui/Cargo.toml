@@ -14,6 +14,7 @@ image = { version = "0.25.5", default-features = false, features = ["jpeg", "png
 relm4 = { version = "0.11.0", features = ["libadwaita"] }
 stash-api = { version = "0.1.0", path = "../stash-api" }
 stash-player-core = { version = "0.1.0", path = "../stash-player-core" }
+stash-player-proxy = { path = "../stash-player-proxy" }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

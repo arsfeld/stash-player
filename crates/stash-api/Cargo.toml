@@ -5,14 +5,16 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
-reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "json", "socks", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
+tracing = "0.1"
 url = "2.5.8"
 
 [dev-dependencies]
 dotenvy = "0.15.7"
+stash-player-core = { path = "../stash-player-core" }
 tokio = { version = "1.52.3", features = ["rt", "macros"] }
 wiremock = "0.6.5"
 

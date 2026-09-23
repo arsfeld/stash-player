@@ -9,6 +9,7 @@ use relm4::{adw, gtk};
 use adw::prelude::*;
 
 use stash_api::{PerformerRef, Scene, SceneFile};
+use stash_player_proxy::MediaProxy;
 
 use super::{ScenePageWidgets, State};
 
@@ -28,14 +29,21 @@ pub(super) fn populate_scene(widgets: &ScenePageWidgets, scene: &Scene) {
     populate_file_group(&widgets.file_section, scene.files.first());
 }
 
-/// Build the authenticated stream URL for the scene. GTK's media stack
-/// can't carry our `ApiKey` request header, so we lean on Stash's
-/// query-param auth via `authenticated_url`.
-pub(super) fn build_stream_url(client: &stash_api::Client, scene: &Scene) -> Option<String> {
+/// Build the stream URL for the scene. GStreamer fetches this itself, so
+/// it can carry neither our `ApiKey` header nor the upstream proxy
+/// setting. Routing it through the loopback media proxy gives it both,
+/// and keeps the API key out of GStreamer's logs.
+pub(super) fn build_stream_url(proxy: &MediaProxy, scene: &Scene) -> Option<String> {
     let stream = scene.paths.stream.as_deref()?;
-    match client.authenticated_url(stream) {
+    match proxy.playback_url(stream) {
         Ok(url) => {
-            tracing::info!("scene stream url: {url}");
+            // The loopback URL's path carries a per-process token that is
+            // the only thing stopping another local process from
+            // discovering the port and streaming the user's library
+            // through it; never let it, or the upstream URL it wraps,
+            // reach the logs. The proxy's own address is enough to confirm
+            // playback is going through the loopback hop.
+            tracing::info!("scene stream routed through media proxy at {}", proxy.addr());
             Some(url)
         }
         Err(e) => {
