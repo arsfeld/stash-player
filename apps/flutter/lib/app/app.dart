@@ -52,7 +52,7 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
     });
 
     return MaterialApp(
-      title: 'Stash Player Flutter',
+      title: 'Stash Player',
       scaffoldMessengerKey: _scaffoldMessengerKey,
       themeMode: ThemeMode.system,
       theme: buildAppTheme(Brightness.light),

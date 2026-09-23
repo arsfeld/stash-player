@@ -4,10 +4,13 @@ project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "stash_player_flutter")
+set(BINARY_NAME "stash-player")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "dev.arsfeld.stashplayer.flutter")
+# Shared with the Flatpak manifest, the .desktop file, and the AppStream
+# metainfo in data/ — the Wayland app-id / X11 WM class must match the
+# .desktop basename or the shell shows a generic icon.
+set(APPLICATION_ID "dev.arsfeld.stash-player")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.

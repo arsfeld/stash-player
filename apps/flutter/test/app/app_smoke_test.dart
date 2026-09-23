@@ -15,7 +15,7 @@ void main() {
     await tester.pump();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(app.title, 'Stash Player Flutter');
+    expect(app.title, 'Stash Player');
     // A context *inside* MaterialApp's subtree — MaterialApp's own element
     // sits above the Theme it builds, so Theme.of there would silently
     // fall back to Flutter's default ThemeData instead of this app's.

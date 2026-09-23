@@ -18,7 +18,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 flutter_dir := justfile_directory() / "apps/flutter"
 app_bundle := flutter_dir / "build/macos/Build/Products/Debug/Stash Player Flutter.app"
 linux_arch := if arch() == "x86_64" { "x64" } else if arch() == "aarch64" { "arm64" } else { arch() }
-linux_bundle := flutter_dir / "build/linux" / linux_arch / "debug/bundle/stash_player_flutter"
+linux_bundle := flutter_dir / "build/linux" / linux_arch / "debug/bundle/stash-player"
 
 # Resolved once, in the ambient shell, so the clean-env recipes below can
 # still find these after `env -i` drops PATH.
