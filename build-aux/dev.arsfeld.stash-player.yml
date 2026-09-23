@@ -3,7 +3,8 @@ runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
+  # Flutter's Linux build drives CMake with clang/clang++.
+  - org.freedesktop.Sdk.Extension.llvm21
 command: stash-player
 
 finish-args:
@@ -15,18 +16,18 @@ finish-args:
   - --share=network
   # Audio
   - --socket=pulseaudio
-  # Hardware video acceleration via VA-API
+  # Hardware video acceleration (VA-API via libmpv)
   - --device=dri
   # libsecret / GNOME keyring for the Stash API key
   - --talk-name=org.freedesktop.secrets
-  # Persist app config + thumbnail cache outside the sandbox
-  - --filesystem=xdg-config/stash-player:create
-  - --filesystem=xdg-cache/stash-player:create
+  # Read-only: the one-time import of the connection the legacy GTK client
+  # saved to the host's ~/.config/stash-player/config.toml.
+  - --filesystem=xdg-config/stash-player:ro
 
-# The freedesktop 25.08 runtime (which GNOME 50 is built on) ships gst-libav
-# but NOT the patent-encumbered codec libraries it links against (libavcodec,
-# libx264, libx265, libde265, …). Pull them in via the codecs-extra extension
-# so playback works for H.264 / H.265 / AAC / AC-3 / etc.
+# The freedesktop 25.08 runtime (which GNOME 50 is built on) ships FFmpeg
+# without the patent-encumbered decoders. libmpv below links the runtime's
+# libavcodec; codecs-extra shadows it at run time with the full build so
+# H.264 / H.265 / AAC / AC-3 / etc. play.
 add-extensions:
   org.freedesktop.Platform.codecs-extra:
     version: '25.08-extra'
@@ -35,23 +36,100 @@ add-extensions:
     no-autodownload: false
     autodelete: true
 
-build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
-  build-args:
-    # Cargo needs to fetch crates from crates.io during the build. This
-    # is allowed in personal/CI builds; Flathub submissions would have to
-    # vendor sources offline (see flatpak-cargo-generator).
-    - --share=network
-  env:
-    CARGO_HOME: /run/build/stash-player/cargo
-    RUST_BACKTRACE: '1'
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/doc
+  - '*.a'
+  - '*.la'
 
 modules:
+  # mpv's subtitle renderer; not in the GNOME runtime.
+  - name: libass
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+      # Avoids a nasm build dependency; the SIMD paths only speed up
+      # subtitle blending.
+      - --disable-asm
+    sources:
+      - type: git
+        url: https://github.com/libass/libass.git
+        tag: 0.17.5
+        commit: 4a05d8127f525943ebf45fdc6497c9e665947f0d
+
+  # mpv's GPU renderer; not in the GNOME runtime. OpenGL only — media_kit
+  # drives libmpv through the OpenGL render API, so Vulkan and the shader
+  # compilers it needs are dead weight here.
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dvulkan=disabled
+      - -Dshaderc=disabled
+      - -Dglslang=disabled
+      - -Dopengl=enabled
+      - -Ddemos=false
+      - -Dtests=false
+    sources:
+      # git (not a tarball) so flatpak-builder pulls the bundled jinja /
+      # glad / fast_float submodules the meson build needs.
+      - type: git
+        url: https://code.videolan.org/videolan/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
+
+  - name: libmpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dmanpage-build=disabled
+      - -Dvulkan=disabled
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.41.0
+        commit: 41f6a645068483470267271e1d09966ca3b9f413
+
   - name: stash-player
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/llvm21/bin
+      prepend-ld-library-path: /usr/lib/sdk/llvm21/lib
+      build-args:
+        # The Flutter tool downloads its engine artifacts on first run, and
+        # `pub get` fetches packages. Fine for personal/CI builds; Flathub
+        # would need offline sources (flatpak-flutter).
+        - --share=network
+      env:
+        HOME: /run/build/stash-player/home
+        PUB_CACHE: /run/build/stash-player/pub-cache
+        CI: 'true'
+        FLUTTER_SUPPRESS_ANALYTICS: 'true'
     build-commands:
-      - cargo build --release -p stash-player-ui --locked --manifest-path Cargo.toml
-      - install -Dm755 target/release/stash-player-ui /app/bin/stash-player
+      # flatpak-builder doesn't create the HOME set in `env`; git and the
+      # Flutter tool both write config under it.
+      - mkdir -p "$HOME"
+      # The SDK archive is a git checkout the Flutter tool shells out to
+      # (for its own version); the build sandbox's uid doesn't own it.
+      - git config --global --add safe.directory '*'
+      - flutter/bin/flutter config --no-analytics --no-cli-animations
+      # Not `--enforce-lockfile` (yet): pubspec.lock was resolved by a newer
+      # Flutter and pins meta 1.18.0 / test_api 0.7.11, while Flutter 3.41.6's
+      # SDK pins meta 1.17.0 / test_api 0.7.10, so the strict mode refuses to
+      # resolve. Restore the flag once the lockfile is regenerated with 3.41.6.
+      - cd app && ../flutter/bin/flutter pub get
+      - cd app && ../flutter/bin/flutter build linux --release
+      - mkdir -p /app/stash-player
+      - cp -a app/build/linux/$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')/release/bundle/.
+        /app/stash-player/
+      # glibc resolves $ORIGIN (the bundle's `lib/` rpath) and Flutter
+      # resolves its `data/` dir through /proc/self/exe, so a symlink is
+      # enough — no wrapper script.
+      - install -dm755 /app/bin
+      - ln -s ../stash-player/stash-player /app/bin/stash-player
       # Mountpoint for the codecs-extra extension declared at the top level.
       # Must exist at install time or flatpak refuses to mount the extension.
       - install -dm755 /app/lib/codecs-extra
@@ -64,12 +142,19 @@ modules:
       - install -Dm644 data/icons/hicolor/symbolic/apps/dev.arsfeld.stash-player-symbolic.svg
         /app/share/icons/hicolor/symbolic/apps/dev.arsfeld.stash-player-symbolic.svg
     sources:
+      - type: archive
+        url: https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.41.6-stable.tar.xz
+        sha256: 503b3e6b7d352fca5d21b6474eca95ad544d8fc3b053782eab63a360c7fc7569
+        dest: flutter
       - type: dir
-        path: ..
+        path: ../apps/flutter
+        dest: app
         skip:
-          - .git
-          - target
-          - .direnv
-          - .env
-          - .github
-          - apps/flutter
+          - build
+          - .dart_tool
+          - linux/flutter/ephemeral
+          - macos/Pods
+          - macos/Flutter/ephemeral
+      - type: dir
+        path: ../data
+        dest: data
