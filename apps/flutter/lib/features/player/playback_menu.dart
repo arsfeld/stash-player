@@ -46,19 +46,6 @@ AppMenu playbackMenu(
   ]);
 }
 
-/// The macOS menu bar's View menu.
-AppMenu viewMenu(PlaybackState? state, void Function(PlayerAction) dispatch) =>
-    AppMenu([
-      AppMenuAction(
-        label: state?.fullscreen ?? false
-            ? 'Exit Full Screen'
-            : 'Enter Full Screen',
-        enabled: state != null,
-        shortcut: _shortcutFor(PlayerAction.toggleFullscreen),
-        onSelected: () => dispatch(PlayerAction.toggleFullscreen),
-      ),
-    ]);
-
 SingleActivator? _shortcutFor(PlayerAction action) {
   for (final MapEntry(:key, :value) in playerKeyBindings.entries) {
     if (value == action) return SingleActivator(key);

@@ -9,24 +9,20 @@ Iterable<AppMenuAction> _actions(AppMenu menu) =>
     menu.entries.whereType<AppMenuAction>();
 
 void main() {
-  test('every shortcut a menu shows is the key bound to what it does', () {
+  test('every shortcut the menu shows is the key bound to what it does', () {
     final dispatched = <PlayerAction>[];
-    for (final menu in [
-      playbackMenu(const PlaybackState(), dispatched.add),
-      viewMenu(const PlaybackState(), dispatched.add),
-    ]) {
-      for (final action in _actions(menu)) {
-        final shortcut = action.shortcut;
-        if (shortcut == null) continue;
-        dispatched.clear();
-        action.onSelected();
-        expect(
-          playerKeyBindings[shortcut.trigger],
-          dispatched.single,
-          reason: action.label,
-        );
-        expect(shortcut.meta || shortcut.control || shortcut.alt, isFalse);
-      }
+    final menu = playbackMenu(const PlaybackState(), dispatched.add);
+    for (final action in _actions(menu)) {
+      final shortcut = action.shortcut;
+      if (shortcut == null) continue;
+      dispatched.clear();
+      action.onSelected();
+      expect(
+        playerKeyBindings[shortcut.trigger],
+        dispatched.single,
+        reason: action.label,
+      );
+      expect(shortcut.meta || shortcut.control || shortcut.alt, isFalse);
     }
   });
 
@@ -46,16 +42,11 @@ void main() {
       ).any((a) => a.label == 'Unmute'),
       isTrue,
     );
-    expect(
-      label(viewMenu(const PlaybackState(fullscreen: true), noop), 0),
-      'Exit Full Screen',
-    );
   });
 
   test('off the scene screen everything is disabled', () {
     void noop(PlayerAction _) {}
-    for (final menu in [playbackMenu(null, noop), viewMenu(null, noop)]) {
-      expect(_actions(menu).every((a) => !a.enabled), isTrue);
-    }
+    final menu = playbackMenu(null, noop);
+    expect(_actions(menu).every((a) => !a.enabled), isTrue);
   });
 }

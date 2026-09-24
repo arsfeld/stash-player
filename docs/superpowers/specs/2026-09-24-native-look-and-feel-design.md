@@ -124,18 +124,22 @@ replaces the bar `MainMenu.xib` loads, so it lists everything:
   text-editing intent on the focused widget.
 - **Playback** (enabled only on the scene screen): Play/Pause, seek
   ±5s / ±10s / ±1 min, start/end, Volume Up/Down, Mute.
-- **View**: Enter/Exit Full Screen.
 - **Window**: Minimize, Zoom, Bring All to Front.
 
-Playback and View are `AppMenu`s (`lib/features/player/playback_menu.dart`)
-converted by an `AppMenu → PlatformMenu` adapter; they dispatch the same
+No View menu: player fullscreen isn't implemented on either platform (the
+`setFullscreenPlatform` requester `playback_controller.dart` wires up
+always reports failure), so a View → Enter Full Screen item would never
+have worked. It returns once real fullscreen support lands.
+
+Playback is an `AppMenu` (`lib/features/player/playback_menu.dart`)
+converted by an `AppMenu → PlatformMenu` adapter; it dispatches the same
 `PlayerAction`s the keyboard shortcuts do, through the scene's
 `PlaybackController`. `PlatformMenuItem` has no check state, so toggles
 relabel ("Mute" / "Unmute") as macOS menus conventionally do. Flutter
 sees a key before AppKit's menu does, so a key the player already handles
 is never also fired by its menu item. The menu bar `select`s only
-`playing`/`muted`/`fullscreen` off the playback controller, so it isn't
-rebuilt and re-sent to AppKit on every playback tick.
+`playing`/`muted` off the playback controller, so it isn't rebuilt and
+re-sent to AppKit on every playback tick.
 
 `MainMenu.xib` shrinks to its app menu (it only shows until the first
 frame). The template Edit/View/Window/Help menus and the unwired
@@ -256,9 +260,9 @@ fails a test instead of rendering blank.
 
 - **Unit**: channel serialization (ids, check state, anchor); unknown
   ids; fallback on missing plugin and on native error; the
-  `AppMenu → PlatformMenu` adapter; every Playback/View shortcut is the
-  key bound to the action it runs; appearance event and font-name
-  decoding; palette contrast; per-dialect type scale and radii.
+  `AppMenu → PlatformMenu` adapter; every Playback shortcut is the key
+  bound to the action it runs; appearance event and font-name decoding;
+  palette contrast; per-dialect type scale and radii.
 - **Widget**: each converted call site with a recording `NativeMenus`
   fake; `DrawnMenus` selection, dismissal and disabled items; icons,
   spinner and toast under both dialects by pinning `platform`; the toast
@@ -287,11 +291,11 @@ Leave the boxes unticked for whoever runs them.
   their buttons, the current value is checked, choosing an item applies
   it, and Escape or clicking outside dismisses without a change. Repeat
   with the window moved and resized, and in the player's fullscreen mode.
-- [ ] The menu bar shows Stash Player, Edit, Playback, View, Window. On
-  the library screen, Playback/View items are disabled. On a scene,
-  Playback → Pause pauses, Mute ↔ Unmute toggles and relabels, and
-  View → Enter Full Screen works. Each item shows its key (Space, ←, →,
-  J, L, ↓, ↑, Home, End, 0, 9, M, F). Pressing Space in the player
+- [ ] The menu bar shows Stash Player, Edit, Playback, Window (no View
+  menu: player fullscreen isn't implemented yet). On the library screen,
+  Playback items are disabled. On a scene, Playback → Pause pauses and
+  Mute ↔ Unmute toggles and relabels. Each item shows its key (Space, ←,
+  →, J, L, ↓, ↑, Home, End, 0, 9, M). Pressing Space in the player
   toggles once (not twice). Typing in the connection screen's fields
   still inserts spaces and letters. ⌘C/⌘V in a field copy and paste
   once. Stash Player → Check for Updates… opens Sparkle.

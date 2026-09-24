@@ -17,8 +17,8 @@ import 'providers.dart';
 /// The macOS menu bar. Everywhere else this is just [child]: Linux apps
 /// following GNOME's conventions have no menu bar.
 ///
-/// Playback and View items act on the scene screen's playback controller
-/// and are disabled on every other screen.
+/// Playback items act on the scene screen's playback controller and are
+/// disabled on every other screen.
 class AppMenuBar extends ConsumerWidget {
   const AppMenuBar({required this.child, super.key});
 
@@ -29,10 +29,10 @@ class AppMenuBar extends ConsumerWidget {
     if (defaultTargetPlatform != TargetPlatform.macOS) return child;
 
     final onScene = ref.watch(appControllerProvider) is SceneDestination;
-    // Only watched on the scene screen, and only for the three fields the
+    // Only watched on the scene screen, and only for the two fields the
     // menu actually shows (`select`): the controller is created lazily,
     // the first time a scene loads, and the menu bar must not be what
-    // creates it — and `PlaybackController` notifies on every position and
+    // creates it. `PlaybackController` notifies on every position and
     // buffered event during playback (many times a second), which would
     // otherwise rebuild this widget, and so resend the whole menu bar to
     // AppKit, on every one of them (`PlatformMenuItem` has no `==`, so
@@ -41,17 +41,13 @@ class AppMenuBar extends ConsumerWidget {
     final shown = onScene
         ? ref.watch(
             playbackControllerProvider.select(
-              (c) => (c.state.playing, c.state.muted, c.state.fullscreen),
+              (c) => (c.state.playing, c.state.muted),
             ),
           )
         : null;
     final state = shown == null
         ? null
-        : PlaybackState(
-            playing: shown.$1,
-            muted: shown.$2,
-            fullscreen: shown.$3,
-          );
+        : PlaybackState(playing: shown.$1, muted: shown.$2);
     void dispatch(PlayerAction action) {
       if (!onScene) return;
       unawaited(
@@ -65,7 +61,6 @@ class AppMenuBar extends ConsumerWidget {
     return PlatformMenuBar(
       menus: buildMacMenuBar(
         playback: playbackMenu(state, dispatch),
-        view: viewMenu(state, dispatch),
         onCheckForUpdates: () => unawaited(
           ref
               .read(updatesChannelProvider)
@@ -82,9 +77,13 @@ class AppMenuBar extends ConsumerWidget {
 /// `MainMenu.xib` loads, so everything the app menu needs is listed here,
 /// including Sparkle's "Check for Updates…", which reaches the native side
 /// over `stash_player/updates`.
+///
+/// No View menu: player fullscreen isn't implemented on either platform
+/// (see `playback_controller.dart`'s `setFullscreenPlatform` doc), so a
+/// View → Enter Full Screen item would never have worked. It returns once
+/// real fullscreen support lands.
 List<PlatformMenuItem> buildMacMenuBar({
   required AppMenu playback,
-  required AppMenu view,
   required VoidCallback onCheckForUpdates,
 }) => [
   PlatformMenu(
@@ -156,7 +155,6 @@ List<PlatformMenuItem> buildMacMenuBar({
     ],
   ),
   toPlatformMenu('Playback', playback),
-  toPlatformMenu('View', view),
   const PlatformMenu(
     label: 'Window',
     menus: [

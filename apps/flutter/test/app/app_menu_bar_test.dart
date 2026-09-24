@@ -14,17 +14,15 @@ import 'package:stash_player_flutter/features/player/playback_menu.dart';
 import '../support/fake_playback_engine.dart';
 
 void main() {
-  test('the bar is app, Edit, Playback, View, Window, in that order', () {
+  test('the bar is app, Edit, Playback, Window, in that order', () {
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
-      view: viewMenu(null, (_) {}),
       onCheckForUpdates: () {},
     );
     expect(bar.cast<PlatformMenu>().map((m) => m.label), [
       'Stash Player',
       'Edit',
       'Playback',
-      'View',
       'Window',
     ]);
   });
@@ -33,7 +31,6 @@ void main() {
     var checked = 0;
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
-      view: viewMenu(null, (_) {}),
       onCheckForUpdates: () => checked++,
     );
     final app = bar.first as PlatformMenu;
@@ -49,7 +46,6 @@ void main() {
   test('Edit carries the standard key equivalents', () {
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
-      view: viewMenu(null, (_) {}),
       onCheckForUpdates: () {},
     );
     final edit = bar[1] as PlatformMenu;
