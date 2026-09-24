@@ -208,4 +208,11 @@ void main() {
     );
     expect(find.text('10'), findsNothing);
   });
+
+  test('every icon names an SF Symbol for native macOS surfaces', () {
+    final symbolName = RegExp(r'^[a-z0-9]+(\.[a-z0-9]+)*$');
+    for (final icon in AppIcon.values) {
+      expect(icon.sfSymbol, matches(symbolName), reason: icon.name);
+    }
+  });
 }
