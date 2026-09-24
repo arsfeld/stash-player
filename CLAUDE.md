@@ -97,14 +97,16 @@ small destination union instead.
   tests never touch native playback), `disk_thumbnail_repository.dart`
   (decode + disk cache, namespaced under
   `dev.arsfeld.stashplayer.flutter`), `authenticated_url.dart`.
-- **`lib/ui/`** — the drawn widget layer, per `PlatformDialect` (`adwaita`
+- **`lib/ui/`**: the drawn widget layer, per `PlatformDialect` (`adwaita`
   | `macos`, from `Theme.of(context).platform`): `theme/` (palettes, type
   scale, component themes, `buildAppTheme`), `icons/` (`AppIcon` → GNOME
   icon-development-kit SVGs on Linux, Lucide on macOS, fetched by
-  `tool/fetch_icons.py`), `menu/` (`AppMenu` specs; `NativeMenus` shows
-  them natively via `ChannelNativeMenus`, drawn in tests), `widgets/`
-  (strip controls, spinner, toast, tile). `lib/ui/` never imports
-  Riverpod.
+  `tool/fetch_icons.py`, which also rewrites GNOME `url(#gpa:foreground)
+  <fallback>` paint values to the fallback colour — `flutter_svg` would
+  otherwise drop the paint and draw the icon blank; a test guards this),
+  `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
+  `ChannelNativeMenus`, drawn in tests), `widgets/` (strip controls,
+  spinner, toast, tile). `lib/ui/` never imports Riverpod.
 - **Native runners** — `linux/runner/my_application.cc` and
   `macos/Runner/MainFlutterWindow.swift` implement the
   `stash_player/legacy_secret` method channel (`readApiKey`) that
@@ -114,11 +116,15 @@ small destination union instead.
   `macos/Runner/AppDelegate.swift` owns the `SPUStandardUpdaterController`
   (Sparkle) and the "Check for Updates…" menu action. The runners also
   implement `stash_player/menu` (`NSMenu` / `GtkMenu` popups;
-  `native_menu_channel.cc` on Linux), `stash_player/appearance` (OS
-  accent colour, plus GNOME's UI font via the settings portal;
-  `appearance_channel.cc`), and on macOS `stash_player/updates`
-  (Sparkle). The macOS menu bar is built in Dart
-  (`lib/app/app_menu_bar.dart`) and replaces `MainMenu.xib`'s at startup.
+  `native_menu_channel.cc` on Linux, which also answers `popup-failed`
+  when a GTK popup's grab fails, so `ChannelNativeMenus` falls back to
+  `DrawnMenus`), `stash_player/appearance` (OS accent colour, plus
+  GNOME's UI font via the settings portal; `appearance_channel.cc`), and
+  on macOS `stash_player/updates` (Sparkle). The macOS menu bar is built
+  in Dart (`lib/app/app_menu_bar.dart`), watching only `playing`/
+  `muted`/`fullscreen` from the playback controller so it isn't re-sent
+  to AppKit on every playback tick; it replaces `MainMenu.xib`'s bar at
+  startup, and the xib itself is trimmed to its app menu only.
 - **Flatpak's libmpv stack** — `build-aux/dev.arsfeld.stash-player.yml`
   builds `libass`, `libplacebo`, and `libmpv` from source as their own
   modules before the app module, since `media_kit_libs_linux` needs

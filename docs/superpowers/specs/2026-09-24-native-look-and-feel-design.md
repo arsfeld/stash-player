@@ -95,7 +95,9 @@ macOS/Linux and `DrawnMenus` elsewhere.
     opens as its own popup surface (an xdg_popup on Wayland), so it
     composes over the Flutter view. It answers from an idle callback
     after `deactivate`, since GTK emits that before the chosen item's
-    `activate`.
+    `activate`. If the popup's grab fails to open, it answers
+    `popup-failed` instead (passing GTK a synthesized trigger event),
+    and `ChannelNativeMenus` falls back to `DrawnMenus` for that call.
 - **`DrawnMenus`** renders the same spec with the theme-styled Material
   `showMenu`. Widget tests use it, and it is the runtime fallback.
 
@@ -131,7 +133,9 @@ converted by an `AppMenu → PlatformMenu` adapter; they dispatch the same
 `PlaybackController`. `PlatformMenuItem` has no check state, so toggles
 relabel ("Mute" / "Unmute") as macOS menus conventionally do. Flutter
 sees a key before AppKit's menu does, so a key the player already handles
-is never also fired by its menu item.
+is never also fired by its menu item. The menu bar `select`s only
+`playing`/`muted`/`fullscreen` off the playback controller, so it isn't
+rebuilt and re-sent to AppKit on every playback tick.
 
 `MainMenu.xib` shrinks to its app menu (it only shows until the first
 frame). The template Edit/View/Window/Help menus and the unwired
@@ -194,7 +198,7 @@ text contrast. Only the accent is read from the OS.
 An `EventChannel` streams `{accent: ARGB int?, fontName: String?}`:
 
 - **macOS**: `NSColor.controlAccentColor` converted to sRGB, re-sent on
-  `NSSystemColorsDidChangeNotification`. `fontName` is always null.
+  `NSColor.systemColorsDidChangeNotification`. `fontName` is always null.
 - **Linux**: portal `org.freedesktop.portal.Settings.ReadOne` for
   `org.freedesktop.appearance` `accent-color` (an `(ddd)` sRGB triple,
   GNOME 47+) and `org.gnome.desktop.interface` `font-name`, plus the
@@ -215,7 +219,11 @@ Until the first value arrives, or if the channel fails, the theme uses
 - **Adwaita**: GNOME's icon-development-kit, the CC0 set libadwaita apps
   draw from. It covers every meaning, including 10-second seek arrows.
   Its GTK "GPA" SVGs carry several animation states per file, so
-  `tool/fetch_icons.py` flattens each to one state when fetching.
+  `tool/fetch_icons.py` flattens each to one state when fetching. It
+  also rewrites `url(#gpa:foreground) <fallback>` paint values to the
+  fallback colour, since `vector_graphics_compiler` drops the `url()`
+  paint and `flutter_svg` would otherwise draw the icon blank; a test
+  guards this.
 - **macOS**: Lucide (ISC). Its 2px strokes sit closest to SF Symbols'
   regular weight. Lucide has no 10-second seek glyph, so those draw a
   small "10" inside its rotate arrows.
@@ -232,6 +240,9 @@ fails a test instead of rendering blank.
   or a `PlatformException`): `ChannelNativeMenus` falls back to
   `DrawnMenus` for that call, and logs once per session through
   `lib/shared/diagnostics.dart`.
+- A GTK popup that fails to open (its grab fails): the Linux channel
+  answers `popup-failed`, and `ChannelNativeMenus` falls back to
+  `DrawnMenus` the same way.
 - Stale callbacks: the `id → action` table is scoped to one `show` call,
   so a late reply can't fire an item from a different menu, and an
   unknown id runs nothing.
