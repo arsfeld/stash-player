@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../domain/failure.dart';
 import '../domain/job.dart';
+import '../domain/scan_options.dart';
 import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
 import '../domain/scene_stream.dart';
@@ -70,8 +71,23 @@ mutation SceneResetO($id: ID!) {
 ''';
 
 const String metadataScanDocument = r'''
-mutation MetadataScan {
-  metadataScan(input: {})
+mutation MetadataScan($input: ScanMetadataInput!) {
+  metadataScan(input: $input)
+}
+''';
+
+const String scanDefaultsDocument = r'''
+query ScanDefaults {
+  configuration {
+    ui
+    defaults {
+      scan {
+        scanGenerateCovers scanGeneratePreviews scanGenerateImagePreviews
+        scanGenerateSprites scanGeneratePhashes scanGenerateThumbnails
+        scanGenerateClipPreviews
+      }
+    }
+  }
 }
 ''';
 
@@ -155,9 +171,24 @@ class HttpStashApi implements StashApi {
       _mutateO(sceneResetODocument, 'sceneResetO', id);
 
   @override
-  Future<String> metadataScan() => _post(
+  Future<ScanOptions> scanDefaults() =>
+      _post(scanDefaultsDocument, const {}, (data) {
+        final configuration = _requiredMap(data, 'configuration');
+        // `ui` is the web UI's free-form config blob: anything in it may be
+        // absent or shaped differently, so read it leniently.
+        final ui = configuration['ui'];
+        final taskDefaults = ui is Map ? ui['taskDefaults'] : null;
+        final defaults = configuration['defaults'];
+        return resolveScanOptions(
+          uiTaskDefaultsScan: taskDefaults is Map ? taskDefaults['scan'] : null,
+          serverDefaultsScan: defaults is Map ? defaults['scan'] : null,
+        );
+      });
+
+  @override
+  Future<String> metadataScan(ScanOptions options) => _post(
     metadataScanDocument,
-    const {},
+    {'input': options.toInput()},
     (data) => _requiredString(data, 'metadataScan'),
   );
 

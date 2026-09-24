@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/job.dart';
+import 'package:stash_player_flutter/domain/scan_options.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/services/connection_store.dart';
@@ -265,6 +266,25 @@ class FakeStashApi implements StashApi {
     return call.completer.future;
   }
 
+  /// What `scanDefaults` returns.
+  ScanOptions scanDefaultsResult = ScanOptions.builtIn;
+
+  /// Errors consumed in call order, consulted ahead of
+  /// [scanDefaultsResult].
+  final List<Object> scanDefaultsFailures = [];
+
+  int scanDefaultsCallCount = 0;
+
+  @override
+  Future<ScanOptions> scanDefaults() async {
+    scanDefaultsCallCount++;
+    if (scanDefaultsFailures.isNotEmpty) throw scanDefaultsFailures.removeAt(0);
+    return scanDefaultsResult;
+  }
+
+  /// The options every `metadataScan` call was given, in order.
+  final List<ScanOptions> metadataScanOptions = [];
+
   /// Job ids `metadataScan` returns, consumed in call order. Empty means
   /// `'1'`.
   final List<String> metadataScanResults = [];
@@ -281,7 +301,8 @@ class FakeStashApi implements StashApi {
   final List<Completer<String>> metadataScanCalls = [];
 
   @override
-  Future<String> metadataScan() {
+  Future<String> metadataScan(ScanOptions options) {
+    metadataScanOptions.add(options);
     final completer = Completer<String>();
     metadataScanCalls.add(completer);
     if (metadataScanFailures.isNotEmpty) {

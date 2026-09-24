@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/job.dart';
+import 'package:stash_player_flutter/domain/scan_options.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
 import 'package:stash_player_flutter/domain/scene_stream.dart';
@@ -537,16 +538,30 @@ void main() {
         );
 
     test(
-      'metadataScan posts a bare scan and returns the queued job id',
+      'metadataScan sends the given options and returns the queued job id',
       () async {
         final transport = RecordingClient(fixture('metadata_scan.json'));
 
-        final jobId = await apiFor(transport, apiKey: 'SECRET').metadataScan();
+        final jobId = await apiFor(transport, apiKey: 'SECRET').metadataScan(
+          const ScanOptions(generateCovers: true, generateSprites: true),
+        );
 
         expect(jobId, '42');
         expect(transport.lastQuery, contains('mutation MetadataScan'));
-        expect(transport.lastQuery, contains('metadataScan(input: {})'));
-        expect(transport.lastVariables, isEmpty);
+        expect(transport.lastQuery, contains(r'$input: ScanMetadataInput!'));
+        expect(transport.lastQuery, contains(r'metadataScan(input: $input)'));
+        expect(transport.lastVariables, {
+          'input': {
+            'scanGenerateCovers': true,
+            'scanGeneratePreviews': false,
+            'scanGenerateImagePreviews': false,
+            'scanGenerateSprites': true,
+            'scanGeneratePhashes': false,
+            'scanGenerateThumbnails': false,
+            'scanGenerateClipPreviews': false,
+            'rescan': false,
+          },
+        });
         expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
       },
     );
@@ -554,7 +569,65 @@ void main() {
     test('metadataScan rejects a response with no job id', () async {
       final transport = RecordingClient('{"data":{"metadataScan":null}}');
 
-      expect(apiFor(transport).metadataScan(), throwsA(isA<FormatFailure>()));
+      expect(
+        apiFor(transport).metadataScan(ScanOptions.builtIn),
+        throwsA(isA<FormatFailure>()),
+      );
+    });
+
+    test("scanDefaults prefers the web UI's saved task defaults", () async {
+      final transport = RecordingClient(fixture('scan_defaults_ui.json'));
+
+      final options = await apiFor(transport, apiKey: 'SECRET').scanDefaults();
+
+      expect(transport.lastQuery, contains('query ScanDefaults'));
+      expect(transport.lastQuery, contains('ui'));
+      // Pin the selection set on the wire, not the constant: a dropped
+      // field would still be supplied by the hand-written fixture.
+      for (final field in [
+        'scanGenerateCovers',
+        'scanGeneratePreviews',
+        'scanGenerateImagePreviews',
+        'scanGenerateSprites',
+        'scanGeneratePhashes',
+        'scanGenerateThumbnails',
+        'scanGenerateClipPreviews',
+      ]) {
+        expect(transport.lastQuery, contains(field));
+      }
+      expect(transport.lastRequest.headers['ApiKey'], 'SECRET');
+      expect(
+        options,
+        const ScanOptions(
+          generateCovers: true,
+          generatePreviews: true,
+          generateSprites: true,
+          generatePhashes: true,
+        ),
+      );
+    });
+
+    test('scanDefaults falls back to the server defaults', () async {
+      final transport = RecordingClient(fixture('scan_defaults_server.json'));
+
+      final options = await apiFor(transport).scanDefaults();
+
+      expect(
+        options,
+        const ScanOptions(generateCovers: true, generateThumbnails: true),
+      );
+    });
+
+    test('scanDefaults with nothing saved generates covers only', () async {
+      final transport = RecordingClient(fixture('scan_defaults_none.json'));
+
+      expect(await apiFor(transport).scanDefaults(), ScanOptions.builtIn);
+    });
+
+    test('scanDefaults rejects a response with no configuration', () async {
+      final transport = RecordingClient('{"data":{"configuration":null}}');
+
+      expect(apiFor(transport).scanDefaults(), throwsA(isA<FormatFailure>()));
     });
 
     test('jobQueue asks for every field the popover shows and decodes typed '

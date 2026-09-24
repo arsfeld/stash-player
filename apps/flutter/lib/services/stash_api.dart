@@ -1,4 +1,5 @@
 import '../domain/job.dart';
+import '../domain/scan_options.dart';
 import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
 
@@ -28,10 +29,15 @@ abstract interface class StashApi {
   /// which Stash reports rather than the caller assuming it.
   Future<int> resetO(String id);
 
-  /// Queues a metadata scan of every library path and returns the id of
-  /// the job Stash queued it under. The job is already in [jobQueue] by
-  /// the time this returns.
-  Future<String> metadataScan();
+  /// The options a scan from the Stash web UI's Tasks page would use — what
+  /// it last saved, else the server's defaults, else covers only. See
+  /// `resolveScanOptions`.
+  Future<ScanOptions> scanDefaults();
+
+  /// Queues a metadata scan of every library path with [options] and
+  /// returns the id of the job Stash queued it under. The job is already in
+  /// [jobQueue] by the time this returns.
+  Future<String> metadataScan(ScanOptions options);
 
   /// Stash's queued and running jobs. Empty when the server reports none.
   /// A job leaves the queue once it ends.

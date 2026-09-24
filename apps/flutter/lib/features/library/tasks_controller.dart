@@ -7,6 +7,7 @@ import '../../app/deferred_stash_api.dart';
 import '../../app/notices.dart';
 import '../../app/providers.dart';
 import '../../domain/job.dart';
+import '../../domain/scan_options.dart';
 import '../../services/stash_api.dart';
 import 'library_controller.dart';
 
@@ -159,7 +160,7 @@ class TasksController extends ChangeNotifier {
 
     final String jobId;
     try {
-      jobId = await _api.metadataScan();
+      jobId = await _api.metadataScan(ScanOptions.builtIn);
     } catch (_) {
       // Only clear `_scan` back to idle if it is still this scan: a
       // failure streak, or a newer startScan replacing this one, must not

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/job.dart';
+import '../domain/scan_options.dart';
 import '../domain/scene.dart';
 import '../domain/scene_filter.dart';
 import '../services/stash_api.dart';
@@ -58,7 +59,11 @@ class DeferredStashApi implements StashApi {
   Future<int> resetO(String id) async => (await _resolved).resetO(id);
 
   @override
-  Future<String> metadataScan() async => (await _resolved).metadataScan();
+  Future<ScanOptions> scanDefaults() async => (await _resolved).scanDefaults();
+
+  @override
+  Future<String> metadataScan(ScanOptions options) async =>
+      (await _resolved).metadataScan(options);
 
   @override
   Future<List<Job>> jobQueue() async => (await _resolved).jobQueue();
