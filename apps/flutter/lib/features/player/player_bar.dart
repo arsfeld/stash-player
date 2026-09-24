@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 
 import '../../shared/formatters.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 import 'playback_state.dart';
 import 'player_icon_button.dart';
@@ -297,9 +298,7 @@ class _PlayerBarState extends State<PlayerBar> {
           child: Row(
             children: [
               PlayerIconButton(
-                icon: playback.muted
-                    ? Icons.volume_off_rounded
-                    : Icons.volume_up_rounded,
+                icon: playback.muted ? AppIcon.volumeMuted : AppIcon.volumeHigh,
                 tooltip: playback.muted ? 'Unmute' : 'Mute',
                 variant: PlayerIconButtonVariant.subdued,
                 onPressed: widget.onToggleMute,
@@ -349,35 +348,35 @@ class _PlayerBarState extends State<PlayerBar> {
       mainAxisSize: MainAxisSize.min,
       children: [
         PlayerIconButton(
-          icon: Icons.skip_previous_rounded,
+          icon: AppIcon.skipPrevious,
           tooltip: 'Previous scene',
           variant: PlayerIconButtonVariant.bare,
           onPressed: actions.canGoPrevious ? widget.onPrevious : null,
         ),
         gap,
         PlayerIconButton(
-          icon: Icons.replay_10_rounded,
+          icon: AppIcon.seekBack10,
           tooltip: 'Back 10 seconds',
           variant: PlayerIconButtonVariant.subdued,
           onPressed: widget.onSkipBackward,
         ),
         gap,
         PlayerIconButton(
-          icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          icon: playing ? AppIcon.pause : AppIcon.play,
           tooltip: playing ? 'Pause' : 'Play',
           variant: PlayerIconButtonVariant.primary,
           onPressed: widget.onTogglePlayPause,
         ),
         gap,
         PlayerIconButton(
-          icon: Icons.forward_10_rounded,
+          icon: AppIcon.seekForward10,
           tooltip: 'Forward 10 seconds',
           variant: PlayerIconButtonVariant.subdued,
           onPressed: widget.onSkipForward,
         ),
         gap,
         PlayerIconButton(
-          icon: Icons.skip_next_rounded,
+          icon: AppIcon.skipNext,
           tooltip: 'Next scene',
           variant: PlayerIconButtonVariant.bare,
           onPressed: actions.canGoNext ? widget.onNext : null,
@@ -541,7 +540,7 @@ class _OCounterGroup extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.water_drop_outlined, size: 15, color: glyph),
+                      AppIconView(AppIcon.oCounter, size: 15, color: glyph),
                       if (showCount) ...[
                         const SizedBox(width: AppTokens.space1),
                         Text(
@@ -573,7 +572,7 @@ class _OCounterGroup extends StatelessWidget {
         if (allowReset && enabled && count! > 0) ...[
           const SizedBox(width: AppTokens.space1),
           PlayerIconButton(
-            icon: Icons.backspace_outlined,
+            icon: AppIcon.reset,
             tooltip: 'Reset O-counter to 0',
             variant: PlayerIconButtonVariant.subdued,
             onPressed: onReset,

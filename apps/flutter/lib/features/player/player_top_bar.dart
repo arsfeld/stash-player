@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/scene_stream.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/window_chrome.dart';
 import 'player_icon_button.dart';
@@ -79,7 +80,7 @@ class PlayerTopBar extends StatelessWidget {
           child: Row(
             children: [
               PlayerIconButton(
-                icon: Icons.arrow_back,
+                icon: AppIcon.back,
                 tooltip: 'Back to library',
                 onPressed: onBack,
               ),
@@ -99,8 +100,8 @@ class PlayerTopBar extends StatelessWidget {
               if (streamOptions.length > 1)
                 PopupMenuButton<SceneStream>(
                   tooltip: 'Video quality',
-                  icon: const Icon(
-                    Icons.high_quality_outlined,
+                  icon: const AppIconView(
+                    AppIcon.quality,
                     color: AppTokens.playerText,
                   ),
                   // The top bar fades on the scene screen's auto-hide
@@ -117,21 +118,13 @@ class PlayerTopBar extends StatelessWidget {
                       PopupMenuItem<SceneStream>(
                         value: stream,
                         child: Row(
-                          children: [
-                            SizedBox(
-                              width: 24,
-                              child: stream == currentStream
-                                  ? const Icon(Icons.check, size: 18)
-                                  : null,
-                            ),
-                            Expanded(child: Text(stream.label)),
-                          ],
+                          children: [Expanded(child: Text(stream.label))],
                         ),
                       ),
                   ],
                 ),
               PlayerIconButton(
-                icon: Icons.info_outline,
+                icon: AppIcon.info,
                 tooltip: metadataOpen ? 'Hide details' : 'Show details',
                 onPressed: onToggleMetadata,
               ),

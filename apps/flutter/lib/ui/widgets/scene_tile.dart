@@ -8,6 +8,7 @@ import '../../services/thumbnail_repository.dart';
 import '../../shared/formatters.dart';
 import '../../shared/scene_labels.dart';
 import '../../shared/scene_placeholder.dart';
+import '../icons/app_icons.dart';
 import '../theme/app_tokens.dart';
 
 /// Geometry for the library grid.
@@ -225,11 +226,21 @@ class _SceneTileState extends State<SceneTile> {
                           bottom: AppTokens.space2,
                           child: Tooltip(
                             message: 'Resume available',
-                            child: Icon(
-                              Icons.play_circle_fill,
-                              size: 20,
-                              color: Colors.white,
-                              shadows: [Shadow(blurRadius: 4)],
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Color(0x66000000),
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                              child: AppIconView(
+                                AppIcon.playFilled,
+                                size: 20,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -300,7 +311,11 @@ class _RatingBadge extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.star, size: 12, color: AppTokens.playerText),
+            const AppIconView(
+              AppIcon.star,
+              size: 12,
+              color: AppTokens.playerText,
+            ),
             const SizedBox(width: 2),
             Text(
               formatRating(rating100),

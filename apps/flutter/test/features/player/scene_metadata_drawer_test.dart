@@ -3,8 +3,10 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart';
+import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
+import '../../support/app_icons.dart';
 import '../../support/contrast.dart';
 
 final _scene = Scene(
@@ -54,14 +56,15 @@ Color _textColor(WidgetTester tester, String text) {
   return paragraph.text.style!.color!;
 }
 
-/// The colour an [Icon] renders its glyph in, which for an [IconButton]
-/// comes from the button's own resolved foreground rather than from the
-/// [Icon] widget's `color` field.
-Color _iconColor(WidgetTester tester, IconData icon) {
-  final richText = tester.widget<RichText>(
-    find.descendant(of: find.byIcon(icon), matching: find.byType(RichText)),
+/// The colour an [AppIconView] paints its glyph in, which for an
+/// [IconButton] comes from the button's own resolved foreground rather
+/// than from the view's `color` field.
+Color _iconColor(WidgetTester tester, AppIcon icon) {
+  final finder = findAppIcon(icon);
+  return AppIconView.colorOf(
+    tester.element(finder),
+    tester.widget<AppIconView>(finder).color,
   );
-  return (richText.text as TextSpan).style!.color!;
 }
 
 void main() {
@@ -100,7 +103,7 @@ void main() {
 
         expect(
           contrastRatio(
-            _iconColor(tester, Icons.close),
+            _iconColor(tester, AppIcon.close),
             SceneMetadataDrawer.panelColor,
           ),
           greaterThan(4.5),
@@ -123,7 +126,7 @@ void main() {
       _textColor(tester, 'PERFORMERS'),
       _textColor(tester, 'Duration'),
       _textColor(tester, 'Jane Doe'),
-      _iconColor(tester, Icons.close),
+      _iconColor(tester, AppIcon.close),
     ];
 
     await _pumpDrawer(tester, Brightness.dark);
@@ -133,7 +136,7 @@ void main() {
       _textColor(tester, 'PERFORMERS'),
       _textColor(tester, 'Duration'),
       _textColor(tester, 'Jane Doe'),
-      _iconColor(tester, Icons.close),
+      _iconColor(tester, AppIcon.close),
     ];
 
     expect(light, dark);

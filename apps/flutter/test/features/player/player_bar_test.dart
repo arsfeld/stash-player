@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
 import 'package:stash_player_flutter/features/player/player_bar.dart';
+import 'package:stash_player_flutter/features/player/player_icon_button.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
 Future<void> _pumpBar(
@@ -304,10 +305,16 @@ void main() {
         // `tester.getSize` reports unscaled layout size, so it would
         // pass even if a `FittedBox` were scaling the whole cluster down
         // (see the comment above), ruling that out directly rather than
-        // only by its symptom.
+        // only by its symptom. Scoped to a `FittedBox` *ancestor* of a
+        // button, not any `FittedBox` in the subtree: `AppIconView` draws
+        // its glyph through `SvgPicture`, which wraps its own picture in
+        // a `FittedBox` internally, so an unscoped search would always
+        // find one now, regardless of whether the cluster itself is
+        // shrunk. A wrapper around the whole cluster would still be an
+        // ancestor of every button in it.
         expect(
-          find.descendant(
-            of: find.byType(PlayerBar),
+          find.ancestor(
+            of: find.byType(PlayerIconButton),
             matching: find.byType(FittedBox),
           ),
           findsNothing,

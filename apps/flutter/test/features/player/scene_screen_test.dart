@@ -24,6 +24,7 @@ import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart'
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/services/external_url_launcher.dart';
 import 'package:stash_player_flutter/services/stash_api.dart';
+import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 
@@ -2076,7 +2077,7 @@ void main() {
       final muteButtonContext = tester.element(
         find.descendant(
           of: find.byTooltip('Mute'),
-          matching: find.byType(Icon),
+          matching: find.byType(AppIconView),
         ),
       );
       Focus.of(muteButtonContext).requestFocus();

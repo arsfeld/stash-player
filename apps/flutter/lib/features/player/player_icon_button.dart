@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 
 /// How a [PlayerIconButton] presents itself.
@@ -32,7 +33,7 @@ class PlayerIconButton extends StatelessWidget {
     super.key,
   }) : assert(tooltip != '', 'an icon-only control needs a tooltip');
 
-  final IconData icon;
+  final AppIcon icon;
   final String tooltip;
   final VoidCallback? onPressed;
   final PlayerIconButtonVariant variant;
@@ -104,7 +105,7 @@ class PlayerIconButton extends StatelessWidget {
               splashColor: overlay.withValues(alpha: 0.18),
               borderRadius: radius,
               child: Center(
-                child: Icon(
+                child: AppIconView(
                   icon,
                   size: glyphSize,
                   color: primary || enabled

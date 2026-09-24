@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../domain/scene_filter.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
@@ -298,7 +299,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     final ascending = widget.filter.direction == SortDirection.ascending;
     return AppIconToggle(
       focusNode: _directionFocusNode,
-      icon: ascending ? Icons.arrow_upward : Icons.arrow_downward,
+      icon: ascending ? AppIcon.sortAscending : AppIcon.sortDescending,
       tooltip: ascending ? 'Sort ascending' : 'Sort descending',
       semanticLabel: ascending ? 'Sort ascending' : 'Sort descending',
       selected: false,
@@ -339,9 +340,9 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     return AppIconToggle(
       focusNode: _organizedFocusNode,
       icon: switch (organized) {
-        null => Icons.check_circle_outline,
-        true => Icons.check_circle,
-        false => Icons.cancel,
+        null => AppIcon.organizedAny,
+        true => AppIcon.organizedYes,
+        false => AppIcon.organizedNo,
       },
       tooltip: switch (organized) {
         null => 'Organized: any',
@@ -360,7 +361,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   Widget _hideTrackedToggle() => AppIconToggle(
     focusNode: _hideTrackedFocusNode,
-    icon: Icons.visibility_off,
+    icon: AppIcon.eyeOff,
     tooltip: 'Hide scenes that have already been played',
     semanticLabel: 'Hide tracked scenes',
     selected: widget.filter.hideTracked,
@@ -369,7 +370,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   Widget _playRandomButton() => AppIconAction(
     focusNode: _randomFocusNode,
-    icon: Icons.shuffle,
+    icon: AppIcon.shuffle,
     tooltip: 'Play random',
     semanticLabel: 'Play a random scene',
     onPressed: widget.onPlayRandom,
@@ -377,7 +378,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   Widget _scanButton() => AppIconAction(
     focusNode: _scanFocusNode,
-    icon: Icons.library_add_outlined,
+    icon: AppIcon.scan,
     tooltip: widget.onScan == null
         ? 'A task is already running'
         : 'Scan library for new files',
@@ -394,7 +395,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     return Builder(
       builder: (anchor) => AppIconAction(
         focusNode: _tasksFocusNode,
-        icon: Icons.list_alt,
+        icon: AppIcon.tasks,
         tooltip: label,
         semanticLabel: label,
         badge: widget.tasksActive,
@@ -405,7 +406,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   Widget _settingsButton() => AppIconAction(
     focusNode: _settingsFocusNode,
-    icon: Icons.settings_outlined,
+    icon: AppIcon.settings,
     tooltip: 'Connection settings',
     semanticLabel: 'Connection settings',
     onPressed: widget.onOpenSettings,
@@ -413,7 +414,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   Widget _filtersToggleButton() => AppIconToggle(
     focusNode: _filtersFocusNode,
-    icon: Icons.tune,
+    icon: AppIcon.filters,
     tooltip: 'Filters',
     semanticLabel: 'Show filters',
     selected: _filtersOpen,

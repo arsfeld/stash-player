@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/connection.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
@@ -118,7 +119,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
               children: [
                 if (widget.onCancel case final VoidCallback onCancel)
                   AppIconAction(
-                    icon: Icons.arrow_back,
+                    icon: AppIcon.back,
                     tooltip: 'Back',
                     semanticLabel: 'Back to library',
                     onPressed: onCancel,
@@ -191,10 +192,10 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                                     onPressed: () => setState(
                                       () => _showApiKey = !_showApiKey,
                                     ),
-                                    icon: Icon(
+                                    icon: AppIconView(
                                       _showApiKey
-                                          ? Icons.visibility_off
-                                          : Icons.visibility,
+                                          ? AppIcon.eyeOff
+                                          : AppIcon.eye,
                                     ),
                                   ),
                                 ),

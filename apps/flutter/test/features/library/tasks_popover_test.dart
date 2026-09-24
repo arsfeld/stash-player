@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/job.dart';
 import 'package:stash_player_flutter/features/library/tasks_popover.dart';
+import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+
+import '../../support/app_icons.dart';
 
 Future<void> _pumpPanel(
   WidgetTester tester, {
@@ -72,11 +75,19 @@ void main() {
         ],
       );
 
-      expect(find.byIcon(Icons.schedule), findsOneWidget);
+      expect(findAppIcon(AppIcon.clock), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
-      expect(find.byIcon(Icons.check_circle), findsOneWidget);
-      expect(find.byIcon(Icons.warning_amber_rounded), findsNWidgets(2));
-      expect(find.byIcon(Icons.circle), findsOneWidget);
+      expect(findAppIcon(AppIcon.done), findsOneWidget);
+      expect(findAppIcon(AppIcon.warning), findsNWidgets(2));
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Container &&
+              w.constraints ==
+                  const BoxConstraints.tightFor(width: 8, height: 8),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('only an active job with some progress shows a bar', (

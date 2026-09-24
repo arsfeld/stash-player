@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../icons/app_icons.dart';
 import '../theme/app_tokens.dart';
 
 /// One entry in an [AppMenuButton]'s value list.
@@ -126,9 +127,9 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
                 children: [
                   Text(label, style: theme.textTheme.labelMedium),
                   const SizedBox(width: AppTokens.space1),
-                  Icon(
-                    Icons.arrow_drop_down,
-                    size: 16,
+                  AppIconView(
+                    AppIcon.dropdown,
+                    size: 12,
                     color: tokens.textFaint,
                   ),
                 ],
@@ -163,7 +164,7 @@ class AppIconToggle extends StatelessWidget {
          'an icon-only control needs a semantics label',
        );
 
-  final IconData icon;
+  final AppIcon icon;
   final String tooltip;
   final String semanticLabel;
   final bool selected;
@@ -221,7 +222,7 @@ class AppIconToggle extends StatelessWidget {
                   : tokens.controlActive,
               borderRadius: BorderRadius.circular(tokens.radiusControl),
               child: Center(
-                child: Icon(
+                child: AppIconView(
                   icon,
                   size: 16,
                   color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
@@ -262,7 +263,7 @@ class AppIconAction extends StatelessWidget {
   /// On the badge dot, so a test can find it.
   static const Key badgeKey = Key('app-icon-action-badge');
 
-  final IconData icon;
+  final AppIcon icon;
   final String tooltip;
   final String semanticLabel;
   final VoidCallback? onPressed;
@@ -306,7 +307,7 @@ class AppIconAction extends StatelessWidget {
                     splashColor: tokens.controlActive,
                     borderRadius: BorderRadius.circular(tokens.radiusControl),
                     child: Center(
-                      child: Icon(
+                      child: AppIconView(
                         icon,
                         size: 16,
                         color: enabled
@@ -379,7 +380,14 @@ class AppSearchField extends StatelessWidget {
         style: Theme.of(context).textTheme.labelMedium,
         decoration: InputDecoration(
           hintText: hintText,
-          prefixIcon: Icon(Icons.search, size: 16, color: tokens.textFaint),
+          prefixIcon: Center(
+            widthFactor: 1,
+            child: AppIconView(
+              AppIcon.search,
+              size: 16,
+              color: tokens.textFaint,
+            ),
+          ),
           prefixIconConstraints: const BoxConstraints(
             minWidth: 30,
             minHeight: AppTokens.controlBandHeight,
