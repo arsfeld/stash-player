@@ -65,8 +65,9 @@ unit test asserts that every `AppIcon` has a symbol name.
 ```dart
 abstract interface class NativeToolbar {
   /// Replaces the window toolbar's items with [toolbar]. An empty
-  /// toolbar leaves the titlebar spacer only.
-  Future<void> set(AppToolbar toolbar);
+  /// toolbar leaves the titlebar spacer only. Completes with false if
+  /// the native side is unavailable; the caller then draws its own strip.
+  Future<bool> set(AppToolbar toolbar);
 }
 ```
 
@@ -85,7 +86,9 @@ dispatch.
 - **Swift → Dart:**
   - `activated(id, rect)`: `rect` is the item's frame in the Flutter
     view's logical coordinates (top-left origin), so a caller can anchor
-    a drawn popover to it
+    a drawn popover to it. It is null when the item was chosen from the
+    overflow menu. `AppToolbarAction.onPressed` is
+    `void Function(Rect? anchor)?`
   - `menuSelected(id, index)`
   - `searchChanged(id, text)`
 
@@ -133,12 +136,13 @@ there, it:
   - search
   - scan (action)
   - tasks (action, `badge: tasksActive`)
-- publishes it only while its route is current
-  (`ModalRoute.of(context).isCurrent`). It publishes from
-  `didChangeDependencies`, which fires when the route becomes current or
-  stops being current, and from `didUpdateWidget` on a filter,
-  `tasksActive` or `onScan` change. It publishes an empty toolbar when its
-  route stops being current, and again in `dispose`
+- publishes it only while `publishNative` is true. `LibraryScreen` passes
+  `ref.watch(appControllerProvider) is LibraryDestination`. This is not
+  `ModalRoute.isCurrent`, because the tasks popover is a route too, and
+  opening it would clear the toolbar. Publishing happens after every
+  build (the channel drops a spec identical to the last one sent). When
+  `publishNative` turns false, and again in `dispose`, it publishes an
+  empty toolbar
 - renders only an empty band of `AppWindowChrome.stripHeightFor(macOS)`
   in the chrome colour, which still drags the window
   (`isMovableByWindowBackground`)
@@ -154,8 +158,12 @@ Behaviour that stays in Dart and is shared with the drawn strip:
 - the 250 ms search debounce, which runs on `searchChanged`
 - `cycleOrganized`
 - the minimum-rating sentinel
-- when "Clear filters" or any external change moves `filter.query`, the
-  next `setItems` carries the new text
+- the spec's search text is `_searchController.text`. A `searchChanged`
+  sets it straight away, and "Clear filters" sets it in
+  `didUpdateWidget`, as today. Swift applies an incoming text only while
+  the search field isn't being edited (its field editor isn't the
+  window's first responder). A republish that lands mid-typing therefore
+  can't overwrite a newer keystroke
 
 Tasks: `activated('tasks', rect)` opens `showTasksPopover` anchored to
 `rect`. The popover stays drawn and only its anchor changes source.
@@ -165,9 +173,9 @@ anchor `BuildContext`.
 ### Other destinations
 
 The library is the only publisher. `AppRouter` keeps the library page
-mounted under the scene page, so pushing a scene makes the library
-non-current and it clears the toolbar. Popping back makes it current
-again and it republishes. The connection destination replaces the
+mounted under the scene page, so opening a scene turns `publishNative`
+false and the library clears the toolbar. Returning to the library turns
+it back on and the library republishes. The connection destination replaces the
 library page, so `dispose` clears the toolbar there. On those screens the
 titlebar is the bare spacer toolbar, exactly as today, so `PlayerTopBar`'s
 traffic-light metrics don't change.
@@ -188,7 +196,13 @@ unchanged on macOS:
 
 ```dart
 abstract interface class ConnectionSheet {
-  Stream<ConnectionSheetEvent> present(ConnectionSheetRequest request);
+  /// Shows the sheet. [onEvent] receives edits, submit and cancel until
+  /// [dismiss]. Throws `MissingPluginException`/`PlatformException` when
+  /// the native side is unavailable.
+  Future<void> present(
+    ConnectionSheetRequest request,
+    void Function(ConnectionSheetEvent event) onEvent,
+  );
   Future<void> update(ConnectionSheetState state);
   Future<void> dismiss();
 }
@@ -208,8 +222,9 @@ abstract interface class ConnectionSheet {
 The presenter holds every rule in Dart and bridges the sheet to
 `ConnectionController`:
 
-- On `changed`, it updates a `ConnectionFields` and sends
-  `update(canSubmit: fields.canSubmit)`, so "URL not blank" stays one rule.
+- On `changed`, it records the values and sends `update` with
+  `canSubmit` set to `values.serverUrl.trim().isNotEmpty`, the same rule
+  as `ConnectionFields.canSubmit`.
 - On `submitted`, it calls `testAndSave(values)`.
 - While it runs, it mirrors the controller: `busy` follows
   `ConnectionPhase.loading`, and `urlError`, `proxyError` and `failure`
@@ -218,8 +233,12 @@ The presenter holds every rule in Dart and bridges the sheet to
   `replaceConnection(config)`, which shows the "Connected to …" toast.
 - On `cancelled`, it calls `closeSettings()`.
 
-Seeding (the stored config, env overrides included) goes through the
-same `ConnectionFields.applyLoaded` as the drawn form.
+Seeding: the presenter awaits `controller.load()` (local storage, env
+overrides included) before it calls `present`, and it passes the loaded
+config as the request's field values. Nothing is typed before the sheet
+exists, so the drawn form's "don't clobber typed text" race can't
+happen, and `ConnectionFields` isn't needed. The presenter tracks the
+latest values from `changed` in a plain `ConnectionConfig`.
 
 ### Swift (`macos/Runner/ConnectionSheetChannel.swift`)
 
