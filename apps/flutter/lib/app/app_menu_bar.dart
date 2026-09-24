@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/player/playback_controller.dart';
 import '../features/player/playback_menu.dart';
+import '../features/player/playback_state.dart';
 import '../shared/diagnostics.dart';
 import '../ui/menu/app_menu.dart';
 import '../ui/menu/platform_menu_adapter.dart';
@@ -28,15 +29,36 @@ class AppMenuBar extends ConsumerWidget {
     if (defaultTargetPlatform != TargetPlatform.macOS) return child;
 
     final onScene = ref.watch(appControllerProvider) is SceneDestination;
-    // Only watched on the scene screen: the controller is created lazily,
+    // Only watched on the scene screen, and only for the three fields the
+    // menu actually shows (`select`): the controller is created lazily,
     // the first time a scene loads, and the menu bar must not be what
-    // creates it.
-    final controller = onScene ? ref.watch(playbackControllerProvider) : null;
-    final state = controller?.state;
+    // creates it — and `PlaybackController` notifies on every position and
+    // buffered event during playback (many times a second), which would
+    // otherwise rebuild this widget, and so resend the whole menu bar to
+    // AppKit, on every one of them (`PlatformMenuItem` has no `==`, so
+    // `PlatformMenuBar` can't tell two menus built from the same state
+    // apart and would call `Menu.setMenus` regardless).
+    final shown = onScene
+        ? ref.watch(
+            playbackControllerProvider.select(
+              (c) => (c.state.playing, c.state.muted, c.state.fullscreen),
+            ),
+          )
+        : null;
+    final state = shown == null
+        ? null
+        : PlaybackState(
+            playing: shown.$1,
+            muted: shown.$2,
+            fullscreen: shown.$3,
+          );
     void dispatch(PlayerAction action) {
-      if (controller == null) return;
+      if (!onScene) return;
       unawaited(
-        controller.handleAction(action).catchError((Object _, StackTrace _) {}),
+        ref
+            .read(playbackControllerProvider)
+            .handleAction(action)
+            .catchError((Object _, StackTrace _) {}),
       );
     }
 
