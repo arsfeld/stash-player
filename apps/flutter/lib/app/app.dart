@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/system_appearance.dart';
 import '../ui/theme/app_theme.dart';
 import 'app_controller.dart';
 import 'app_router.dart';
 import 'notices.dart';
+import 'providers.dart';
 
 class StashPlayerApp extends ConsumerStatefulWidget {
   const StashPlayerApp({super.key});
@@ -51,12 +53,22 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
         );
     });
 
+    final appearance =
+        ref.watch(systemAppearanceProvider).valueOrNull ??
+        SystemAppearance.none;
+    ThemeData themeFor(Brightness brightness) => buildAppTheme(
+      brightness,
+      accent: appearance.accent,
+      fontFamily: appearance.fontFamily,
+      bodyFontPt: appearance.fontSizePt,
+    );
+
     return MaterialApp(
       title: 'Stash Player',
       scaffoldMessengerKey: _scaffoldMessengerKey,
       themeMode: ThemeMode.system,
-      theme: buildAppTheme(Brightness.light),
-      darkTheme: buildAppTheme(Brightness.dark),
+      theme: themeFor(Brightness.light),
+      darkTheme: themeFor(Brightness.dark),
       home: const AppRouter(),
     );
   }

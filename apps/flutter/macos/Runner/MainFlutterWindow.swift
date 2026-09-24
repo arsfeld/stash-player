@@ -2,6 +2,10 @@ import Cocoa
 import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
+  // Retained for the window's lifetime: FlutterEventChannel holds its
+  // handler weakly.
+  private let appearance = AppearanceStreamHandler()
+
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
@@ -36,6 +40,10 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     LegacySecretChannel.register(with: flutterViewController.engine.binaryMessenger)
+    FlutterEventChannel(
+      name: "stash_player/appearance",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    ).setStreamHandler(appearance)
 
     super.awakeFromNib()
   }
@@ -79,5 +87,45 @@ enum LegacySecretChannel {
         ))
       }
     }
+  }
+}
+
+/// Streams the system accent colour on `stash_player/appearance`, once on
+/// listen and again whenever the user changes it in System Settings.
+/// `fontName` is always nil: the app always uses the system font on macOS.
+final class AppearanceStreamHandler: NSObject, FlutterStreamHandler {
+  private var sink: FlutterEventSink?
+  private var observer: NSObjectProtocol?
+
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    sink = events
+    send()
+    observer = NotificationCenter.default.addObserver(
+      forName: NSColor.systemColorsDidChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in self?.send() }
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    if let observer { NotificationCenter.default.removeObserver(observer) }
+    observer = nil
+    sink = nil
+    return nil
+  }
+
+  private func send() {
+    guard let color = NSColor.controlAccentColor.usingColorSpace(.sRGB) else {
+      sink?(["accent": NSNull(), "fontName": NSNull()])
+      return
+    }
+    func channel(_ value: CGFloat) -> Int { Int((value * 255).rounded()) }
+    let argb = (0xFF << 24) | (channel(color.redComponent) << 16)
+      | (channel(color.greenComponent) << 8) | channel(color.blueComponent)
+    sink?(["accent": argb, "fontName": NSNull()])
   }
 }

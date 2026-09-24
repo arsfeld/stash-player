@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app.dart';
 import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/domain/system_appearance.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 
@@ -116,12 +117,34 @@ void main() {
       expect(Theme.of(themeContext).extension<AppTokens>(), isNotNull);
     },
   );
+
+  testWidgets('the OS accent recolours the theme', (tester) async {
+    await _pumpApp(
+      tester,
+      extraOverrides: [
+        systemAppearanceProvider.overrideWith(
+          (ref) =>
+              Stream.value(const SystemAppearance(accent: Color(0xFFE66100))),
+        ),
+      ],
+    );
+    await tester.pump();
+    // MaterialApp wraps its child in an AnimatedTheme (200ms default), so
+    // the new accent only reaches Theme.of() once that transition settles
+    // — a bare zero-duration pump leaves Theme.of() reporting the old
+    // colour mid-animation.
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final theme = Theme.of(tester.element(find.text('Connect to Stash')));
+    expect(theme.colorScheme.primary, const Color(0xFFE66100));
+  });
 }
 
 Future<void> _pumpApp(
   WidgetTester tester, {
   ConnectionConfig saved = const ConnectionConfig(),
   Future<ConnectionConfig>? loadFuture,
+  List<Override> extraOverrides = const [],
 }) => tester.pumpWidget(
   ProviderScope(
     overrides: [
@@ -140,6 +163,7 @@ Future<void> _pumpApp(
             FakeStashApi(versionValue: 'v0.31.0')..allowManualCompletion = true,
       ),
       connectionControllerOverride,
+      ...extraOverrides,
     ],
     child: const StashPlayerApp(),
   ),
