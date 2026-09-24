@@ -118,6 +118,23 @@ void main() {
     expect(sent, hasLength(2));
   });
 
+  test(
+    'resends a spec equal to the last one while another is in flight',
+    () async {
+      final toolbar = ChannelNativeToolbar();
+      await toolbar.set(spec());
+      // B is still in flight when A comes back: A must not be dropped as a
+      // duplicate of the spec before B.
+      final inFlight = toolbar.set(spec(badge: true));
+      final again = toolbar.set(spec());
+      await Future.wait([inFlight, again]);
+
+      expect(sent.where((call) => call.method == 'setItems'), hasLength(3));
+      final last = sent.last.arguments as List<Object?>;
+      expect(last[3], containsPair('badge', false));
+    },
+  );
+
   test('routes native events to the current callbacks', () async {
     await ChannelNativeToolbar().set(spec());
 

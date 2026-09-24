@@ -48,11 +48,15 @@ class ChannelNativeToolbar implements NativeToolbar {
     _items = items;
     final fingerprint = jsonEncode(encoded);
     if (fingerprint == _lastSent) return true;
+    // Recorded before the await, so a spec equal to one still in flight is
+    // dropped, and a spec equal to the previous one is not dropped while a
+    // different one is in flight.
+    _lastSent = fingerprint;
     try {
       await _channel.invokeMethod<void>('setItems', encoded);
-      _lastSent = fingerprint;
       return true;
     } on Object catch (error) {
+      _lastSent = null;
       if (error is! MissingPluginException && error is! PlatformException) {
         rethrow;
       }
