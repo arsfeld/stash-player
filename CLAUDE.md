@@ -71,7 +71,8 @@ The shipped app. Riverpod for state; no routing package —
 small destination union instead.
 
 - **`lib/app/`** — wiring: `AppController` (the `AppDestination` union —
-  connection / library / scene — plus bootstrap), `AppRouter`
+  connection / library / scene, where library carries `settingsOpen` for
+  the connection settings dialog — plus bootstrap), `AppRouter`
   (destination → page), `providers.dart` (the
   provider graph: HTTP client, SOCKS proxy, connection store, thumbnail
   repo), `app.dart` (`MaterialApp` + toast/notice plumbing).
@@ -80,7 +81,8 @@ small destination union instead.
   `scene_filter.dart`, `scene_stream.dart`, `browse_context.dart`
   (prev/next ordering), `job.dart`, `failure.dart`.
 - **`lib/features/{connection,library,player}`** — Riverpod controllers +
-  screens per area: `connection/` (the connection screen), `library/`
+  screens per area: `connection/` (the first-launch screen, the settings
+  dialog, and the `ConnectionForm` they share), `library/`
   (grid, toolbar, sort/filter, background-tasks controller), `player/`
   (the video-first scene screen — `scene_controller.dart`,
   `playback_controller.dart` / `playback_engine.dart`,
@@ -107,7 +109,9 @@ small destination union instead.
   this),
   `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
   `ChannelNativeMenus`, drawn in tests), `widgets/` (strip controls,
-  spinner, toast, tile). `lib/ui/` never imports Riverpod.
+  spinner, toast, tile, `AppDialog`/`AppDialogPage`, and the
+  `AppPreferencesGroup`/`AppEntryRow` form rows). `lib/ui/` never imports
+  Riverpod.
 - **Native runners** — `linux/runner/my_application.cc` and
   `macos/Runner/MainFlutterWindow.swift` implement the
   `stash_player/legacy_secret` method channel (`readApiKey`) that

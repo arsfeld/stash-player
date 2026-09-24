@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/connection/connection_controller.dart';
 import '../features/connection/connection_screen.dart';
+import '../features/connection/connection_settings_dialog.dart';
 import '../features/library/library_screen.dart';
 import '../features/player/scene_screen.dart';
+import '../ui/widgets/app_dialog.dart';
 import 'app_controller.dart';
 
 /// Switches on [AppController]'s current [AppDestination] and renders it
@@ -22,8 +24,14 @@ class AppRouter extends ConsumerWidget {
     return Navigator(
       pages: _pagesFor(destination),
       onDidRemovePage: (page) {
-        if (page.name == _scenePageName) {
-          ref.read(appControllerProvider.notifier).showLibrary();
+        final app = ref.read(appControllerProvider.notifier);
+        switch (page.name) {
+          case _scenePageName:
+            app.showLibrary();
+          case _settingsPageName:
+            // Also runs when the page leaves because the destination already
+            // changed (a successful save). closeSettings is a no-op then.
+            app.closeSettings();
         }
       },
     );
@@ -38,7 +46,10 @@ class AppRouter extends ConsumerWidget {
             child: _ConnectionDestinationScreen(),
           ),
         ],
-        LibraryDestination() => const [_libraryPage],
+        LibraryDestination(:final settingsOpen) => [
+          _libraryPage,
+          if (settingsOpen) _settingsPage,
+        ],
         SceneDestination(:final sceneId, :final browse) => [
           _libraryPage,
           MaterialPage<void>(
@@ -53,11 +64,18 @@ class AppRouter extends ConsumerWidget {
 const _connectionPageName = 'connection';
 const _libraryPageName = 'library';
 const _scenePageName = 'scene';
+const _settingsPageName = 'settings';
 
 const _libraryPage = MaterialPage<void>(
   key: ValueKey('library'),
   name: _libraryPageName,
-  child: _LibraryRoute(),
+  child: LibraryScreen(),
+);
+
+const _settingsPage = AppDialogPage<void>(
+  key: ValueKey('settings'),
+  name: _settingsPageName,
+  child: ConnectionSettingsDialog(),
 );
 
 /// The first-launch / no-saved-connection screen. Never seeds
@@ -68,47 +86,9 @@ class _ConnectionDestinationScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => ConnectionScreen(
-    settingsMode: false,
     onConnected: () {
       final config = ref.read(connectionControllerProvider).state.config;
       ref.read(appControllerProvider.notifier).replaceConnection(config);
     },
-  );
-}
-
-/// Renders the real library feature, wiring its "open settings" intent to
-/// the router-owned modal push — [AppController] has no `openSettings` of
-/// its own (settings isn't one of its destinations; see [_SettingsRoute]),
-/// so this is the one navigation intent [LibraryScreen] can't just call
-/// through `ref` the way it does for [AppController.openScene].
-class _LibraryRoute extends StatelessWidget {
-  const _LibraryRoute();
-
-  @override
-  Widget build(BuildContext context) => LibraryScreen(
-    onOpenSettings: () => Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => const _SettingsRoute(),
-      ),
-    ),
-  );
-}
-
-/// Modal settings route. Only replaces the active connection once
-/// [ConnectionScreen] itself reports success, and dismisses itself
-/// promptly afterward rather than staying mounted.
-class _SettingsRoute extends ConsumerWidget {
-  const _SettingsRoute();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => ConnectionScreen(
-    settingsMode: true,
-    onConnected: () async {
-      final config = ref.read(connectionControllerProvider).state.config;
-      await ref.read(appControllerProvider.notifier).replaceConnection(config);
-      if (context.mounted) Navigator.of(context).pop();
-    },
-    onCancel: () => Navigator.of(context).pop(),
   );
 }

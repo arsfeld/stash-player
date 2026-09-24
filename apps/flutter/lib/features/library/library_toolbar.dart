@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene_filter.dart';
 import '../../ui/icons/app_icons.dart';
+import '../../ui/menu/app_menu.dart';
+import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/theme/platform_dialect.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
 
 /// Width, in logical pixels, at and above which every control renders
 /// directly in the strip. Below it only search, the filters trigger,
-/// "Play random", Scan, Tasks and settings stay there; sort, direction,
+/// "Play random", Scan, Tasks and the main menu stay there; sort, direction,
 /// minimum rating, organized and hide-tracked move into a collapsible
 /// second row underneath, toggled by a "Filters" button. See
 /// [LibraryToolbar]'s own doc for why that row is an ordinary descendant
@@ -89,6 +92,8 @@ class LibraryToolbar extends StatefulWidget {
   /// Tasks button's own).
   final void Function(BuildContext anchor) onOpenTasks;
 
+  /// Opens connection settings. Offered as Preferences in GNOME's main
+  /// menu at the end of the strip.
   final VoidCallback onOpenSettings;
 
   @override
@@ -115,7 +120,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   final _randomFocusNode = FocusNode(debugLabel: 'library-random');
   final _scanFocusNode = FocusNode(debugLabel: 'library-scan');
   final _tasksFocusNode = FocusNode(debugLabel: 'library-tasks');
-  final _settingsFocusNode = FocusNode(debugLabel: 'library-settings');
+  final _mainMenuFocusNode = FocusNode(debugLabel: 'library-main-menu');
   final _filtersFocusNode = FocusNode(debugLabel: 'library-filters');
 
   @override
@@ -166,10 +171,16 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _randomFocusNode.dispose();
     _scanFocusNode.dispose();
     _tasksFocusNode.dispose();
-    _settingsFocusNode.dispose();
+    _mainMenuFocusNode.dispose();
     _filtersFocusNode.dispose();
     super.dispose();
   }
+
+  /// GNOME apps keep Preferences in a primary menu in the header bar.
+  /// macOS apps have no such button: Settings… lives in the app menu, which
+  /// `AppMenuBar` provides.
+  bool get _showsMainMenu =>
+      PlatformDialect.of(context) == PlatformDialect.adwaita;
 
   void _onSearchChanged(String value) {
     _debounce?.cancel();
@@ -207,10 +218,10 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   /// The strip at [libraryToolbarWideBreakpoint] and above.
   ///
   /// Tab order follows the visual order: the filter group, then Play
-  /// random, then the search field, then Scan, Tasks and settings. That
-  /// is what WCAG 2.4.3 asks for, and the two layouts read in different
-  /// orders, so the order values belong to a layout rather than to a
-  /// control. See [_narrowControls] for the other one.
+  /// random, then the search field, then Scan, Tasks and the main menu.
+  /// That is what WCAG 2.4.3 asks for, and the two layouts read in
+  /// different orders, so the order values belong to a layout rather than
+  /// to a control. See [_narrowControls] for the other one.
   List<Widget> _wideControls() => [
     _ordered(1, _sortMenu()),
     const SizedBox(width: AppTokens.space2),
@@ -229,8 +240,10 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _ordered(8, _scanButton()),
     const SizedBox(width: AppTokens.space2),
     _ordered(9, _tasksButton()),
-    const SizedBox(width: AppTokens.space2),
-    _ordered(10, _settingsButton()),
+    if (_showsMainMenu) ...[
+      const SizedBox(width: AppTokens.space2),
+      _ordered(10, _mainMenuButton()),
+    ],
   ];
 
   /// The strip below [libraryToolbarWideBreakpoint].
@@ -249,8 +262,10 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _ordered(9, _scanButton()),
     const SizedBox(width: AppTokens.space2),
     _ordered(10, _tasksButton()),
-    const SizedBox(width: AppTokens.space2),
-    _ordered(11, _settingsButton()),
+    if (_showsMainMenu) ...[
+      const SizedBox(width: AppTokens.space2),
+      _ordered(11, _mainMenuButton()),
+    ],
   ];
 
   Widget _secondaryRow() => Padding(
@@ -404,12 +419,27 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     );
   }
 
-  Widget _settingsButton() => AppIconAction(
-    focusNode: _settingsFocusNode,
-    icon: AppIcon.settings,
-    tooltip: 'Connection settings',
-    semanticLabel: 'Connection settings',
-    onPressed: widget.onOpenSettings,
+  /// GNOME's primary menu. It holds only Preferences for now. An About
+  /// item would join it once the app has an About dialog on Linux.
+  Widget _mainMenuButton() => Builder(
+    builder: (anchor) => AppIconAction(
+      focusNode: _mainMenuFocusNode,
+      icon: AppIcon.mainMenu,
+      tooltip: 'Main Menu',
+      semanticLabel: 'Main menu',
+      onPressed: () => unawaited(
+        NativeMenusScope.of(anchor).show(
+          anchor,
+          AppMenu([
+            AppMenuAction(
+              label: 'Preferences',
+              onSelected: widget.onOpenSettings,
+            ),
+          ]),
+          globalRectOf(anchor),
+        ),
+      ),
+    ),
   );
 
   Widget _filtersToggleButton() => AppIconToggle(

@@ -18,6 +18,7 @@ void main() {
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
       onCheckForUpdates: () {},
+      onOpenSettings: null,
     );
     expect(bar.cast<PlatformMenu>().map((m) => m.label), [
       'Stash Player',
@@ -32,6 +33,7 @@ void main() {
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
       onCheckForUpdates: () => checked++,
+      onOpenSettings: null,
     );
     final app = bar.first as PlatformMenu;
     final item = app.menus
@@ -47,6 +49,7 @@ void main() {
     final bar = buildMacMenuBar(
       playback: playbackMenu(null, (_) {}),
       onCheckForUpdates: () {},
+      onOpenSettings: null,
     );
     final edit = bar[1] as PlatformMenu;
     final shortcuts = edit.menus
@@ -179,6 +182,80 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
+
+  test('the app menu opens Settings… with ⌘,', () {
+    var opened = 0;
+    final item = _appMenuItem(
+      buildMacMenuBar(
+        playback: playbackMenu(null, (_) {}),
+        onCheckForUpdates: () {},
+        onOpenSettings: () => opened++,
+      ),
+      'Settings…',
+    );
+
+    final shortcut = item.shortcut! as SingleActivator;
+    expect(shortcut.trigger, LogicalKeyboardKey.comma);
+    expect(shortcut.meta, isTrue);
+    item.onSelected!();
+    expect(opened, 1);
+  });
+
+  testWidgets('Settings… is enabled on the library only, and not while its own '
+      'dialog is already open (final review §5)', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.menu, (call) async => null);
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.menu, null),
+    );
+
+    Future<PlatformMenuItem> settingsAt(AppDestination destination) async {
+      // Pumping an unrelated widget first, before the real tree, forces
+      // `finalizeTree()` to dispose any `PlatformMenuBar` left over from a
+      // previous call in this test (its `State.dispose` only runs there,
+      // never in the same `pumpWidget` call that deactivates it). Without
+      // this, a second `PlatformMenuBar` mounting while the first is still
+      // deactivated-but-undisposed trips its debug lock
+      // (`debugLockDelegate`), since both would hold it at once.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        ProviderScope(
+          key: UniqueKey(),
+          overrides: [
+            appControllerProvider.overrideWith(
+              () => _FixedDestinationController(destination),
+            ),
+          ],
+          child: const AppMenuBar(child: SizedBox()),
+        ),
+      );
+      final bar = tester.widget<PlatformMenuBar>(find.byType(PlatformMenuBar));
+      return _appMenuItem(bar.menus, 'Settings…');
+    }
+
+    expect(
+      (await settingsAt(const AppDestination.connection())).onSelected,
+      isNull,
+    );
+
+    expect(
+      (await settingsAt(
+        const LibraryDestination(settingsOpen: true),
+      )).onSelected,
+      isNull,
+    );
+
+    final item = await settingsAt(const AppDestination.library());
+    item.onSelected!();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(AppMenuBar)),
+    );
+    expect(
+      container.read(appControllerProvider),
+      const LibraryDestination(settingsOpen: true),
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }
 
 /// A test-only `AppController` that always starts at whatever
@@ -192,3 +269,10 @@ class _FixedDestinationController extends AppController {
   @override
   AppDestination build() => _destination;
 }
+
+/// The app menu's item labelled [label].
+PlatformMenuItem _appMenuItem(List<PlatformMenuItem> bar, String label) =>
+    (bar.first as PlatformMenu).menus
+        .cast<PlatformMenuItemGroup>()
+        .expand((group) => group.members)
+        .singleWhere((item) => item.label == label);

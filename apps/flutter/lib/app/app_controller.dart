@@ -24,7 +24,23 @@ final class ConnectionDestination extends AppDestination {
 }
 
 final class LibraryDestination extends AppDestination {
-  const LibraryDestination();
+  const LibraryDestination({this.settingsOpen = false});
+
+  /// Whether the connection settings dialog is showing over the library.
+  ///
+  /// Part of the destination rather than an imperative dialog push so the
+  /// three ways in (the Linux main menu, Ctrl+, and the macOS menu bar,
+  /// which sits above the `Navigator` and has no context to push from)
+  /// all go through one method, and so a successful reconnect, which
+  /// already sets `library()`, closes the dialog without a separate pop.
+  final bool settingsOpen;
+
+  @override
+  bool operator ==(Object other) =>
+      other is LibraryDestination && other.settingsOpen == settingsOpen;
+
+  @override
+  int get hashCode => settingsOpen.hashCode;
 }
 
 final class SceneDestination extends AppDestination {
@@ -48,9 +64,10 @@ final class SceneDestination extends AppDestination {
   int get hashCode => Object.hash(sceneId, browse);
 }
 
-/// Owns which [AppDestination] is showing, and the two shell-level intents
-/// that change it: the app's initial bootstrap, and replacing the active
-/// connection from settings (or from the first-launch connection screen).
+/// Owns which [AppDestination] is showing, and the shell-level intents
+/// that change it: the app's initial bootstrap, opening and closing the
+/// connection settings dialog, and replacing the active connection from
+/// that dialog (or from the first-launch connection screen).
 class AppController extends Notifier<AppDestination> {
   @override
   AppDestination build() => const AppDestination.connection();
@@ -93,9 +110,9 @@ class AppController extends Notifier<AppDestination> {
   /// it the active one.
   ///
   /// Used both by the first-launch connection screen and by the settings
-  /// screen's success callback. If [config] was *just* validated and
+  /// dialog once its test succeeds. If [config] was *just* validated and
   /// saved by the caller (the common case: the connection screen's own
-  /// "Test connection" button already ran `testAndSave` before invoking
+  /// "Connect" button already ran `testAndSave` before invoking
   /// its `onConnected` callback), this skips repeating that network round
   /// trip. Only on success does it bump [connectionGenerationProvider] —
   /// which invalidates [stashApiProvider] and every later library/scene
@@ -157,6 +174,27 @@ class AppController extends Notifier<AppDestination> {
   /// observes the scene page being popped.
   void showLibrary() {
     state = const AppDestination.library();
+  }
+
+  /// Shows the connection settings dialog over the library.
+  ///
+  /// Only the library has a way into settings, so this does nothing from
+  /// any other destination: the macOS menu item is disabled there, and a
+  /// stray call must not yank the player away mid-scene.
+  void openSettings() {
+    if (state is! LibraryDestination) return;
+    state = const LibraryDestination(settingsOpen: true);
+  }
+
+  /// Closes the settings dialog without changing the connection.
+  ///
+  /// A no-op unless the dialog is open, because `AppRouter` also calls
+  /// this when the dialog's page leaves the stack for any reason, including
+  /// the successful reconnect that already reset the destination.
+  void closeSettings() {
+    if (state case LibraryDestination(settingsOpen: true)) {
+      state = const AppDestination.library();
+    }
   }
 
   /// Navigates to a scene by id, optionally carrying [browse] so the

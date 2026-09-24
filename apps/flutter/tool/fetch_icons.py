@@ -41,7 +41,7 @@ LUCIDE_BASE = f"https://cdn.jsdelivr.net/npm/lucide-static@{LUCIDE_VERSION}"
 GNOME = [
     "go-previous", "pan-down", "view-sort-ascending", "view-sort-descending",
     "checkbox", "circle-check", "cross", "eye-open", "eye-crossed",
-    "media-playlist-shuffle", "folder-plus", "list", "cogged-wheel",
+    "media-playlist-shuffle", "folder-plus", "list", "open-menu",
     "sliders", "clock", "dialog-warning", "video-encode", "info-outline",
     "speaker-cross", "speaker-max", "media-skip-backward",
     "media-skip-forward", "arrow-left-10", "arrow-right-10",
@@ -53,7 +53,7 @@ LUCIDE = [
     "arrow-left", "chevron-down", "arrow-up-narrow-wide",
     "arrow-down-wide-narrow", "circle-dashed", "circle-check-big",
     "circle-x", "eye", "eye-off", "shuffle", "folder-plus", "list-checks",
-    "settings", "sliders-horizontal", "clock", "triangle-alert",
+    "menu", "sliders-horizontal", "clock", "triangle-alert",
     "monitor-play", "info", "volume-x", "volume-2", "skip-back",
     "skip-forward", "rotate-ccw", "rotate-cw", "play", "pause",
     "circle-play", "droplet", "delete", "x", "film", "clapperboard",

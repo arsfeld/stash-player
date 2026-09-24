@@ -22,7 +22,7 @@ enum AppIcon {
   shuffle('media-playlist-shuffle', 'shuffle'),
   scan('folder-plus', 'folder-plus'),
   tasks('list', 'list-checks'),
-  settings('cogged-wheel', 'settings'),
+  mainMenu('open-menu', 'menu'),
   filters('sliders', 'sliders-horizontal'),
   clock('clock', 'clock'),
   warning('dialog-warning', 'triangle-alert'),
