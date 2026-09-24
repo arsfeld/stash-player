@@ -181,7 +181,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             onPlayRandom: () => _handlePlayRandom(controller),
             tasksActive: tasks.hasActiveWork,
             onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
-            onOpenTasks: showTasksPopover,
+            publishNative: ref.watch(
+              appControllerProvider.select((d) => d is! SceneDestination),
+            ),
+            onOpenTasks: showTasksPopoverAt,
             onOpenSettings: () =>
                 ref.read(appControllerProvider.notifier).openSettings(),
           ),

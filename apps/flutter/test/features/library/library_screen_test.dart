@@ -23,6 +23,8 @@ import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/menu/app_menu.dart';
 import 'package:stash_player_flutter/ui/menu/native_menus.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/toolbar/app_toolbar.dart';
+import 'package:stash_player_flutter/ui/toolbar/native_toolbar.dart';
 import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
@@ -30,6 +32,7 @@ import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 import '../../support/app_icons.dart';
 import '../../support/fakes.dart';
 import '../../support/recording_menus.dart';
+import '../../support/recording_toolbar.dart';
 
 Scene _scene({
   required String id,
@@ -145,6 +148,7 @@ Future<_Harness> _pumpLibrary(
   FakeStashApi? api,
   ThumbnailRepository? thumbnailRepository,
   NativeMenus? menus,
+  NativeToolbar? toolbar,
   List<Override> overrides = const [],
   Size size = const Size(1200, 900),
 }) async {
@@ -172,15 +176,28 @@ Future<_Harness> _pumpLibrary(
       container: container,
       child: MaterialApp(
         theme: buildAppTheme(Brightness.light),
-        home: menus == null
-            ? const LibraryScreen()
-            : NativeMenusScope(menus: menus, child: const LibraryScreen()),
+        home: _withToolbar(
+          toolbar,
+          menus == null
+              ? const LibraryScreen()
+              : NativeMenusScope(menus: menus, child: const LibraryScreen()),
+        ),
       ),
     ),
   );
 
   return _Harness(container, controller, fakeApi);
 }
+
+Widget _withToolbar(NativeToolbar? toolbar, Widget child) => toolbar == null
+    ? child
+    : NativeToolbarScope(toolbar: toolbar, child: child);
+
+/// Enough pages that a filter change's refetch never drains the fake.
+FakeStashApi _pagedApi() => FakeStashApi()
+  ..pages.addAll([
+    for (var i = 0; i < 6; i++) ScenePage(total: 2, scenes: _scenes(2)),
+  ]);
 
 void main() {
   group('explicit states', () {
@@ -1551,6 +1568,103 @@ void main() {
       },
       variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     );
+  });
+
+  group('native toolbar (macOS)', () {
+    testWidgets('publishes the controls and draws none of its own', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+      await tester.pump();
+
+      expect(toolbar.last.items.map((item) => item.id), [
+        'filters',
+        'play-random',
+        'flexible-space',
+        'search',
+        'scan',
+        'tasks',
+      ]);
+      expect(
+        toolbar.item<AppToolbarGroup>('filters').children.map((i) => i.id),
+        ['sort', 'direction', 'minimum-rating', 'organized', 'hide-tracked'],
+      );
+      expect(find.byType(AppMenuButton<SceneSort>), findsNothing);
+      expect(find.byKey(const Key('library-search')), findsNothing);
+    });
+
+    testWidgets('routes toolbar events to the library controller', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      final harness = await _pumpLibrary(
+        tester,
+        api: _pagedApi(),
+        toolbar: toolbar,
+      );
+      await tester.pump();
+      // The default filter hides played scenes, so the toggle starts on.
+      expect(toolbar.item<AppToolbarToggle>('hide-tracked').selected, isTrue);
+
+      final sort = toolbar.item<AppToolbarMenu>('sort');
+      sort.onSelected(SceneSort.values.indexOf(SceneSort.title));
+      toolbar.item<AppToolbarToggle>('hide-tracked').onPressed();
+      await tester.pump();
+
+      expect(harness.controller.state.filter.sort, SceneSort.title);
+      expect(harness.controller.state.filter.hideTracked, isFalse);
+      expect(
+        toolbar.item<AppToolbarMenu>('sort').selected,
+        SceneSort.values.indexOf(SceneSort.title),
+      );
+      expect(toolbar.item<AppToolbarToggle>('hide-tracked').selected, isFalse);
+    });
+
+    testWidgets('debounces native search and keeps the typed text', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      final harness = await _pumpLibrary(
+        tester,
+        api: _pagedApi(),
+        toolbar: toolbar,
+      );
+      await tester.pump();
+
+      toolbar.item<AppToolbarSearch>('search').onChanged('kyo');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(harness.controller.state.filter.query, '');
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(harness.controller.state.filter.query, 'kyo');
+      expect(toolbar.item<AppToolbarSearch>('search').text, 'kyo');
+    });
+
+    testWidgets('falls back to the drawn strip when the native side is '
+        'missing', (tester) async {
+      final toolbar = RecordingToolbar(available: false);
+      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const Key('library-search')), findsOneWidget);
+    });
+
+    testWidgets('clears the toolbar when a scene opens', (tester) async {
+      final toolbar = RecordingToolbar();
+      final harness = await _pumpLibrary(
+        tester,
+        api: _pagedApi(),
+        toolbar: toolbar,
+      );
+      await tester.pump();
+      expect(toolbar.last.items, isNotEmpty);
+
+      harness.container.read(appControllerProvider.notifier).openScene('1');
+      await tester.pump();
+
+      expect(toolbar.last.items, isEmpty);
+    });
   });
 }
 
