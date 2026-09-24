@@ -183,10 +183,14 @@ else.
   `has_custom_stash_url` does.
 - **`LegacySecretReader`:** a Dart interface over the method channel
   `stash_player/legacy_secret`, method `readApiKey` → `String?`.
-  - **Linux runner (C):** `secret_password_lookup_sync` with a schema
-    over `application` and `key`, flagged `SECRET_SCHEMA_DONT_MATCH_NAME`
-    because the Rust `secret-service` crate wrote the item without an
-    `xdg:schema` attribute.
+  - **Linux runner (C):** `secret_service_get_sync` +
+    `secret_service_lookup_sync` with a schema over `application` and
+    `key`, flagged `SECRET_SCHEMA_DONT_MATCH_NAME` because the Rust
+    `secret-service` crate wrote the item without an `xdg:schema`
+    attribute. Not `secret_password_lookup_sync`: libsecret's backend
+    layer picks its per-app *file* backend inside a Flatpak whenever the
+    Secret portal is available, and the legacy key lives in the host
+    Secret Service.
   - **macOS Runner (Swift):** `SecItemCopyMatching` on the service and
     account above. The bundle ID and team match, so the read is expected
     to be silent; at worst macOS shows a single access prompt.

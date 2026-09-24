@@ -36,6 +36,41 @@ static const SecretSchema* legacy_secret_schema() {
   return &schema;
 }
 
+// Reads the legacy key from the Secret Service over D-Bus: the key, null
+// (with `error` unset) when there is none, or null with `error` set. The
+// caller frees the result with g_free.
+//
+// Deliberately the D-Bus SecretService API, not secret_password_*: those
+// go through libsecret's backend layer, which inside a Flatpak with the
+// org.freedesktop.portal.Secret portal available picks the *file* backend
+// (a per-app keyring under ~/.var/app/<id>/data/keyrings/), whatever
+// --talk-name=org.freedesktop.secrets grants. The legacy GTK client wrote
+// its key to the host Secret Service over D-Bus, so only this path finds it.
+static gchar* lookup_legacy_api_key(GError** error) {
+  g_autoptr(SecretService) service =
+      secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, nullptr, error);
+  if (service == nullptr) return nullptr;
+
+  g_autoptr(GHashTable) attributes =
+      g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attributes, const_cast<gchar*>("application"),
+                      const_cast<gchar*>("stash-player"));
+  g_hash_table_insert(attributes, const_cast<gchar*>("key"),
+                      const_cast<gchar*>("stash-api-key"));
+
+  SecretValue* value = secret_service_lookup_sync(
+      service, legacy_secret_schema(), attributes, nullptr, error);
+  if (value == nullptr) return nullptr;
+  const gchar* text = secret_value_get_text(value);
+  gchar* result = text != nullptr ? g_strdup(text) : nullptr;
+  if (text == nullptr) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "the legacy API key is not valid UTF-8");
+  }
+  secret_value_unref(value);
+  return result;
+}
+
 // Handles `readApiKey` on `stash_player/legacy_secret`: the stored key, null
 // when there is none, or a `lookup-failed` error. Synchronous because it
 // runs at most once per install (see PlatformConnectionStore) and the
@@ -46,9 +81,7 @@ static void legacy_secret_method_cb(FlMethodChannel* channel,
   g_autoptr(FlMethodResponse) response = nullptr;
   if (g_strcmp0(fl_method_call_get_name(method_call), "readApiKey") == 0) {
     g_autoptr(GError) error = nullptr;
-    gchar* secret = secret_password_lookup_sync(
-        legacy_secret_schema(), nullptr, &error, "application", "stash-player",
-        "key", "stash-api-key", nullptr);
+    g_autofree gchar* secret = lookup_legacy_api_key(&error);
     if (error != nullptr) {
       response = FL_METHOD_RESPONSE(
           fl_method_error_response_new("lookup-failed", error->message, nullptr));
@@ -57,7 +90,6 @@ static void legacy_secret_method_cb(FlMethodChannel* channel,
                                                    : fl_value_new_null();
       response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
     }
-    secret_password_free(secret);
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
