@@ -24,6 +24,21 @@
 
   <launchable type="desktop-id">dev.arsfeld.stash-player.desktop</launchable>
 
+  <screenshots>
+    <screenshot type="default">
+      <caption>The library: a grid of scenes sorted by rating</caption>
+      <image>https://raw.githubusercontent.com/arsfeld/stash-player/v1.0.0/docs/screenshots/library.jpg</image>
+    </screenshot>
+    <screenshot>
+      <caption>The player: the video fills the window, with on-screen controls</caption>
+      <image>https://raw.githubusercontent.com/arsfeld/stash-player/v1.0.0/docs/screenshots/player.jpg</image>
+    </screenshot>
+    <screenshot>
+      <caption>The details drawer, showing date, studio, performers and file info</caption>
+      <image>https://raw.githubusercontent.com/arsfeld/stash-player/v1.0.0/docs/screenshots/scene-details.jpg</image>
+    </screenshot>
+  </screenshots>
+
   <url type="homepage">https://github.com/arsfeld/stash-player</url>
   <url type="bugtracker">https://github.com/arsfeld/stash-player/issues</url>
 
@@ -56,7 +71,7 @@
   </branding>
 
   <releases>
-    <release version="1.0.0" date="2026-10-01">
+    <release version="1.0.0" date="2026-09-24">
       <description>
         <p>
           Stash Player has a new, rebuilt client. Your saved server
