@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/job.dart';
 import '../../ui/icons/app_icons.dart';
+import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/app_spinner.dart';
 import 'tasks_controller.dart';
@@ -13,32 +14,34 @@ const double tasksPopoverWidth = 300;
 const double tasksPopoverMaxHeight = 320;
 
 /// Opens the Tasks popover under [anchor], which must be the Tasks
-/// button's own context, and tells [tasksControllerProvider] it is open
-/// until it closes.
+/// button's own context. See [showTasksPopoverAt].
+Future<void> showTasksPopover(BuildContext anchor) =>
+    showTasksPopoverAt(anchor, globalRectOf(anchor));
+
+/// Opens the Tasks popover under [anchor], a rect in global logical
+/// coordinates: the drawn Tasks button's, or the native toolbar item's
+/// as `NativeToolbarChannel.swift` reports it. Tells
+/// [tasksControllerProvider] it is open until it closes.
 ///
 /// A route rather than `MenuAnchor` or `OverlayPortal`: those overlays sit
 /// outside the page's focus traversal, which is why the library toolbar
 /// already avoids `MenuAnchor` for its filters. A `PopupRoute` gets what
 /// `showMenu` gives `AppMenuButton`: focus moves into it, Esc or a click
 /// outside closes it, and focus goes back to the button.
-Future<void> showTasksPopover(BuildContext anchor) async {
-  final container = ProviderScope.containerOf(anchor, listen: false);
-  final navigator = Navigator.of(anchor);
-  final button = anchor.findRenderObject()! as RenderBox;
+Future<void> showTasksPopoverAt(BuildContext context, Rect anchor) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  final navigator = Navigator.of(context);
   final overlay = navigator.overlay!.context.findRenderObject()! as RenderBox;
   final anchorRect = Rect.fromPoints(
-    button.localToGlobal(Offset.zero, ancestor: overlay),
-    button.localToGlobal(
-      button.size.bottomRight(Offset.zero),
-      ancestor: overlay,
-    ),
+    overlay.globalToLocal(anchor.topLeft),
+    overlay.globalToLocal(anchor.bottomRight),
   );
 
   container.read(tasksControllerProvider).popoverOpened();
   await navigator.push(
     _TasksPopoverRoute(
       anchorRect: anchorRect,
-      barrierLabel: MaterialLocalizations.of(anchor).modalBarrierDismissLabel,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     ),
   );
   // Whichever controller is current now. A reconnect while the popover was

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -9,7 +10,10 @@ import 'package:http/io_client.dart';
 import '../domain/connection.dart';
 import '../domain/system_appearance.dart';
 import '../features/connection/connection_controller.dart';
+import '../features/connection/connection_sheet.dart';
+import '../services/channel_connection_sheet.dart';
 import '../services/channel_native_menus.dart';
+import '../services/channel_native_toolbar.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
@@ -20,6 +24,7 @@ import '../services/thumbnail_repository.dart';
 import '../shared/diagnostics.dart';
 import '../ui/menu/drawn_menus.dart';
 import '../ui/menu/native_menus.dart';
+import '../ui/toolbar/native_toolbar.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -171,6 +176,36 @@ final nativeMenusProvider = Provider<NativeMenus>(
     _ => const DrawnMenus(),
   },
 );
+
+/// The window toolbar the library publishes its controls to: the real
+/// `NSToolbar` on macOS, none elsewhere (Linux draws its own strip, and
+/// tests run as Android).
+final nativeToolbarProvider = Provider<NativeToolbar?>((ref) {
+  if (defaultTargetPlatform != TargetPlatform.macOS) return null;
+  final toolbar = ChannelNativeToolbar();
+  unawaited(toolbar.reset());
+  return toolbar;
+});
+
+/// The native connection sheet: an AppKit sheet on macOS, none elsewhere.
+/// [ConnectionSheetNotifier.disable] drops it for the rest of the session
+/// when it fails to open, and every host falls back to the drawn form.
+final connectionSheetProvider =
+    NotifierProvider<ConnectionSheetNotifier, ConnectionSheet?>(
+      ConnectionSheetNotifier.new,
+    );
+
+class ConnectionSheetNotifier extends Notifier<ConnectionSheet?> {
+  @override
+  ConnectionSheet? build() {
+    if (defaultTargetPlatform != TargetPlatform.macOS) return null;
+    final sheet = ChannelConnectionSheet();
+    unawaited(sheet.reset());
+    return sheet;
+  }
+
+  void disable() => state = null;
+}
 
 /// Asks the macOS runner to run Sparkle's "Check for Updates…" (see
 /// `UpdatesChannel` in `MainFlutterWindow.swift`).

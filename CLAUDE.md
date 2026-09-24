@@ -98,7 +98,10 @@ small destination union instead.
   to `PlaybackEngine` behind a narrow `MediaKitPlayerPort` interface so
   tests never touch native playback), `disk_thumbnail_repository.dart`
   (decode + disk cache, namespaced under
-  `dev.arsfeld.stashplayer.flutter`), `authenticated_url.dart`.
+  `dev.arsfeld.stashplayer.flutter`), `authenticated_url.dart`,
+  `channel_native_toolbar.dart` (`stash_player/toolbar` method channel
+  implementation), `channel_connection_sheet.dart` (`stash_player/connection_sheet`
+  method channel implementation).
 - **`lib/ui/`**: the drawn widget layer, per `PlatformDialect` (`adwaita`
   | `macos`, from `Theme.of(context).platform`): `theme/` (palettes, type
   scale, component themes, `buildAppTheme`), `icons/` (`AppIcon` → GNOME
@@ -108,7 +111,10 @@ small destination union instead.
   would otherwise drop the paint and draw the icon blank; a test guards
   this),
   `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
-  `ChannelNativeMenus`, drawn in tests), `widgets/` (strip controls,
+  `ChannelNativeMenus`, drawn in tests), `toolbar/` (the `AppToolbar` spec
+  of menu, toggle, action, search, group and space items; `NativeToolbar`
+  port that macOS fills as an `NSToolbar` over a method channel),
+  `widgets/` (strip controls,
   spinner, toast, tile, `AppDialog`/`AppDialogPage`, and the
   `AppPreferencesGroup`/`AppEntryRow` form rows). `lib/ui/` never imports
   Riverpod.
@@ -125,7 +131,12 @@ small destination union instead.
   when a GTK popup's grab fails, so `ChannelNativeMenus` falls back to
   `DrawnMenus`), `stash_player/appearance` (OS accent colour, plus
   GNOME's UI font via the settings portal; `appearance_channel.cc`), and
-  on macOS `stash_player/updates` (Sparkle). The macOS menu bar is built
+  on macOS `stash_player/updates` (Sparkle), `stash_player/toolbar`
+  (`NativeToolbarChannel.swift`, the library's controls as an `NSToolbar`),
+  and `stash_player/connection_sheet` (`ConnectionSheetChannel.swift`, the
+  connection form as an AppKit sheet with rules kept in Dart by
+  `ConnectionSheetPresenter`). New Swift files need entries in
+  `Runner.xcodeproj/project.pbxproj`. The macOS menu bar is built
   in Dart (`lib/app/app_menu_bar.dart`), watching only `playing`/
   `muted` from the playback controller so it isn't re-sent
   to AppKit on every playback tick; it replaces `MainMenu.xib`'s bar at

@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers.dart';
 import '../../domain/connection.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/app_spinner.dart';
 import 'connection_controller.dart';
 import 'connection_form.dart';
+import 'connection_sheet_host.dart';
 
 /// The first-launch page, shown full-screen while no connection is saved.
-/// Changing an existing connection happens in `ConnectionSettingsDialog`,
-/// over the library, instead.
+/// On macOS the form is a native sheet (`ConnectionSheetHost`) over an
+/// empty window instead of drawn here. Changing an existing connection
+/// happens over the library instead: in `ConnectionSettingsDialog`, or the
+/// same native sheet on macOS.
 class ConnectionScreen extends ConsumerStatefulWidget {
   const ConnectionScreen({
     required this.onConnected,
@@ -43,6 +47,17 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // On macOS the form is a native sheet over an empty window.
+    if (ref.watch(connectionSheetProvider) != null) {
+      return ConnectionSheetHost(
+        open: true,
+        title: 'Connect to Stash',
+        confirmLabel: 'Connect',
+        cancellable: false,
+        onConnected: (_) => widget.onConnected(),
+        child: const Scaffold(body: SizedBox.expand()),
+      );
+    }
     ref.listen<ConnectionPhase>(
       connectionControllerProvider.select((value) => value.state.phase),
       (previous, next) {

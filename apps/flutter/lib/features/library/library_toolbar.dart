@@ -8,6 +8,8 @@ import '../../ui/menu/app_menu.dart';
 import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/theme/platform_dialect.dart';
+import '../../ui/toolbar/app_toolbar.dart';
+import '../../ui/toolbar/native_toolbar.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
 
@@ -55,6 +57,12 @@ bool? cycleOrganized(bool? current) => switch (current) {
 /// page's own [FocusTraversalGroup], where explicit [FocusTraversalOrder]
 /// values below pin the required Tab sequence regardless of which
 /// visual row a control currently renders in.
+///
+/// On macOS, where the app provides a [NativeToolbarScope], the controls
+/// are published to the window's `NSToolbar` instead of being drawn: the
+/// strip keeps only its empty titlebar band, and AppKit's own overflow
+/// menu replaces the narrow layout. If the native side reports itself
+/// unavailable, the drawn strip comes back.
 class LibraryToolbar extends StatefulWidget {
   const LibraryToolbar({
     required this.filter,
@@ -69,6 +77,7 @@ class LibraryToolbar extends StatefulWidget {
     required this.onScan,
     required this.onOpenTasks,
     required this.onOpenSettings,
+    this.publishNative = true,
     super.key,
   });
 
@@ -88,13 +97,19 @@ class LibraryToolbar extends StatefulWidget {
   /// Starts a scan. Null while one cannot start, which disables the button.
   final VoidCallback? onScan;
 
-  /// Opens the Tasks popover, anchored to the context it is handed (the
-  /// Tasks button's own).
-  final void Function(BuildContext anchor) onOpenTasks;
+  /// Opens the Tasks popover under [anchor], in global logical
+  /// coordinates.
+  final void Function(BuildContext context, Rect anchor) onOpenTasks;
 
   /// Opens connection settings. Offered as Preferences in GNOME's main
   /// menu at the end of the strip.
   final VoidCallback onOpenSettings;
+
+  /// Whether this toolbar's controls should be in the native window
+  /// toolbar right now. False while a scene covers the library, which
+  /// keeps the library page mounted underneath. Ignored when there's no
+  /// `NativeToolbarScope`.
+  final bool publishNative;
 
   @override
   State<LibraryToolbar> createState() => _LibraryToolbarState();
@@ -123,10 +138,27 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   final _mainMenuFocusNode = FocusNode(debugLabel: 'library-main-menu');
   final _filtersFocusNode = FocusNode(debugLabel: 'library-filters');
 
+  /// The native window toolbar, when the app has one (macOS).
+  NativeToolbar? _native;
+
+  /// Set once the native toolbar reports itself unavailable. The strip
+  /// is drawn from then on.
+  bool _nativeFailed = false;
+
+  bool _publishScheduled = false;
+
+  bool get _usesNative => _native != null && !_nativeFailed;
+
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController(text: widget.filter.query);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _native = NativeToolbarScope.maybeOf(context);
   }
 
   @override
@@ -173,6 +205,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _tasksFocusNode.dispose();
     _mainMenuFocusNode.dispose();
     _filtersFocusNode.dispose();
+    if (_usesNative) unawaited(_native!.set(AppToolbar.empty));
     super.dispose();
   }
 
@@ -195,9 +228,30 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     });
   }
 
+  /// Sends the current spec after this frame. Coalesced to one send per
+  /// frame, and the channel itself drops a spec identical to the last.
+  void _schedulePublish() {
+    if (_publishScheduled) return;
+    _publishScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _publishScheduled = false;
+      if (!mounted || !_usesNative) return;
+      final ok = await _native!.set(
+        widget.publishNative ? _nativeSpec() : AppToolbar.empty,
+      );
+      if (!ok && mounted) setState(() => _nativeFailed = true);
+    });
+  }
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
+      if (_usesNative) {
+        _schedulePublish();
+        // The titlebar band stays Flutter's (it also moves the window);
+        // the controls in it are AppKit's.
+        return const AppWindowChrome(children: []);
+      }
       final wide = constraints.maxWidth >= libraryToolbarWideBreakpoint;
       return FocusTraversalGroup(
         policy: OrderedTraversalPolicy(),
@@ -324,6 +378,15 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     );
   }
 
+  static const _ratingOptions = [
+    AppMenuItem(value: 0, label: 'Any rating'),
+    AppMenuItem(value: 20, label: '1+ stars'),
+    AppMenuItem(value: 40, label: '2+ stars'),
+    AppMenuItem(value: 60, label: '3+ stars'),
+    AppMenuItem(value: 80, label: '4+ stars'),
+    AppMenuItem(value: 100, label: '5 stars'),
+  ];
+
   // `SceneFilter.minimumRating` is a raw `rating100` threshold (20 points
   // per "star"), not a 1-5 star count. `http_stash_api.dart`'s
   // `_findScenesVariables` sends it straight through as
@@ -340,14 +403,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     value: widget.filter.minimumRating ?? 0,
     onChanged: (value) =>
         widget.onMinimumRatingChanged(value == 0 ? null : value),
-    items: const [
-      AppMenuItem(value: 0, label: 'Any rating'),
-      AppMenuItem(value: 20, label: '1+ stars'),
-      AppMenuItem(value: 40, label: '2+ stars'),
-      AppMenuItem(value: 60, label: '3+ stars'),
-      AppMenuItem(value: 80, label: '4+ stars'),
-      AppMenuItem(value: 100, label: '5 stars'),
-    ],
+    items: _ratingOptions,
   );
 
   Widget _organizedToggle() {
@@ -414,7 +470,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
         tooltip: label,
         semanticLabel: label,
         badge: widget.tasksActive,
-        onPressed: () => widget.onOpenTasks(anchor),
+        onPressed: () => widget.onOpenTasks(anchor, globalRectOf(anchor)),
       ),
     );
   }
@@ -450,6 +506,128 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     selected: _filtersOpen,
     onPressed: () => setState(() => _filtersOpen = !_filtersOpen),
   );
+
+  /// This toolbar as native items: the filter controls as one group,
+  /// then Play random, search pushed to the trailing side, Scan and
+  /// Tasks. No main menu: on macOS, Settings… is in the app menu.
+  AppToolbar _nativeSpec() {
+    final filter = widget.filter;
+    final ascending = filter.direction == SortDirection.ascending;
+    final organized = filter.organized;
+    final ratingIndex = _ratingOptions.indexWhere(
+      (option) => option.value == (filter.minimumRating ?? 0),
+    );
+    return AppToolbar([
+      AppToolbarGroup(
+        id: 'filters',
+        label: 'Filters',
+        children: [
+          AppToolbarMenu(
+            id: 'sort',
+            label: 'Sort by',
+            options: [for (final sort in SceneSort.values) _sortLabel(sort)],
+            selected: SceneSort.values.indexOf(filter.sort),
+            onSelected: (index) =>
+                widget.onSortChanged(SceneSort.values[index]),
+          ),
+          AppToolbarAction(
+            id: 'direction',
+            label: ascending ? 'Sort ascending' : 'Sort descending',
+            icon: ascending ? AppIcon.sortAscending : AppIcon.sortDescending,
+            onPressed: (_) => widget.onDirectionChanged(
+              ascending ? SortDirection.descending : SortDirection.ascending,
+            ),
+          ),
+          AppToolbarMenu(
+            id: 'minimum-rating',
+            label: 'Minimum rating',
+            options: [for (final option in _ratingOptions) option.label],
+            selected: ratingIndex < 0 ? 0 : ratingIndex,
+            onSelected: (index) {
+              final value = _ratingOptions[index].value;
+              widget.onMinimumRatingChanged(value == 0 ? null : value);
+            },
+          ),
+          AppToolbarToggle(
+            id: 'organized',
+            label: switch (organized) {
+              null => 'Organized: any',
+              true => 'Organized: yes',
+              false => 'Organized: no',
+            },
+            icon: switch (organized) {
+              null => AppIcon.organizedAny,
+              true => AppIcon.organizedYes,
+              false => AppIcon.organizedNo,
+            },
+            selected: organized != null,
+            onPressed: () =>
+                widget.onOrganizedChanged(cycleOrganized(organized)),
+          ),
+          AppToolbarToggle(
+            id: 'hide-tracked',
+            label: 'Hide played',
+            tooltip: 'Hide scenes that have already been played',
+            icon: AppIcon.eyeOff,
+            selected: filter.hideTracked,
+            onPressed: () => widget.onHideTrackedChanged(!filter.hideTracked),
+          ),
+        ],
+      ),
+      AppToolbarAction(
+        id: 'play-random',
+        label: 'Play random',
+        icon: AppIcon.shuffle,
+        onPressed: (_) => widget.onPlayRandom(),
+      ),
+      const AppToolbarSpace(),
+      AppToolbarSearch(
+        id: 'search',
+        label: 'Search',
+        placeholder: 'Search scenes',
+        text: _searchController.text,
+        onChanged: (text) {
+          // Mirrored here first, so a publish before the debounce fires
+          // carries the typed text rather than the stale query.
+          _searchController.text = text;
+          _onSearchChanged(text);
+        },
+      ),
+      AppToolbarAction(
+        id: 'scan',
+        label: 'Scan library',
+        tooltip: widget.onScan == null
+            ? 'A task is already running'
+            : 'Scan library for new files',
+        icon: AppIcon.scan,
+        onPressed: widget.onScan == null ? null : (_) => widget.onScan!(),
+      ),
+      AppToolbarAction(
+        id: 'tasks',
+        label: 'Background tasks',
+        tooltip: widget.tasksActive
+            ? 'Background tasks, running'
+            : 'Background tasks',
+        icon: AppIcon.tasks,
+        badge: widget.tasksActive,
+        onPressed: (anchor) =>
+            widget.onOpenTasks(context, anchor ?? _trailingAnchor()),
+      ),
+    ]);
+  }
+
+  /// Where the Tasks popover hangs when the item was chosen without a
+  /// click to locate it (from the overflow menu, or with the keyboard):
+  /// the window's trailing edge, under the titlebar.
+  Rect _trailingAnchor() {
+    final width = MediaQuery.sizeOf(context).width;
+    return Rect.fromLTWH(
+      width - AppTokens.stripInset - AppTokens.controlBandHeight,
+      0,
+      AppTokens.controlBandHeight,
+      AppWindowChrome.stripHeightFor(TargetPlatform.macOS),
+    );
+  }
 
   String _sortLabel(SceneSort sort) => switch (sort) {
     SceneSort.date => 'Date',

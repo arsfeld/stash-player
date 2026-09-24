@@ -1,7 +1,9 @@
 # Connection settings as a dialog
 
 Status: approved design, 2026-09-24. Follows
-`2026-09-24-native-look-and-feel-design.md`.
+`2026-09-24-native-look-and-feel-design.md`. Amended by
+`2026-09-24-macos-native-controls-design.md`: on macOS the dialog is a
+native AppKit sheet, and the drawn macOS layout here is its fallback.
 
 ## Goal
 

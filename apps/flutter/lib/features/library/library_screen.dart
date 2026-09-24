@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +13,7 @@ import '../../services/thumbnail_repository.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/theme/platform_dialect.dart';
 import '../../ui/widgets/status_views.dart';
+import '../connection/connection_sheet_host.dart';
 import 'library_controller.dart';
 import 'library_state.dart';
 import 'library_toolbar.dart';
@@ -166,44 +169,62 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         .watch(thumbnailRepositoryProvider)
         .valueOrNull;
 
-    return Scaffold(
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LibraryToolbar(
-            filter: state.filter,
-            onQueryChanged: controller.setQuery,
-            onSortChanged: controller.setSort,
-            onDirectionChanged: controller.setDirection,
-            onMinimumRatingChanged: controller.setMinimumRating,
-            onOrganizedChanged: controller.setOrganized,
-            onHideTrackedChanged: controller.setHideTracked,
-            onPlayRandom: () => _handlePlayRandom(controller),
-            tasksActive: tasks.hasActiveWork,
-            onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
-            onOpenTasks: showTasksPopover,
-            onOpenSettings: () =>
-                ref.read(appControllerProvider.notifier).openSettings(),
-          ),
-          Expanded(
-            child: _LibraryBody(
-              state: state,
-              controller: controller,
-              thumbnailRepository: thumbnailRepository,
-              onClearFilters: controller.clearFilters,
-              onOpenScene: (sceneId, index) => ref
-                  .read(appControllerProvider.notifier)
-                  .openScene(
-                    sceneId,
-                    browse: BrowseContext(
-                      filter: state.filter,
-                      index: index,
-                      total: state.total,
-                    ),
-                  ),
+    return ConnectionSheetHost(
+      open: ref.watch(
+        appControllerProvider.select(
+          (d) => d is LibraryDestination && d.settingsOpen,
+        ),
+      ),
+      title: 'Connection',
+      confirmLabel: 'Save',
+      cancellable: true,
+      onConnected: (config) => unawaited(
+        ref.read(appControllerProvider.notifier).replaceConnection(config),
+      ),
+      onCancelled: () =>
+          ref.read(appControllerProvider.notifier).closeSettings(),
+      child: Scaffold(
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            LibraryToolbar(
+              filter: state.filter,
+              onQueryChanged: controller.setQuery,
+              onSortChanged: controller.setSort,
+              onDirectionChanged: controller.setDirection,
+              onMinimumRatingChanged: controller.setMinimumRating,
+              onOrganizedChanged: controller.setOrganized,
+              onHideTrackedChanged: controller.setHideTracked,
+              onPlayRandom: () => _handlePlayRandom(controller),
+              tasksActive: tasks.hasActiveWork,
+              onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
+              publishNative: ref.watch(
+                appControllerProvider.select((d) => d is! SceneDestination),
+              ),
+              onOpenTasks: showTasksPopoverAt,
+              onOpenSettings: () =>
+                  ref.read(appControllerProvider.notifier).openSettings(),
             ),
-          ),
-        ],
+            Expanded(
+              child: _LibraryBody(
+                state: state,
+                controller: controller,
+                thumbnailRepository: thumbnailRepository,
+                onClearFilters: controller.clearFilters,
+                onOpenScene: (sceneId, index) => ref
+                    .read(appControllerProvider.notifier)
+                    .openScene(
+                      sceneId,
+                      browse: BrowseContext(
+                        filter: state.filter,
+                        index: index,
+                        total: state.total,
+                      ),
+                    ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

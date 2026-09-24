@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:stash_player_flutter/main.dart' as app;
@@ -54,7 +57,26 @@ void main() {
 
       // Stable widget key (Task 7), not a text lookup — the search field
       // has no visible label text that would work as a finder.
-      await tester.enterText(find.byKey(const Key('library-search')), 'Kyoto');
+      // On macOS search is the native toolbar's NSSearchField, which a
+      // widget test can't type into, so deliver the event the runner
+      // would send.
+      if (Platform.isMacOS) {
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          'stash_player/toolbar',
+          const StandardMethodCodec().encodeMethodCall(
+            const MethodCall('searchChanged', {
+              'id': 'search',
+              'text': 'Kyoto',
+            }),
+          ),
+          (_) {},
+        );
+      } else {
+        await tester.enterText(
+          find.byKey(const Key('library-search')),
+          'Kyoto',
+        );
+      }
       // `LibraryToolbar` debounces search input by 250ms before it
       // forwards the query — see `_LibraryToolbarState._onSearchChanged`.
       await tester.pump(const Duration(milliseconds: 300));

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/system_appearance.dart';
 import '../ui/menu/native_menus.dart';
 import '../ui/theme/app_theme.dart';
+import '../ui/toolbar/native_toolbar.dart';
 import 'app_controller.dart';
 import 'app_menu_bar.dart';
 import 'app_router.dart';
@@ -34,6 +35,7 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
         ref.watch(systemAppearanceProvider).valueOrNull ??
         SystemAppearance.none;
     final nativeMenus = ref.watch(nativeMenusProvider);
+    final nativeToolbar = ref.watch(nativeToolbarProvider);
     ThemeData themeFor(Brightness brightness) => buildAppTheme(
       brightness,
       accent: appearance.accent,
@@ -47,10 +49,15 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
         themeMode: ThemeMode.system,
         theme: themeFor(Brightness.light),
         darkTheme: themeFor(Brightness.dark),
-        builder: (context, child) => NativeMenusScope(
-          menus: nativeMenus,
-          child: ToastHost(child: child!),
-        ),
+        builder: (context, child) {
+          final content = NativeMenusScope(
+            menus: nativeMenus,
+            child: ToastHost(child: child!),
+          );
+          return nativeToolbar == null
+              ? content
+              : NativeToolbarScope(toolbar: nativeToolbar, child: content);
+        },
         home: const AppRouter(),
       ),
     );
