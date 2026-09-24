@@ -79,12 +79,25 @@ class ConnectionForm extends ConsumerStatefulWidget {
 
 class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   final _apiKeyFocusNode = FocusNode();
+  final _serverUrlFocusNode = FocusNode();
   var _showApiKey = false;
+
+  /// True from `initState` until the `load()` this form kicked off (when
+  /// [ConnectionForm.loadOnMount]) resolves.
+  ///
+  /// The `ConnectionController` is shared across dialog opens rather than
+  /// recreated per dialog instance, so on a reopen its state can still
+  /// carry a previous attempt's fieldError/proxyFieldError/failure until
+  /// this fresh load replaces it. While this is true the form ignores
+  /// those fields rather than flash an error that was never true of the
+  /// connection it's about to load.
+  var _awaitingInitialLoad = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.loadOnMount) {
+      _awaitingInitialLoad = true;
       // Fire-and-forget: `load()` never touches provider state before its
       // first `await` (the controller's loading phase is reserved for
       // `testAndSave`, not this background fetch; see its doc comment),
@@ -97,6 +110,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   @override
   void dispose() {
     _apiKeyFocusNode.dispose();
+    _serverUrlFocusNode.dispose();
     super.dispose();
   }
 
@@ -105,13 +119,33 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     if (widget.loadOnMount) {
       ref.listen<ConnectionState>(
         connectionControllerProvider.select((value) => value.state),
-        (previous, next) => widget.fields.applyLoaded(next.config),
+        (previous, next) {
+          widget.fields.applyLoaded(next.config);
+          if (_awaitingInitialLoad) {
+            setState(() => _awaitingInitialLoad = false);
+          }
+        },
       );
     }
+    ref.listen<ConnectionPhase>(
+      connectionControllerProvider.select((value) => value.state.phase),
+      (previous, next) {
+        // The fields disable (and so lose focus) for the duration of a
+        // test; once it fails they re-enable, but nothing else gives
+        // focus back, leaving the user with no cursor to correct the
+        // entry with until they click into a field again.
+        if (next == ConnectionPhase.failed) {
+          _serverUrlFocusNode.requestFocus();
+        }
+      },
+    );
     final state = ref.watch(
       connectionControllerProvider.select((value) => value.state),
     );
     final enabled = state.phase != ConnectionPhase.loading;
+    final fieldError = _awaitingInitialLoad ? null : state.fieldError;
+    final proxyFieldError = _awaitingInitialLoad ? null : state.proxyFieldError;
+    final failureText = _awaitingInitialLoad ? null : state.failure;
     final fields = widget.fields;
 
     return Column(
@@ -125,11 +159,12 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
               fieldKey: const Key('connection-server-url'),
               label: 'Server URL',
               controller: fields.serverUrl,
+              focusNode: _serverUrlFocusNode,
               enabled: enabled,
               keyboardType: TextInputType.url,
               textInputAction: TextInputAction.next,
               onSubmitted: (_) => _apiKeyFocusNode.requestFocus(),
-              errorText: state.fieldError,
+              errorText: fieldError,
             ),
             AppEntryRow(
               fieldKey: const Key('connection-api-key'),
@@ -165,11 +200,11 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
               controller: fields.socksProxy,
               enabled: enabled,
               textInputAction: TextInputAction.done,
-              errorText: state.proxyFieldError,
+              errorText: proxyFieldError,
             ),
           ],
         ),
-        if (state.failure case final String failure) ...[
+        if (failureText case final String failure) ...[
           const SizedBox(height: AppTokens.space4),
           Text(
             failure,

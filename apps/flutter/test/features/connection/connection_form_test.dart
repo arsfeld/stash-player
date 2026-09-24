@@ -160,6 +160,67 @@ void main() {
     expect(fields.apiKey.text, 'loaded-key');
   });
 
+  testWidgets(
+    'a reopened form does not flash the previous attempt\'s error before '
+    'its own load() resolves (final review §1)',
+    (tester) async {
+      final store = FakeConnectionStore();
+      final controller = ConnectionController(
+        store: store,
+        environment: const {},
+        apiFactory: (_) => FakeStashApi(versionValue: 'v0.31.0'),
+      );
+      // A failed Save from a previous open of the form, still sitting on
+      // the shared controller: only the form/fields are torn down and
+      // recreated on reopen, not the controller.
+      await controller.testAndSave(
+        const ConnectionConfig(serverUrl: 'not a url'),
+      );
+      expect(controller.state.fieldError, isNotNull);
+
+      await _pumpForm(tester, controller: controller, loadOnMount: true);
+
+      // Reopening starts a fresh load(); until it resolves, the stale
+      // error from the previous attempt must not show.
+      expect(
+        find.text('Enter a valid http or https server URL.'),
+        findsNothing,
+      );
+
+      await tester.pump();
+
+      // And it stays gone once the load resolves.
+      expect(
+        find.text('Enter a valid http or https server URL.'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'restores focus to the URL field after a failed test (final review §4: '
+    'fields disable while loading, which drops focus, and nothing gave it '
+    'back once they re-enabled)',
+    (tester) async {
+      final controller = ConnectionController(
+        store: FakeConnectionStore(),
+        environment: const {},
+        apiFactory: (_) =>
+            FakeStashApi(versionFailure: const TransportFailure('down')),
+      );
+      final fields = await _pumpForm(tester, controller: controller);
+
+      fields.serverUrl.text = 'https://stash.test';
+      await controller.testAndSave(fields.current);
+      await tester.pump();
+
+      expect(
+        tester.widget<TextField>(_serverUrlField).focusNode!.hasFocus,
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('a late load does not clobber text already typed', (
     tester,
   ) async {
