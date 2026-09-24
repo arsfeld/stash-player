@@ -76,6 +76,10 @@ mutation MetadataScan($input: ScanMetadataInput!) {
 }
 ''';
 
+// `rescan` is omitted from the `scan { ... }` selection on purpose: Stash's
+// `ScanMetadataOptions` does have a `rescan` field, but the web UI's own
+// `ConfigDefaultSettingsData` fragment omits it, so server defaults never
+// set `rescan` there either. Don't "fix" this by adding it back.
 const String scanDefaultsDocument = r'''
 query ScanDefaults {
   configuration {
