@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ui/theme/app_tokens.dart';
 import '../ui/widgets/app_toast.dart';
 import 'notices.dart';
 
@@ -49,13 +50,19 @@ class _ToastHostState extends ConsumerState<ToastHost> {
     });
     final theme = Theme.of(context);
     final notice = _notice;
+    // On macOS the top strip doubles as the titlebar (see
+    // `AppTokens.macOSStripHeight`), so a top-aligned toast needs that
+    // much extra clearance or it paints under the strip's own controls.
+    final topInset = theme.platform == TargetPlatform.macOS
+        ? 12 + AppTokens.macOSStripHeight
+        : 12.0;
     return Stack(
       children: [
         widget.child,
         Positioned.fill(
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.fromLTRB(12, topInset, 12, 12),
               child: Align(
                 alignment: AppToast.alignmentFor(theme.platform),
                 child: AnimatedSwitcher(

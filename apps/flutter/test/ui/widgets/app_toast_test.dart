@@ -29,6 +29,16 @@ void main() {
     expect(find.text('Saved'), findsOneWidget);
   });
 
+  testWidgets('the toast announces itself to screen readers', (tester) async {
+    await _pump(tester, TargetPlatform.linux);
+    final semantics = tester.widget<Semantics>(
+      find
+          .ancestor(of: find.byType(Material), matching: find.byType(Semantics))
+          .first,
+    );
+    expect(semantics.properties.liveRegion, isTrue);
+  });
+
   testWidgets('macOS toasts are rounded HUD panels', (tester) async {
     final material = await _pump(tester, TargetPlatform.macOS);
     expect(

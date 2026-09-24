@@ -35,21 +35,24 @@ class AppToast extends StatelessWidget {
     final foreground = background != null || adwaita || dark
         ? const Color(0xFFFFFFFF)
         : theme.colorScheme.onSurface;
-    return Material(
-      color: fill,
-      elevation: adwaita ? 0 : 6,
-      shadowColor: const Color(0x66000000),
-      shape: adwaita
-          ? const StadiumBorder()
-          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 38, maxWidth: 480),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(color: foreground),
+    return Semantics(
+      liveRegion: true,
+      child: Material(
+        color: fill,
+        elevation: adwaita ? 0 : 6,
+        shadowColor: const Color(0x66000000),
+        shape: adwaita
+            ? const StadiumBorder()
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 38, maxWidth: 480),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(color: foreground),
+            ),
           ),
         ),
       ),
