@@ -116,11 +116,7 @@ modules:
       # (for its own version); the build sandbox's uid doesn't own it.
       - git config --global --add safe.directory '*'
       - flutter/bin/flutter config --no-analytics --no-cli-animations
-      # Not `--enforce-lockfile` (yet): pubspec.lock was resolved by a newer
-      # Flutter and pins meta 1.18.0 / test_api 0.7.11, while Flutter 3.41.6's
-      # SDK pins meta 1.17.0 / test_api 0.7.10, so the strict mode refuses to
-      # resolve. Restore the flag once the lockfile is regenerated with 3.41.6.
-      - cd app && ../flutter/bin/flutter pub get
+      - cd app && ../flutter/bin/flutter pub get --enforce-lockfile
       - cd app && ../flutter/bin/flutter build linux --release
       - mkdir -p /app/stash-player
       - cp -a app/build/linux/$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')/release/bundle/.
