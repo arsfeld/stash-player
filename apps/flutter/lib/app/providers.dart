@@ -8,6 +8,7 @@ import 'package:http/io_client.dart';
 import '../domain/connection.dart';
 import '../domain/system_appearance.dart';
 import '../features/connection/connection_controller.dart';
+import '../services/channel_native_menus.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
@@ -16,6 +17,8 @@ import '../services/stash_api.dart';
 import '../services/system_appearance_channel.dart';
 import '../services/thumbnail_repository.dart';
 import '../shared/diagnostics.dart';
+import '../ui/menu/drawn_menus.dart';
+import '../ui/menu/native_menus.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -157,3 +160,13 @@ final systemAppearanceProvider = StreamProvider<SystemAppearance>((ref) {
     ),
   );
 });
+
+/// How popup menus are shown: natively on the two desktop platforms the
+/// runners implement the channel for, drawn everywhere else (including
+/// tests, which run as Android).
+final nativeMenusProvider = Provider<NativeMenus>(
+  (ref) => switch (defaultTargetPlatform) {
+    TargetPlatform.linux || TargetPlatform.macOS => ChannelNativeMenus(),
+    _ => const DrawnMenus(),
+  },
+);

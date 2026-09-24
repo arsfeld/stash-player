@@ -5,6 +5,7 @@ class MainFlutterWindow: NSWindow {
   // Retained for the window's lifetime: FlutterEventChannel holds its
   // handler weakly.
   private let appearance = AppearanceStreamHandler()
+  private var nativeMenus: NativeMenuChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -44,6 +45,10 @@ class MainFlutterWindow: NSWindow {
       name: "stash_player/appearance",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     ).setStreamHandler(appearance)
+    nativeMenus = NativeMenuChannel(
+      messenger: flutterViewController.engine.binaryMessenger,
+      view: flutterViewController.view
+    )
 
     super.awakeFromNib()
   }
@@ -127,5 +132,76 @@ final class AppearanceStreamHandler: NSObject, FlutterStreamHandler {
     let argb = (0xFF << 24) | (channel(color.redComponent) << 16)
       | (channel(color.greenComponent) << 8) | channel(color.blueComponent)
     sink?(["accent": argb, "fontName": NSNull()])
+  }
+}
+
+/// Shows the menus Dart describes on `stash_player/menu` as real `NSMenu`
+/// popups, and answers with the chosen item's id (nil when dismissed).
+final class NativeMenuChannel: NSObject {
+  private weak var view: NSView?
+  private var chosen: Int?
+  private let channel: FlutterMethodChannel
+
+  init(messenger: FlutterBinaryMessenger, view: NSView) {
+    self.view = view
+    channel = FlutterMethodChannel(name: "stash_player/menu", binaryMessenger: messenger)
+    super.init()
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: FlutterResult) {
+    guard call.method == "show" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard let view,
+      let args = call.arguments as? [String: Any],
+      let anchor = args["anchor"] as? [String: Double],
+      let items = args["items"] as? [[String: Any]]
+    else {
+      result(FlutterError(code: "bad-args", message: "show needs anchor and items", details: nil))
+      return
+    }
+
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    for item in items {
+      if item["type"] as? String == "separator" {
+        menu.addItem(.separator())
+        continue
+      }
+      let entry = NSMenuItem(
+        title: item["label"] as? String ?? "",
+        action: #selector(select(_:)),
+        keyEquivalent: ""
+      )
+      entry.target = self
+      entry.tag = item["id"] as? Int ?? -1
+      entry.isEnabled = item["enabled"] as? Bool ?? true
+      if let checked = item["checked"] as? Bool {
+        entry.state = checked ? .on : .off
+      }
+      menu.addItem(entry)
+    }
+
+    // Flutter's anchor is top-left-origin; AppKit views are usually
+    // bottom-left. The menu's top-left corner goes at the anchor's
+    // bottom-left.
+    let bottom = (anchor["y"] ?? 0) + (anchor["height"] ?? 0)
+    let point = NSPoint(
+      x: anchor["x"] ?? 0,
+      y: view.isFlipped ? bottom : view.bounds.height - bottom
+    )
+    chosen = nil
+    // popUp runs its own tracking loop and only returns once the menu has
+    // closed, so `chosen` is final by the next line.
+    menu.popUp(positioning: nil, at: point, in: view)
+    result(chosen)
+  }
+
+  @objc private func select(_ sender: NSMenuItem) {
+    chosen = sender.tag
   }
 }

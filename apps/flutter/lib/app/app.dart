@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/system_appearance.dart';
+import '../ui/menu/native_menus.dart';
 import '../ui/theme/app_theme.dart';
 import 'app_controller.dart';
 import 'app_router.dart';
@@ -43,7 +44,10 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
       themeMode: ThemeMode.system,
       theme: themeFor(Brightness.light),
       darkTheme: themeFor(Brightness.dark),
-      builder: (context, child) => ToastHost(child: child!),
+      builder: (context, child) => NativeMenusScope(
+        menus: ref.watch(nativeMenusProvider),
+        child: ToastHost(child: child!),
+      ),
       home: const AppRouter(),
     );
   }
