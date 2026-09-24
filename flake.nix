@@ -3,13 +3,18 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Tooling for `nix run .#flatpak` only, locked separately so it can move
+    # without moving `nixpkgs` (which pins the Flutter 3.41.6 CI uses). The
+    # appstream 1.1.2 in the main pin can't read SVG icons during
+    # `appstreamcli compose` (file-read-error), which fails every build.
+    nixpkgs-flatpak.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, rust-overlay }:
+  outputs = { self, nixpkgs, nixpkgs-flatpak, rust-overlay }:
     let
       linuxSystems  = [ "x86_64-linux" "aarch64-linux" ];
       darwinSystems = [ "aarch64-darwin" "x86_64-darwin" ];
@@ -38,10 +43,14 @@
       repoDir  = "build-aux/repo";
 
       flatpakBuildFor = system:
-        let pkgs = pkgsFor system; in
+        let
+          pkgs = pkgsFor system;
+          flatpakPkgs = nixpkgs-flatpak.legacyPackages.${system};
+        in
         pkgs.writeShellApplication {
           name = "stash-player-flatpak";
-          runtimeInputs = with pkgs; [ flatpak-builder appstream flatpak ];
+          # From `nixpkgs-flatpak`, not `pkgs` — see the input's comment.
+          runtimeInputs = with flatpakPkgs; [ flatpak-builder appstream flatpak ];
           text = ''
             set -euo pipefail
             cd "$(git rev-parse --show-toplevel)"
