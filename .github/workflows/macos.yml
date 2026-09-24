@@ -184,6 +184,11 @@ jobs:
           # No sandbox and no get-task-allow may reach a shipped bundle.
           ENTS=$(codesign -d --entitlements - --xml "$APP_PATH" 2>/dev/null || true)
           echo "$ENTS"
+          # A failed or empty dump must not pass as "no bad entitlements".
+          if [[ "$ENTS" != *"<dict"* ]]; then
+            echo "could not read the bundle's entitlements" >&2
+            exit 1
+          fi
           if echo "$ENTS" | grep -qE "app-sandbox|get-task-allow"; then
             echo "unexpected entitlement in release bundle" >&2
             exit 1
@@ -195,8 +200,9 @@ jobs:
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
           ls -lh "$ZIP_PATH"
 
-      # Notarize only on `v*` tags — pushes/PRs are signed but skip the
-      # 1–5 min round-trip to Apple's notary service.
+      # Notarize on `v*` tags, or on a workflow_dispatch run with
+      # `notarize: true` — other pushes/PRs are signed but skip the 1–5 min
+      # round-trip to Apple's notary service.
       - name: Notarize and staple
         if: steps.signing.outputs.mode == 'developer-id' && (startsWith(github.ref, 'refs/tags/v') || inputs.notarize)
         env:
