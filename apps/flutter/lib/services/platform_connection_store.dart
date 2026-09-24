@@ -103,14 +103,19 @@ class PlatformConnectionStore implements ConnectionStore {
   }
 
   /// The one-time import described at [legacyImportAttemptedPreferenceKey].
-  /// Never throws: any failure leaves the user on the connection screen,
-  /// exactly as if there had been nothing to import.
+  /// The import itself never throws: any failure leaves the user on the
+  /// connection screen, exactly as if there had been nothing to import.
+  /// Once the import has been attempted, this is just the stored
+  /// connection again, freshly read.
   Future<ConnectionConfig?> _importLegacy() async {
     final importer = _legacyImporter;
     if (importer == null) return null;
     if (await _preferences.getBool(legacyImportAttemptedPreferenceKey) ??
         false) {
-      return null;
+      // Re-read rather than returning null: a concurrent load() whose
+      // `_readStored()` was still in flight when another load()'s import
+      // saved and settled lands here holding a stale, pre-save empty read.
+      return _readStored();
     }
     await _preferences.setBool(legacyImportAttemptedPreferenceKey, true);
     try {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -185,6 +186,27 @@ void main() {
       expect(secrets.reads, 1);
     });
 
+    test('a load whose stored read started before a concurrent import '
+        'finished sees the imported connection, not its stale read', () async {
+      final preferences = _GatedPreferences(serverUrlPreferenceKey);
+      SharedPreferencesAsyncPlatform.instance = preferences;
+      final store = buildImportingStore(_StubSecrets('legacy-key'));
+      const expected = ConnectionConfig(
+        serverUrl: 'https://legacy.lan',
+        apiKey: 'legacy-key',
+        socksProxy: '127.0.0.1:1055',
+      );
+
+      final first = store.load(const {});
+      // Its server-URL read captures the pre-import (empty) value, then is
+      // held until the first load's import has saved and settled.
+      final second = store.load(const {});
+
+      expect(await first, expected);
+      preferences.release();
+      expect(await second, expected);
+    });
+
     test('a preferences failure during the import is retried on the next '
         'load(), not replayed forever', () async {
       SharedPreferencesAsyncPlatform.instance = _FlakyPreferences(
@@ -248,6 +270,29 @@ base class _FlakyPreferences extends InMemorySharedPreferencesAsync {
       return Future<bool>.error(Exception('preferences unavailable'));
     }
     return super.setString(key, value, options);
+  }
+}
+
+/// Holds the *second* `getString` call for [_gatedKey] until [release],
+/// answering with the value it had when called — a slow read that lands
+/// after a concurrent writer has moved on.
+base class _GatedPreferences extends InMemorySharedPreferencesAsync {
+  _GatedPreferences(this._gatedKey) : super.empty();
+
+  final String _gatedKey;
+  final _gate = Completer<void>();
+  int _calls = 0;
+
+  void release() => _gate.complete();
+
+  @override
+  Future<String?> getString(
+    String key,
+    SharedPreferencesOptions options,
+  ) async {
+    final value = super.getString(key, options);
+    if (key == _gatedKey && ++_calls == 2) await _gate.future;
+    return value;
   }
 }
 
