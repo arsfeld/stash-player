@@ -123,7 +123,7 @@ small destination union instead.
   GNOME's UI font via the settings portal; `appearance_channel.cc`), and
   on macOS `stash_player/updates` (Sparkle). The macOS menu bar is built
   in Dart (`lib/app/app_menu_bar.dart`), watching only `playing`/
-  `muted`/`fullscreen` from the playback controller so it isn't re-sent
+  `muted` from the playback controller so it isn't re-sent
   to AppKit on every playback tick; it replaces `MainMenu.xib`'s bar at
   startup, and the xib itself is trimmed to its app menu only.
 - **Flatpak's libmpv stack** — `build-aux/dev.arsfeld.stash-player.yml`

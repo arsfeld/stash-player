@@ -156,8 +156,8 @@ void main() {
       expect(afterMount, greaterThan(0));
 
       // Position/buffered events fire many times a second during real
-      // playback; none of the three fields the menu bar shows
-      // (playing/muted/fullscreen) changes, so this must not resend the
+      // playback; neither field the menu bar shows
+      // (playing/muted) changes, so this must not resend the
       // menu bar to AppKit.
       engine.emitPosition(const Duration(seconds: 5));
       engine.emitBuffered(const Duration(seconds: 10));
@@ -168,7 +168,7 @@ void main() {
         reason: 'a position/buffered-only change must not resend the menu',
       );
 
-      // Muted is one of the three shown fields, so toggling it must.
+      // Muted is one of the two shown fields, so toggling it must.
       await controller.toggleMute();
       await tester.pump();
       expect(
