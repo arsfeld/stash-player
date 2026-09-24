@@ -40,9 +40,11 @@ class PlatformConnectionStore implements ConnectionStore {
   /// `AppController.bootstrap()` and `ConnectionController.load()` calling
   /// `load()` concurrently on first launch share it rather than both
   /// reading [legacyImportAttemptedPreferenceKey] as unset and running the
-  /// import twice. Cleared once that run resolves — [legacyImportAttemptedPreferenceKey]
-  /// stays the source of truth for "already attempted" across separate
-  /// calls, this only closes the race within one.
+  /// import twice. Cleared once that run settles, whether it resolves or
+  /// throws — [legacyImportAttemptedPreferenceKey] stays the source of
+  /// truth for "already attempted" across separate calls; this only closes
+  /// the race within one, and must not turn a transient failure into a
+  /// permanently cached one.
   Future<ConnectionConfig?>? _legacyImport;
 
   static Future<PlatformConnectionStore> create() async =>
@@ -74,9 +76,17 @@ class PlatformConnectionStore implements ConnectionStore {
   Future<ConnectionConfig> loadStored() async {
     final stored = await _readStored();
     if (stored.serverUrl.isNotEmpty) return stored;
-    final imported = await (_legacyImport ??= _importLegacy());
-    _legacyImport = null;
-    return imported ?? stored;
+    try {
+      final imported = await (_legacyImport ??= _importLegacy());
+      return imported ?? stored;
+    } finally {
+      // `finally` rather than after the await: `_importLegacy`'s own
+      // preference reads/writes aren't wrapped in its try/catch (only the
+      // actual import is), so a rejected future must still be cleared —
+      // otherwise every later load() on this store would replay the same
+      // failure forever instead of retrying.
+      _legacyImport = null;
+    }
   }
 
   Future<ConnectionConfig> _readStored() async {

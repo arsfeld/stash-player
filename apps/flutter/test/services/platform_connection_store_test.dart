@@ -163,7 +163,51 @@ void main() {
       expect(results, [expected, expected]);
       expect(secrets.reads, 1);
     });
+
+    test('a preferences failure during the import is retried on the next '
+        'load(), not replayed forever', () async {
+      SharedPreferencesAsyncPlatform.instance = _FlakyPreferences(
+        legacyImportAttemptedPreferenceKey,
+      );
+      final secrets = _StubSecrets('legacy-key');
+      final store = buildImportingStore(secrets);
+
+      await expectLater(store.load(const {}), throwsA(anything));
+
+      expect(
+        await store.load(const {}),
+        const ConnectionConfig(
+          serverUrl: 'https://legacy.lan',
+          apiKey: 'legacy-key',
+          socksProxy: '127.0.0.1:1055',
+        ),
+      );
+      expect(secrets.reads, 1);
+    });
   });
+}
+
+/// Throws once on the first `getBool` call for [_failingKey], then answers
+/// like a normal in-memory store. Stands in for a preferences backend that
+/// glitches on `_importLegacy`'s unguarded read of
+/// [legacyImportAttemptedPreferenceKey] (the reads/writes around that flag
+/// aren't inside its try/catch — only the actual import is), so a `load()`
+/// call can be asserted to retry afterwards rather than replay the same
+/// rejected import forever.
+base class _FlakyPreferences extends InMemorySharedPreferencesAsync {
+  _FlakyPreferences(this._failingKey) : super.empty();
+
+  final String _failingKey;
+  bool _thrown = false;
+
+  @override
+  Future<bool?> getBool(String key, SharedPreferencesOptions options) {
+    if (key == _failingKey && !_thrown) {
+      _thrown = true;
+      return Future<bool?>.error(Exception('preferences unavailable'));
+    }
+    return super.getBool(key, options);
+  }
 }
 
 class _StubSecrets implements LegacySecretReader {
