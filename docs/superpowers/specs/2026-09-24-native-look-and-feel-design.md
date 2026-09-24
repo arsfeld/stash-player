@@ -22,7 +22,7 @@ native runners change, and every menu's behaviour is defined once in Dart.
 | Accent colour | Read from the OS, live; falls back to `#3584E4` |
 | UI font | GNOME's interface font on Linux (from the settings portal); the system font on macOS |
 | Icons | GNOME icon-development-kit (CC0) on Linux; Lucide (ISC) on macOS |
-| In-content native views | Not used (no `NSSlider` etc. platform views) |
+| In-content native views | Not used inside content; the macOS toolbar and connection sheet are native (see `2026-09-24-macos-native-controls-design.md`) |
 
 Out of scope: the Linux double titlebar (runner `GtkHeaderBar` plus the
 app's own strip), MPRIS / Now Playing / media keys, sleep inhibition,
@@ -33,8 +33,8 @@ chrome" and "OS integration" follow-ups.
 ## 1. Organizing rule
 
 - **Native**: anything the OS presents as its own popup: context and
-  dropdown menus, and the macOS menu bar. Alerts would join this list
-  when the app first needs one.
+  dropdown menus, the macOS menu bar, window toolbar and sheets. Alerts
+  would join this list when the app first needs one.
 - **Drawn to match**: anything inside the Flutter content: buttons, text
   fields, toasts, progress indicators, tooltips, icons, and
   content-bearing popovers (the tasks popover).
