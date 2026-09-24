@@ -88,8 +88,10 @@ jobs:
     permissions:
       contents: write
     # Shared with macos.yml's `appcast` job: both rewrite gh-pages, and this
-    # one force-pushes it. Concurrency groups are repo-wide, so the two never
-    # overlap.
+    # one force-pushes it. GitHub runs at most one job per concurrency group
+    # plus at most one pending behind it, so the two never run at once — but
+    # a queued run can be superseded by a newer one instead of running in
+    # order; either way gh-pages ends up with the newest tag's state.
     concurrency:
       group: appcast-publish
       cancel-in-progress: false
