@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      notarize:
+        description: "Notarize this build (release-candidate testing)"
+        type: boolean
+        default: false
 
 # Cancel in-flight builds on the same ref — macOS runner minutes are scarce.
 concurrency:
@@ -16,61 +21,26 @@ concurrency:
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-  # Match the Swift target's deployment floor (apps/macos/project.yml).
-  MACOSX_DEPLOYMENT_TARGET: "14.0"
-
 jobs:
   build:
     name: Build StashPlayer.app
-    # macos-15 is Apple Silicon and now ships multiple Xcode versions —
-    # the setup-xcode step below pins to a release that includes the
-    # macOS 26 (Tahoe) SDK so the player's `.glassEffect(_:in:)` calls
-    # resolve at compile time. The `if #available(macOS 26.0, *)` guard
-    # only gates *execution*; the symbol must still exist in the SDK
-    # being linked against. Matches the aarch64-apple-darwin staticlib
-    # that build-macos-xcframework.sh produces.
     runs-on: macos-15
     env:
-      APP_PATH: build-aux/macos-derived/Build/Products/Release/StashPlayer.app
+      DERIVED_DATA: apps/flutter/build/macos-derived
+      APP_PATH: apps/flutter/build/macos-derived/Build/Products/Release/StashPlayer.app
       ZIP_PATH: StashPlayer-macos-arm64.zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (macOS 26 SDK)
-        # Tahoe SDK is required because Scene/VisualEffectView.swift uses
-        # `.glassEffect(_:in:)` (macOS 26+). `latest-stable` picks the
-        # newest non-beta Xcode installed on the runner image; if the
-        # image ever lags and stops shipping Tahoe-capable Xcode, pin to
-        # an explicit version (e.g. xcode-version: "26.0") here.
-        uses: maxim-lobanov/setup-xcode@v1
+      # Same pin as flutter.yml and the Flatpak manifest; bump all three
+      # together with flake.lock.
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
         with:
-          xcode-version: latest-stable
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Bumped from `macos` after the previous cache poisoned
-          # ~/.cargo/bin (see cache-bin note below). Bump again if the
-          # restore ever lands a broken cargo shim.
-          shared-key: macos-v2
-          # Don't cache ~/.cargo/bin — rustup's shim binaries are
-          # hardlinks to a single `rustup-init`, and tar restores them
-          # as independent copies. The restored `cargo` then runs as
-          # rustup-init and rejects `cargo build` with "unexpected
-          # argument 'build'". The runner re-installs rustup each job
-          # anyway, so there's nothing to gain from caching this dir.
-          cache-bin: "false"
-
-      - name: Install xcodegen
-        run: brew install xcodegen
+          flutter-version: 3.41.6
+          channel: stable
+          cache: true
 
       # Fork PRs can't read repo secrets, so fall back to ad-hoc signing
       # there instead of failing the job. Same-repo pushes/PRs and tag
@@ -95,29 +65,24 @@ jobs:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
-      - name: Build stash-player-ffi xcframework
-        run: ./build-aux/build-macos-xcframework.sh
-
-      - name: Generate Xcode project
-        run: xcodegen generate
-        working-directory: apps/macos
+      # Generates macos/Flutter/ephemeral (FLUTTER_ROOT etc.) and the plugin
+      # registrant without building, so xcodebuild below owns signing.
+      - name: Prepare Flutter macOS project
+        working-directory: apps/flutter
+        run: |
+          flutter pub get
+          flutter build macos --release --config-only
+          cd macos && pod install
 
       - name: Build StashPlayer.app (Release)
         env:
           SIGN_MODE: ${{ steps.signing.outputs.mode }}
           DEVELOPMENT_TEAM_ID: ${{ secrets.MACOS_DEVELOPMENT_TEAM }}
-        # `Developer ID Application` matches as a prefix — xcodebuild picks
-        # the unique cert imported into the temp keychain. Hardened runtime
-        # is already enabled in project.yml; --timestamp gives us the
-        # secure timestamp notarytool requires.
         run: |
           set -euo pipefail
 
-          # Derive the marketing version from the tag (v0.3.0 → 0.3.0). On
-          # non-tag builds (push to main, PRs), fall back to 0.0.0 so the
-          # bundle still builds — Sparkle's appcast comparison never trips
-          # against 0.0.0 because the production appcast is only published
-          # from tag builds (see the `appcast` job).
+          # v1.2.3 → 1.2.3; non-tag builds get 0.0.0, which Sparkle never
+          # prefers over a published appcast item.
           VERSION="${GITHUB_REF_NAME#v}"
           if [[ -z "$VERSION" || "$VERSION" == "$GITHUB_REF_NAME" ]]; then
             VERSION="0.0.0"
@@ -128,128 +93,103 @@ jobs:
             SIGN_IDENTITY="Developer ID Application"
             TEAM_ID="$DEVELOPMENT_TEAM_ID"
             EXTRA_FLAGS="--timestamp"
-            # An explicit (empty) entitlements file is required for
-            # notarization — without one xcodebuild auto-injects
-            # `com.apple.security.get-task-allow=YES`, which the notary
-            # service rejects ("debugger-attachable" apps can't ship).
-            ENTITLEMENTS="$PWD/apps/macos/StashPlayer/StashPlayer.Release.entitlements"
           else
             SIGN_IDENTITY="-"
             TEAM_ID=""
             EXTRA_FLAGS=""
-            ENTITLEMENTS=""
           fi
 
-          # ARCHS=arm64 / ONLY_ACTIVE_ARCH=NO restricts to arm64 — Release
-          # would otherwise build a universal binary, but the xcframework
-          # only ships an aarch64-apple-darwin staticlib so x86_64 linking
-          # fails. Drop these once the build script lipos in x86_64.
-          # MARKETING_VERSION / CURRENT_PROJECT_VERSION flow through to
-          # Info.plist's $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
-          # substitutions declared in apps/macos/project.yml's info.properties.
+          # FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER feed Info.plist's
+          # CFBundleShortVersionString / CFBundleVersion. Both get the dotted
+          # version: Sparkle compares CFBundleVersion, and the SwiftUI
+          # releases already in the feed carry dotted values there.
+          # Entitlements and the hardened runtime come from the Runner's
+          # Release configuration (Release.entitlements, Release.xcconfig).
           xcodebuild \
-            -project apps/macos/StashPlayer.xcodeproj \
-            -scheme StashPlayer \
+            -workspace apps/flutter/macos/Runner.xcworkspace \
+            -scheme Runner \
             -configuration Release \
-            -derivedDataPath build-aux/macos-derived \
+            -derivedDataPath "$DERIVED_DATA" \
             -destination 'generic/platform=macOS' \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
-            MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$VERSION" \
+            FLUTTER_BUILD_NAME="$VERSION" \
+            FLUTTER_BUILD_NUMBER="$VERSION" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS" \
-            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
             OTHER_CODE_SIGN_FLAGS="$EXTRA_FLAGS" \
             build
 
-      - name: Verify Info.plist version (tag builds only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        # Cheap belt-and-suspenders check: if xcodegen ever regenerates the
-        # project and drops the $(MARKETING_VERSION) substitution from
-        # info.properties, the bundle would ship with the literal string,
-        # Sparkle would compare it against future appcast items, and the
-        # entire update channel would silently break. Fail the build loudly
-        # before notarization wastes anyone's time.
+      - name: Verify Info.plist identity and version
         run: |
           set -euo pipefail
-          EXPECTED="${GITHUB_REF_NAME#v}"
-          ACTUAL=$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")
-          if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "Info.plist CFBundleShortVersionString=$ACTUAL does not match tag $EXPECTED" >&2
-            exit 1
+          PLIST="$APP_PATH/Contents/Info.plist"
+          test "$(plutil -extract CFBundleIdentifier raw "$PLIST")" = "dev.arsfeld.stash-player"
+          test "$(plutil -extract SUFeedURL raw "$PLIST")" = "https://arsfeld.github.io/stash-player/appcast.xml"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            EXPECTED="${GITHUB_REF_NAME#v}"
+            for key in CFBundleShortVersionString CFBundleVersion; do
+              ACTUAL=$(plutil -extract "$key" raw "$PLIST")
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "Info.plist $key=$ACTUAL does not match tag $EXPECTED" >&2
+                exit 1
+              fi
+            done
           fi
-          echo "Info.plist version: $ACTUAL (matches tag)"
+          echo "Info.plist OK"
 
-      - name: Re-sign Sparkle.framework nested binaries
+      - name: Re-sign nested code
         if: steps.signing.outputs.mode == 'developer-id'
-        # Sparkle ships its nested helpers (Updater.app, Autoupdate, XPC
-        # services) pre-signed with the Sparkle project's cert and without
-        # a secure timestamp. SPM embeds the framework verbatim; xcodebuild
-        # signs the outer .app but does NOT recurse into the framework's
-        # bundled executables. Apple's notary service rejects the result
-        # with "not signed with a valid Developer ID certificate" + "the
-        # signature does not include a secure timestamp" for each of these
-        # nested binaries. Re-sign them deepest-first, then the framework,
-        # then the outer .app (so the framework's new signature is sealed
-        # into the app's signature).
-        env:
-          SIGN_MODE: ${{ steps.signing.outputs.mode }}
+        # Sparkle ships its helpers (Updater.app, Autoupdate, XPC services)
+        # signed by the Sparkle project without a secure timestamp, and
+        # the embed phase doesn't recurse into them; the notary service
+        # rejects the result. Re-sign deepest-first: Sparkle's helpers,
+        # then every embedded framework (Sparkle, media_kit's libmpv
+        # frameworks, plugin frameworks), then the outer app so its seal
+        # covers the new signatures.
         run: |
           set -euo pipefail
           SIGN_IDENTITY="Developer ID Application"
-          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
-          ENTITLEMENTS="$PWD/apps/macos/StashPlayer/StashPlayer.Release.entitlements"
+          ENTITLEMENTS="$PWD/apps/flutter/macos/Runner/Release.entitlements"
+          FRAMEWORKS="$APP_PATH/Contents/Frameworks"
+          SPARKLE_FW="$FRAMEWORKS/Sparkle.framework"
 
-          if [ ! -d "$SPARKLE_FW" ]; then
-            echo "No Sparkle.framework at $SPARKLE_FW — nothing to re-sign" >&2
-            exit 0
-          fi
-
-          # `Versions/B` is Sparkle 2.x's current-version directory; the
-          # symlink `Versions/Current` points at it. Sign through the
-          # versioned path so the symlinked references resolve to the
-          # re-signed copy.
-          NESTED=(
-            "Versions/B/XPCServices/Downloader.xpc"
-            "Versions/B/XPCServices/Installer.xpc"
-            "Versions/B/Autoupdate"
-            "Versions/B/Updater.app"
-          )
-
-          for item in "${NESTED[@]}"; do
-            target="$SPARKLE_FW/$item"
-            if [ -e "$target" ]; then
-              echo "==> Re-signing $item"
-              codesign --force --sign "$SIGN_IDENTITY" \
-                --timestamp --options runtime "$target"
+          for item in \
+            "Versions/B/XPCServices/Downloader.xpc" \
+            "Versions/B/XPCServices/Installer.xpc" \
+            "Versions/B/Autoupdate" \
+            "Versions/B/Updater.app"; do
+            if [ -e "$SPARKLE_FW/$item" ]; then
+              echo "==> Re-signing Sparkle $item"
+              codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime "$SPARKLE_FW/$item"
             fi
           done
 
-          echo "==> Re-signing Sparkle.framework"
-          codesign --force --sign "$SIGN_IDENTITY" \
-            --timestamp --options runtime "$SPARKLE_FW"
+          find "$FRAMEWORKS" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -print0 |
+            while IFS= read -r -d '' fw; do
+              echo "==> Re-signing $(basename "$fw")"
+              codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime "$fw"
+            done
 
-          echo "==> Re-signing outer StashPlayer.app"
-          codesign --force --sign "$SIGN_IDENTITY" \
-            --timestamp --options runtime \
-            --entitlements "$ENTITLEMENTS" \
-            "$APP_PATH"
+          echo "==> Re-signing StashPlayer.app"
+          codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime \
+            --entitlements "$ENTITLEMENTS" "$APP_PATH"
 
       - name: Verify signature
         if: steps.signing.outputs.mode == 'developer-id'
         run: |
           codesign -dv --verbose=4 "$APP_PATH"
-          # --deep --strict recurses into nested binaries — catches a
-          # missed Sparkle.framework re-sign before the much slower
-          # notarization round-trip does.
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          # No sandbox and no get-task-allow may reach a shipped bundle.
+          ENTS=$(codesign -d --entitlements - --xml "$APP_PATH" 2>/dev/null || true)
+          echo "$ENTS"
+          if echo "$ENTS" | grep -qE "app-sandbox|get-task-allow"; then
+            echo "unexpected entitlement in release bundle" >&2
+            exit 1
+          fi
 
       - name: Package .app into zip
-        # `ditto -c -k --keepParent` preserves symlinks and Apple metadata
-        # better than `zip` — important for a .app bundle.
         run: |
           test -d "$APP_PATH" || { echo "no .app at $APP_PATH" >&2; exit 1; }
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
@@ -258,7 +198,7 @@ jobs:
       # Notarize only on `v*` tags — pushes/PRs are signed but skip the
       # 1–5 min round-trip to Apple's notary service.
       - name: Notarize and staple
-        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.mode == 'developer-id'
+        if: steps.signing.outputs.mode == 'developer-id' && (startsWith(github.ref, 'refs/tags/v') || inputs.notarize)
         env:
           NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
@@ -268,9 +208,6 @@ jobs:
           echo "$NOTARY_KEY" | base64 --decode > "$KEY_PATH"
           trap 'rm -f "$KEY_PATH"' EXIT
 
-          # `--wait` blocks until Apple finishes (typically <5 min). Exits
-          # non-zero if status != Accepted; we still fetch the log either
-          # way so failures are debuggable from the run summary.
           set +e
           SUBMIT_OUT=$(xcrun notarytool submit "$ZIP_PATH" \
             --key "$KEY_PATH" \
@@ -295,14 +232,10 @@ jobs:
             exit "$RESULT"
           fi
 
-          # Staple the ticket onto the .app, then re-zip so consumers get
-          # an offline-validatable bundle (no network call on first launch).
           xcrun stapler staple "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
           rm -f "$ZIP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-
-          # Confirm Gatekeeper is happy with the stapled bundle.
           spctl --assess --type execute --verbose "$APP_PATH"
 
       - name: Upload .app artifact
