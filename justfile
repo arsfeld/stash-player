@@ -16,7 +16,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 flutter_dir := justfile_directory() / "apps/flutter"
-app_bundle := flutter_dir / "build/macos/Build/Products/Debug/Stash Player Flutter.app"
+app_bundle := flutter_dir / "build/macos/Build/Products/Debug/StashPlayer.app"
 linux_arch := if arch() == "x86_64" { "x64" } else if arch() == "aarch64" { "arm64" } else { arch() }
 linux_bundle := flutter_dir / "build/linux" / linux_arch / "debug/bundle/stash-player"
 
@@ -189,7 +189,7 @@ flutter-launch:
     fi
     echo "launching against {{ stash_url }}$route"
     exec env -i "${launch_env[@]}" \
-      "{{ app_bundle }}/Contents/MacOS/Stash Player Flutter"
+      "{{ app_bundle }}/Contents/MacOS/StashPlayer"
 
 # -------------------------------------------------------------------- rust
 

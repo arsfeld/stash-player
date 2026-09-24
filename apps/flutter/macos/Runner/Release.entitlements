@@ -1,16 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<!-- The app binds a loopback listener to front Stash for libmpv, which
-	     can only be pointed at an HTTP proxy. Without this the sandbox
-	     refuses the bind and a SOCKS-only server becomes unreachable in
-	     release builds, while working fine in debug. -->
-	<key>com.apple.security.network.server</key>
-	<true/>
-</dict>
+<!-- Deliberately empty. Distributed with Developer ID, not the Mac App
+     Store, so there is no App Sandbox: Sparkle's installer and the legacy
+     keychain import both need to run unsandboxed. The file must still exist
+     and be passed explicitly — without it xcodebuild injects
+     com.apple.security.get-task-allow, which notarization rejects. -->
+<dict/>
 </plist>

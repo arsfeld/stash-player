@@ -24,7 +24,13 @@ class PlatformConnectionStore implements ConnectionStore {
   static Future<PlatformConnectionStore> create() async =>
       PlatformConnectionStore(
         preferences: SharedPreferencesAsync(),
-        secureStorage: const FlutterSecureStorage(),
+        // The file-based login keychain rather than the data-protection
+        // one (the plugin's default): the latter needs a
+        // keychain-access-groups entitlement tied to a provisioning
+        // profile, which a Developer ID build doesn't have.
+        secureStorage: const FlutterSecureStorage(
+          mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+        ),
       );
 
   @override
