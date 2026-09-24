@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import '../domain/connection.dart';
 import '../domain/system_appearance.dart';
 import '../features/connection/connection_controller.dart';
 import '../services/channel_native_menus.dart';
+import '../services/channel_native_toolbar.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
@@ -20,6 +22,7 @@ import '../services/thumbnail_repository.dart';
 import '../shared/diagnostics.dart';
 import '../ui/menu/drawn_menus.dart';
 import '../ui/menu/native_menus.dart';
+import '../ui/toolbar/native_toolbar.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -171,6 +174,16 @@ final nativeMenusProvider = Provider<NativeMenus>(
     _ => const DrawnMenus(),
   },
 );
+
+/// The window toolbar the library publishes its controls to: the real
+/// `NSToolbar` on macOS, none elsewhere (Linux draws its own strip, and
+/// tests run as Android).
+final nativeToolbarProvider = Provider<NativeToolbar?>((ref) {
+  if (defaultTargetPlatform != TargetPlatform.macOS) return null;
+  final toolbar = ChannelNativeToolbar();
+  unawaited(toolbar.reset());
+  return toolbar;
+});
 
 /// Asks the macOS runner to run Sparkle's "Check for Updates…" (see
 /// `UpdatesChannel` in `MainFlutterWindow.swift`).
