@@ -328,7 +328,13 @@ Push a `vX.Y.Z` tag on `main`. That's the whole trigger:
 
 - [`flatpak.yml`](../../.github/workflows/flatpak.yml) builds the manifest
   in [`build-aux/dev.arsfeld.stash-player.yml`](../../build-aux/dev.arsfeld.stash-player.yml)
-  and attaches `stash-player.flatpak` to the GitHub release.
+  and attaches `stash-player.flatpak` to the GitHub release. For stable
+  tags, its `publish-repo` job then adds the build to the signed Flatpak
+  repository on `gh-pages` (`build-aux/flatpak-repo/publish.sh`, signed
+  with the `FLATPAK_GPG_PRIVATE_KEY` secret) and replaces the release's
+  bundle with a re-export whose origin is that repository, so existing
+  installs update. `just flatpak-repo-test` runs the publishing scripts
+  locally against real release bundles.
 - [`macos.yml`](../../.github/workflows/macos.yml) builds `StashPlayer.app`,
   Developer ID–signs and notarizes it, attaches
   `StashPlayer-macos-arm64.zip` to the release, and — in its `appcast`

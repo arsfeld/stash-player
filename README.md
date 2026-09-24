@@ -41,26 +41,24 @@ Your watch progress, play counts and ratings sync back to Stash as you go.
 
 ### Linux (Flatpak)
 
-Download `stash-player.flatpak` from the [latest
-release](https://github.com/arsfeld/stash-player/releases/latest) and install
-it:
+Install from the Stash Player Flatpak repository:
 
 ```sh
-curl -L -o stash-player.flatpak \
-  https://github.com/arsfeld/stash-player/releases/latest/download/stash-player.flatpak
-
-flatpak install --user stash-player.flatpak
+flatpak install --user https://arsfeld.github.io/stash-player/flatpak/dev.arsfeld.stash-player.flatpakref
 flatpak run dev.arsfeld.stash-player
 ```
 
-The GNOME runtime comes from Flathub, which most desktops already have set
-up. If yours doesn't:
+Updates then arrive like any other Flatpak — GNOME Software's automatic
+updates, or `flatpak update`. The GNOME runtime comes from Flathub, which
+the `.flatpakref` adds if it isn't set up already.
 
-```sh
-flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
-```
+Prefer a single file? Each [release](https://github.com/arsfeld/stash-player/releases/latest)
+also has `stash-player.flatpak`; installing it with
+`flatpak install --user stash-player.flatpak` subscribes to the same
+repository, so it updates too.
 
-To update, download the new bundle and run `flatpak install` again.
+Installed 1.2.0 or earlier from the bundle? That install has no update
+source — run the `flatpak install` command above once to switch it over.
 
 ### macOS (Apple Silicon, macOS 14+)
 
