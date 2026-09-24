@@ -26,8 +26,9 @@ Settings becomes part of `AppController`'s state, not an imperative
 `Navigator.push`.
 
 - `LibraryDestination` gains `final bool settingsOpen` (default `false`),
-  with `==`/`hashCode`. `AppDestination.library({bool settingsOpen})`
-  forwards it.
+  with `==`/`hashCode`. `AppDestination.library()` stays a parameterless
+  factory; callers that want `settingsOpen: true` construct
+  `LibraryDestination` directly instead of going through it.
 - `AppController.openSettings()` sets `library(settingsOpen: true)`, and
   only when the current destination is `LibraryDestination`. Anywhere else
   it does nothing.
