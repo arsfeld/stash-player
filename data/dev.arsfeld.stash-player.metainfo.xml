@@ -71,6 +71,17 @@
   </branding>
 
   <releases>
+    <release version="1.1.0" date="2026-09-24">
+      <description>
+        <p>
+          Stash Player now looks and feels native on each platform.
+        </p>
+        <ul>
+          <li>GNOME styling on Linux, with Adwaita icons and your system accent colour and font</li>
+          <li>macOS styling, with a native menu bar and context menus</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-09-24">
       <description>
         <p>
