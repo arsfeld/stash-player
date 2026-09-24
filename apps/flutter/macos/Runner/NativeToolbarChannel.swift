@@ -132,12 +132,14 @@ final class NativeToolbarChannel: NSObject, NSToolbarDelegate, NSSearchFieldDele
       button.target = self
       button.action = #selector(activate(_:))
       item.view = button
+      item.menuFormRepresentation = overflowEntry(id)
     case "action":
       item = NSToolbarItem(itemIdentifier: identifier)
       item.isBordered = true
       item.autovalidates = false
       item.target = self
       item.action = #selector(activate(_:))
+      item.menuFormRepresentation = overflowEntry(id)
     case "search":
       let search = NSSearchToolbarItem(itemIdentifier: identifier)
       search.searchField.identifier = NSUserInterfaceItemIdentifier(id)
@@ -157,6 +159,17 @@ final class NativeToolbarChannel: NSObject, NSToolbarDelegate, NSSearchFieldDele
     items[id] = item
     update(item, with: spec)
     return item
+  }
+
+  /// The entry an item shows in the toolbar's `»` overflow menu. A
+  /// view-based toggle has no menu form of its own, so without this it
+  /// would show up blank and disabled; the id rides along so `activate`
+  /// knows which item was chosen.
+  private func overflowEntry(_ id: String) -> NSMenuItem {
+    let entry = NSMenuItem(title: "", action: #selector(activate(_:)), keyEquivalent: "")
+    entry.target = self
+    entry.representedObject = id
+    return entry
   }
 
   private func update(_ item: NSToolbarItem, with spec: [String: Any]) {
@@ -189,11 +202,21 @@ final class NativeToolbarChannel: NSObject, NSToolbarDelegate, NSSearchFieldDele
       button.state = spec["selected"] as? Bool == true ? .on : .off
       button.toolTip = item.toolTip
       button.setAccessibilityLabel(label)
+      if let entry = item.menuFormRepresentation {
+        entry.title = label
+        entry.image = image
+        entry.state = button.state
+      }
     case "action":
       let badged = spec["badge"] as? Bool == true
       item.image = badgeFallbackImage(spec, badged: badged) ?? image
       item.isEnabled = spec["enabled"] as? Bool ?? true
       applyBadge(item, badged)
+      if let entry = item.menuFormRepresentation {
+        entry.title = label
+        entry.image = item.image
+        entry.isEnabled = item.isEnabled
+      }
     case "search":
       guard let search = item as? NSSearchToolbarItem else { return }
       search.searchField.placeholderString = spec["placeholder"] as? String
@@ -242,6 +265,8 @@ final class NativeToolbarChannel: NSObject, NSToolbarDelegate, NSSearchFieldDele
       id = button.identifier?.rawValue
     } else if let item = sender as? NSToolbarItem {
       id = item.itemIdentifier.rawValue
+    } else if let entry = sender as? NSMenuItem {
+      id = entry.representedObject as? String
     } else {
       id = nil
     }
@@ -283,5 +308,21 @@ final class NativeToolbarChannel: NSObject, NSToolbarDelegate, NSSearchFieldDele
   private func sendSearch(_ field: NSSearchField) {
     guard let id = field.identifier?.rawValue else { return }
     channel.invokeMethod("searchChanged", arguments: ["id": id, "text": field.stringValue])
+  }
+}
+
+// The overflow menu auto-enables its entries through validation, which
+// would override `isEnabled`, so validation answers from the current spec
+// (and refreshes a toggle's checkmark, in case AppKit copied the entry).
+extension NativeToolbarChannel: NSMenuItemValidation {
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    guard menuItem.action == #selector(activate(_:)),
+      let id = menuItem.representedObject as? String,
+      let spec = specs[id]
+    else { return true }
+    if spec["type"] as? String == "toggle" {
+      menuItem.state = spec["selected"] as? Bool == true ? .on : .off
+    }
+    return spec["enabled"] as? Bool ?? true
   }
 }
