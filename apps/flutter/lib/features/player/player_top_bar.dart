@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene_stream.dart';
 import '../../ui/icons/app_icons.dart';
+import '../../ui/menu/app_menu.dart';
+import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/window_chrome.dart';
 import 'player_icon_button.dart';
@@ -98,30 +100,12 @@ class PlayerTopBar extends StatelessWidget {
                 ),
               ),
               if (streamOptions.length > 1)
-                PopupMenuButton<SceneStream>(
-                  tooltip: 'Video quality',
-                  icon: const AppIconView(
-                    AppIcon.quality,
-                    color: AppTokens.playerText,
+                Builder(
+                  builder: (anchor) => PlayerIconButton(
+                    icon: AppIcon.quality,
+                    tooltip: 'Video quality',
+                    onPressed: () => _openQualityMenu(anchor),
                   ),
-                  // The top bar fades on the scene screen's auto-hide
-                  // timer. Without this the menu would outlive the bar it
-                  // is anchored to.
-                  onOpened: () => onMenuOpenChanged(true),
-                  onCanceled: () => onMenuOpenChanged(false),
-                  onSelected: (stream) {
-                    onMenuOpenChanged(false);
-                    onSelectStream(stream);
-                  },
-                  itemBuilder: (context) => [
-                    for (final stream in streamOptions)
-                      PopupMenuItem<SceneStream>(
-                        value: stream,
-                        child: Row(
-                          children: [Expanded(child: Text(stream.label))],
-                        ),
-                      ),
-                  ],
                 ),
               PlayerIconButton(
                 icon: AppIcon.info,
@@ -134,4 +118,27 @@ class PlayerTopBar extends StatelessWidget {
       ),
     ),
   );
+
+  /// The top bar fades on the scene screen's auto-hide timer, so it is
+  /// held open ([onMenuOpenChanged]) for as long as the menu is up. The
+  /// choice is applied only after the menu has closed, so the bar is
+  /// released before the stream switch starts, the same order as before.
+  Future<void> _openQualityMenu(BuildContext anchor) async {
+    SceneStream? chosen;
+    onMenuOpenChanged(true);
+    await NativeMenusScope.of(anchor).show(
+      anchor,
+      AppMenu([
+        for (final stream in streamOptions)
+          AppMenuAction(
+            label: stream.label,
+            checked: stream == currentStream,
+            onSelected: () => chosen = stream,
+          ),
+      ]),
+      globalRectOf(anchor),
+    );
+    onMenuOpenChanged(false);
+    if (chosen case final stream?) onSelectStream(stream);
+  }
 }

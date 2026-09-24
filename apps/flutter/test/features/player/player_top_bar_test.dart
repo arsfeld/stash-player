@@ -3,9 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/domain/scene_stream.dart';
 import 'package:stash_player_flutter/features/player/player_top_bar.dart';
+import 'package:stash_player_flutter/ui/menu/app_menu.dart';
+import 'package:stash_player_flutter/ui/menu/native_menus.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 import 'package:stash_player_flutter/ui/widgets/window_chrome.dart';
+
+import '../../support/recording_menus.dart';
 
 const _topBar = PlayerTopBar(
   title: 'Scene 42',
@@ -204,5 +208,40 @@ void main() {
     await tester.tap(find.text('HLS'));
     await tester.pumpAndSettle();
     expect(opens, [true, false]);
+  });
+
+  testWidgets('describes the streams as a checked menu', (tester) async {
+    final menus = RecordingMenus(choose: 'HLS');
+    SceneStream? chosen;
+    final opens = <bool>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeMenusScope(
+          menus: menus,
+          child: Scaffold(
+            body: PlayerTopBar(
+              title: 'A scene',
+              metadataOpen: false,
+              onBack: () {},
+              onToggleMetadata: () {},
+              streamOptions: [_direct, _hls],
+              currentStream: _direct,
+              onSelectStream: (stream) => chosen = stream,
+              onMenuOpenChanged: opens.add,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('Video quality'));
+    await tester.pump();
+
+    final actions = menus.shown.single.entries.cast<AppMenuAction>();
+    expect(actions.map((a) => (a.label, a.checked)), [
+      ('Direct stream', true),
+      ('HLS', false),
+    ]);
+    expect(opens, [true, false]);
+    expect(chosen, _hls);
   });
 }

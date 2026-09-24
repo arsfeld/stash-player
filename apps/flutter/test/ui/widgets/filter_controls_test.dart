@@ -3,9 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/ui/icons/app_icons.dart';
+import 'package:stash_player_flutter/ui/menu/app_menu.dart';
+import 'package:stash_player_flutter/ui/menu/native_menus.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
+
+import '../../support/recording_menus.dart';
 
 Future<void> _pump(WidgetTester tester, Widget child) => tester.pumpWidget(
   MaterialApp(
@@ -85,6 +89,41 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('2+ stars'), findsOneWidget);
+    });
+
+    testWidgets('AppMenuButton opens a checked menu through the scope', (
+      tester,
+    ) async {
+      final menus = RecordingMenus(choose: 'Two');
+      int? chosen;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(Brightness.light),
+          home: NativeMenusScope(
+            menus: menus,
+            child: Scaffold(
+              body: AppMenuButton<int>(
+                value: 1,
+                tooltip: 'Pick',
+                onChanged: (value) => chosen = value,
+                items: const [
+                  AppMenuItem(value: 1, label: 'One'),
+                  AppMenuItem(value: 2, label: 'Two'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byType(AppMenuButton<int>));
+      await tester.pump();
+
+      final actions = menus.shown.single.entries.cast<AppMenuAction>();
+      expect(actions.map((a) => (a.label, a.checked)), [
+        ('One', true),
+        ('Two', false),
+      ]);
+      expect(chosen, 2);
     });
   });
 

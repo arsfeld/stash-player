@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../icons/app_icons.dart';
+import '../menu/app_menu.dart';
+import '../menu/native_menus.dart';
 import '../theme/app_tokens.dart';
 
 /// One entry in an [AppMenuButton]'s value list.
@@ -21,12 +23,13 @@ class AppMenuItem<T> {
 /// as `null` (minimum rating) pass a sentinel value and map it back at the
 /// callback boundary.
 ///
-/// Built on [InkWell] plus [showMenu] rather than `PopupMenuButton` so the
-/// caller can supply its own [FocusNode]: the library toolbar pins an
-/// explicit Tab order across controls that move between rows, which needs
-/// a node per control. `MenuAnchor` is not an option here: its overlay is
-/// not part of the surrounding traversal chain, so nothing inside it is
-/// reachable by sequential Tab.
+/// Built on [InkWell] rather than `PopupMenuButton` so the caller can
+/// supply its own [FocusNode]: the library toolbar pins an explicit Tab
+/// order across controls that move between rows, which needs a node per
+/// control. The menu itself opens through [NativeMenusScope] (a native
+/// `NSMenu`/`GtkMenu` in the app, a drawn one in tests). A native popup
+/// menu takes keyboard focus itself while open, so the strip's Tab order
+/// is unaffected.
 class AppMenuButton<T extends Object> extends StatefulWidget {
   const AppMenuButton({
     required this.value,
@@ -48,40 +51,18 @@ class AppMenuButton<T extends Object> extends StatefulWidget {
 }
 
 class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
-  Future<void> _open() async {
-    final button = context.findRenderObject()! as RenderBox;
-    final overlay =
-        Overlay.of(context).context.findRenderObject()! as RenderBox;
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(
-        button.localToGlobal(
-          button.size.bottomLeft(Offset.zero),
-          ancestor: overlay,
+  Future<void> _open() => NativeMenusScope.of(context).show(
+    context,
+    AppMenu([
+      for (final item in widget.items)
+        AppMenuAction(
+          label: item.label,
+          checked: item.value == widget.value,
+          onSelected: () => widget.onChanged(item.value),
         ),
-        button.localToGlobal(
-          button.size.bottomRight(Offset.zero),
-          ancestor: overlay,
-        ),
-      ),
-      Offset.zero & overlay.size,
-    );
-
-    final selected = await showMenu<T>(
-      context: context,
-      position: position,
-      initialValue: widget.value,
-      items: [
-        for (final item in widget.items)
-          PopupMenuItem<T>(
-            value: item.value,
-            height: 36,
-            child: Text(item.label),
-          ),
-      ],
-    );
-
-    if (selected != null) widget.onChanged(selected);
-  }
+    ]),
+    globalRectOf(context),
+  );
 
   @override
   Widget build(BuildContext context) {
