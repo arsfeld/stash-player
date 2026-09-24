@@ -1,0 +1,10 @@
+[Flatpak Ref]
+Title=Stash Player
+Name=dev.arsfeld.stash-player
+Branch=master
+Url=https://arsfeld.github.io/stash-player/flatpak/repo/
+Homepage=https://github.com/arsfeld/stash-player
+IsRuntime=false
+SuggestRemoteName=stash-player
+RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+GPGKey=mDMEarWNqBYJKwYBBAHaRw8BAQdAWMxFfvG+EuUa96w2OUD7jJBxRRaGA1n/c2vgPWuU8FC0H1N0YXNoIFBsYXllciBGbGF0cGFrIHJlcG9zaXRvcnmIkAQTFgoAOBYhBHEXCC8im8ZQydndb2V7taHbx5IuBQJqtY2oAhsDBQsJCAcCBhUKCQgLAgQWAgMBAh4BAheAAAoJEGV7taHbx5IuTdQA/iHlxAmPrLwQzRkNRxm8Jw0EP5RZCPbcdgYUPFYWmjb5AP9HeL+mPNEcBR9VDDNuH8PrS9hOkGf90EW9Si6ig/1dAg==
