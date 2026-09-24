@@ -6,6 +6,7 @@ class MainFlutterWindow: NSWindow {
   // handler weakly.
   private let appearanceStream = AppearanceStreamHandler()
   private var nativeMenus: NativeMenuChannel?
+  private var nativeToolbar: NativeToolbarChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -24,11 +25,14 @@ class MainFlutterWindow: NSWindow {
     // titlebar as a taller band and re-centre the traffic lights inside it.
     // Without it the lights sit in a 28pt titlebar, which leaves the app's
     // own strip no room for padding above its controls without falling off
-    // the lights' centre line. Nothing is ever added to this toolbar; the
-    // Flutter view draws every control.
+    // the lights' centre line. The library screen fills this toolbar with
+    // native items through NativeToolbarChannel; every other screen leaves
+    // it empty, and even then it still centres the traffic lights.
     let toolbar = NSToolbar(identifier: "stash-player-titlebar-spacer")
     self.toolbar = toolbar
     self.toolbarStyle = .unified
+    toolbar.displayMode = .iconOnly
+    toolbar.allowsUserCustomization = false
     // Once the Flutter view covers the titlebar it also swallows the drag
     // events, so without this the window cannot be moved by its top
     // strip. The cost is that a drag starting anywhere on a
@@ -47,6 +51,11 @@ class MainFlutterWindow: NSWindow {
     ).setStreamHandler(appearanceStream)
     nativeMenus = NativeMenuChannel(
       messenger: flutterViewController.engine.binaryMessenger,
+      view: flutterViewController.view
+    )
+    nativeToolbar = NativeToolbarChannel(
+      messenger: flutterViewController.engine.binaryMessenger,
+      window: self,
       view: flutterViewController.view
     )
     UpdatesChannel.register(with: flutterViewController.engine.binaryMessenger)
