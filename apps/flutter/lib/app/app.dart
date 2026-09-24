@@ -5,6 +5,7 @@ import '../domain/system_appearance.dart';
 import '../ui/menu/native_menus.dart';
 import '../ui/theme/app_theme.dart';
 import 'app_controller.dart';
+import 'app_menu_bar.dart';
 import 'app_router.dart';
 import 'providers.dart';
 import 'toast_host.dart';
@@ -39,16 +40,18 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
       bodyFontPt: appearance.fontSizePt,
     );
 
-    return MaterialApp(
-      title: 'Stash Player',
-      themeMode: ThemeMode.system,
-      theme: themeFor(Brightness.light),
-      darkTheme: themeFor(Brightness.dark),
-      builder: (context, child) => NativeMenusScope(
-        menus: ref.watch(nativeMenusProvider),
-        child: ToastHost(child: child!),
+    return AppMenuBar(
+      child: MaterialApp(
+        title: 'Stash Player',
+        themeMode: ThemeMode.system,
+        theme: themeFor(Brightness.light),
+        darkTheme: themeFor(Brightness.dark),
+        builder: (context, child) => NativeMenusScope(
+          menus: ref.watch(nativeMenusProvider),
+          child: ToastHost(child: child!),
+        ),
+        home: const AppRouter(),
       ),
-      home: const AppRouter(),
     );
   }
 }

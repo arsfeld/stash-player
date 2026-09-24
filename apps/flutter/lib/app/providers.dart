@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
@@ -169,4 +170,10 @@ final nativeMenusProvider = Provider<NativeMenus>(
     TargetPlatform.linux || TargetPlatform.macOS => ChannelNativeMenus(),
     _ => const DrawnMenus(),
   },
+);
+
+/// Asks the macOS runner to run Sparkle's "Check for Updates…" (see
+/// `UpdatesChannel` in `MainFlutterWindow.swift`).
+final updatesChannelProvider = Provider<MethodChannel>(
+  (ref) => const MethodChannel('stash_player/updates'),
 );

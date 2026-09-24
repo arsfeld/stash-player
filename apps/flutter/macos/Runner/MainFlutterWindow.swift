@@ -49,6 +49,7 @@ class MainFlutterWindow: NSWindow {
       messenger: flutterViewController.engine.binaryMessenger,
       view: flutterViewController.view
     )
+    UpdatesChannel.register(with: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
   }
@@ -206,5 +207,22 @@ final class NativeMenuChannel: NSObject {
 
   @objc private func select(_ sender: NSMenuItem) {
     chosen = sender.tag
+  }
+}
+
+/// Runs Sparkle's "Check for Updates…" when the Dart menu bar asks, over
+/// `stash_player/updates`. The menu bar itself is built in Dart
+/// (`app_menu_bar.dart`), which replaces the one MainMenu.xib loads.
+enum UpdatesChannel {
+  static func register(with messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "stash_player/updates", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "checkForUpdates" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      (NSApp.delegate as? AppDelegate)?.checkForUpdates(nil)
+      result(nil)
+    }
   }
 }

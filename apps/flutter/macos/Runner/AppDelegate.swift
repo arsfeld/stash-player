@@ -13,8 +13,8 @@ class AppDelegate: FlutterAppDelegate {
     userDriverDelegate: nil
   )
 
-  // Target of the "Check for Updates…" item in MainMenu.xib, which sends
-  // this action to the first responder; the app delegate is on that chain.
+  // Called by `UpdatesChannel` when the Dart menu bar's "Check for
+  // Updates…" item is chosen.
   @IBAction func checkForUpdates(_ sender: Any?) {
     updaterController.checkForUpdates(sender)
   }
