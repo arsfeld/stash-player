@@ -18,10 +18,12 @@ import 'package:stash_player_flutter/features/player/playback_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/toolbar/native_toolbar.dart';
 
 import '../support/fake_connection_sheet.dart';
 import '../support/fake_playback_engine.dart';
 import '../support/fakes.dart';
+import '../support/recording_toolbar.dart';
 
 void main() {
   testWidgets(
@@ -340,6 +342,76 @@ void main() {
     // widget that carries it past the router.
     expect(container.read(sceneControllerProvider).state.browse, browse);
   });
+
+  testWidgets(
+    'settings when the native sheet fails to present: the drawn dialog '
+    'appears instead',
+    (tester) async {
+      final sheet = FakeConnectionSheet(failPresent: true);
+      final container = ProviderContainer(
+        overrides: [
+          appControllerProvider.overrideWith(
+            () => _FixedDestinationController(const AppDestination.library()),
+          ),
+          connectionSheetProvider.overrideWith(
+            () => FakeConnectionSheetNotifier(sheet),
+          ),
+          connectionStoreProvider.overrideWithValue(
+            FakeConnectionStore(
+              saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+            ),
+          ),
+          environmentProvider.overrideWithValue(const {}),
+          stashApiFactoryProvider.overrideWithValue(
+            (config) =>
+                FakeStashApi(versionValue: 'v0.31.0')
+                  ..pages.add(ScenePage(total: 0, scenes: const [])),
+          ),
+          connectionControllerOverride,
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_app(container));
+      await tester.pumpAndSettle();
+      expect(find.byType(ConnectionSettingsDialog), findsNothing);
+
+      container.read(appControllerProvider.notifier).openSettings();
+      await tester.pumpAndSettle();
+
+      expect(sheet.presented, isNull);
+      expect(container.read(connectionSheetProvider), isNull);
+      expect(find.byType(ConnectionSettingsDialog), findsOneWidget);
+      expect(find.byType(LibraryScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'the native toolbar empties while a scene shows and comes back with '
+    'the library',
+    (tester) async {
+      final toolbar = RecordingToolbar();
+      final container = await pumpRouterAt(
+        tester,
+        const AppDestination.library(),
+        toolbar: toolbar,
+      );
+      await tester.pump();
+      expect(toolbar.last.items, isNotEmpty);
+
+      container.read(appControllerProvider.notifier).openScene('1001');
+      await tester.pumpAndSettle();
+      expect(find.byType(SceneScreen), findsOneWidget);
+      expect(toolbar.last.items, isEmpty);
+
+      container.read(appControllerProvider.notifier).showLibrary();
+      await tester.pump();
+      await tester.pump(disposeFlushTimeout + const Duration(seconds: 1));
+
+      expect(find.byType(SceneScreen), findsNothing);
+      expect(toolbar.last.items, isNotEmpty);
+    },
+  );
 }
 
 /// Drives [AppRouter] straight to [destination], with the same
@@ -349,9 +421,14 @@ void main() {
 /// inspect provider state past what the widget tree alone can prove.
 Future<ProviderContainer> pumpRouterAt(
   WidgetTester tester,
-  AppDestination destination,
-) async {
+  AppDestination destination, {
+  NativeToolbar? toolbar,
+}) async {
   final stashApi = FakeStashApi()
+    // Enough for a library destination's first fetch.
+    ..pages.addAll([
+      for (var i = 0; i < 3; i++) ScenePage(total: 0, scenes: const []),
+    ])
     ..sceneResults.add(
       Scene(
         id: '1001',
@@ -382,7 +459,9 @@ Future<ProviderContainer> pumpRouterAt(
       container: container,
       child: MaterialApp(
         theme: buildAppTheme(Brightness.light),
-        home: const AppRouter(),
+        home: toolbar == null
+            ? const AppRouter()
+            : NativeToolbarScope(toolbar: toolbar, child: const AppRouter()),
       ),
     ),
   );

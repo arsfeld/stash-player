@@ -17,6 +17,7 @@ import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/library/library_state.dart';
 import 'package:stash_player_flutter/features/library/library_toolbar.dart';
 import 'package:stash_player_flutter/features/library/tasks_controller.dart';
+import 'package:stash_player_flutter/features/library/tasks_popover.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/icons/app_icons.dart';
@@ -1647,7 +1648,94 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // It tried the native toolbar before drawing its own.
+      expect(toolbar.sent, isNotEmpty);
       expect(find.byKey(const Key('library-search')), findsOneWidget);
+    });
+
+    testWidgets('publishes an empty toolbar when the library goes away', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+      await tester.pump();
+      expect(toolbar.last.items, isNotEmpty);
+
+      await tester.pumpWidget(const SizedBox());
+
+      expect(toolbar.last.items, isEmpty);
+    });
+
+    testWidgets('Clear filters republishes the search item emptied', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      final harness = await _pumpLibrary(
+        tester,
+        api: _pagedApi(),
+        toolbar: toolbar,
+      );
+      await tester.pump();
+
+      await harness.controller.setQuery('bunnies');
+      await tester.pump();
+      expect(toolbar.item<AppToolbarSearch>('search').text, 'bunnies');
+
+      await harness.controller.clearFilters();
+      await tester.pump();
+
+      expect(toolbar.item<AppToolbarSearch>('search').text, '');
+    });
+
+    testWidgets('running work republishes Tasks with its badge', (
+      tester,
+    ) async {
+      final toolbar = RecordingToolbar();
+      final api = _pagedApi()..metadataScanResults.add('42');
+      await _pumpLibrary(tester, api: api, toolbar: toolbar);
+      await tester.pumpAndSettle();
+      expect(toolbar.item<AppToolbarAction>('tasks').badge, isFalse);
+
+      api.jobQueueResults.add([_job('42', JobStatus.running, progress: 0.5)]);
+      toolbar.item<AppToolbarAction>('scan').onPressed!(null);
+      await tester.pump();
+      await tester.pump();
+
+      expect(toolbar.item<AppToolbarAction>('tasks').badge, isTrue);
+      expect(toolbar.item<AppToolbarAction>('scan').onPressed, isNull);
+
+      // The job ends (the fake's default idle queue) and the badge clears.
+      await tester.pump(tasksPollInterval);
+      await tester.pump();
+      expect(toolbar.item<AppToolbarAction>('tasks').badge, isFalse);
+      await tester.pump(scanEndedRowDuration);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Tasks opens its popover at the click, or at the trailing '
+        'edge without one', (tester) async {
+      final toolbar = RecordingToolbar();
+      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+      await tester.pumpAndSettle();
+      expect(find.byType(TasksPopoverPanel), findsNothing);
+
+      toolbar.item<AppToolbarAction>('tasks').onPressed!(
+        const Rect.fromLTWH(900, 0, 28, 52),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(TasksPopoverPanel), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(TasksPopoverPanel), findsNothing);
+
+      // Chosen from the overflow menu: no click to anchor to.
+      toolbar.item<AppToolbarAction>('tasks').onPressed!(null);
+      await tester.pumpAndSettle();
+      expect(find.byType(TasksPopoverPanel), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
     });
 
     testWidgets('clears the toolbar when a scene opens', (tester) async {
