@@ -40,9 +40,14 @@ ThemeData buildAppTheme(
   final fallbackFamilies = adwaita
       ? const ['Cantarell', 'Inter', 'sans-serif']
       : const <String>[];
+  // GNOME's font-name portal setting is free text and has been observed
+  // reporting nonsensical sizes; clamp to a sane desktop UI-font range so
+  // a bad value can't blow up the type scale (or collapse it to nothing)
+  // instead of just looking a little off.
+  final clampedBodyFontPt = bodyFontPt?.clamp(8, 20).toDouble();
   final textTheme = _textTheme(
     dialect,
-    bodyFontPt: bodyFontPt,
+    bodyFontPt: clampedBodyFontPt,
   ).apply(bodyColor: palette.text, displayColor: palette.text);
 
   final colorScheme = ColorScheme(

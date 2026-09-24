@@ -97,6 +97,24 @@ void main() {
       ).textTheme;
       expect(text.bodyMedium?.fontFamily, '.AppleSystemUIFont');
     });
+
+    test('a desktop font size below the sane range clamps to 8pt', () {
+      final text = buildAppTheme(
+        Brightness.light,
+        platform: _linux,
+        bodyFontPt: 0,
+      ).textTheme;
+      expect(text.bodyMedium?.fontSize, closeTo(8 * 4 / 3, 0.01));
+    });
+
+    test('a desktop font size above the sane range clamps to 20pt', () {
+      final text = buildAppTheme(
+        Brightness.light,
+        platform: _linux,
+        bodyFontPt: 72,
+      ).textTheme;
+      expect(text.bodyMedium?.fontSize, closeTo(20 * 4 / 3, 0.01));
+    });
   });
 
   test('radii follow the dialect', () {
