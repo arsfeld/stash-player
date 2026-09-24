@@ -21,13 +21,12 @@ new_key() {
 	GNUPGHOME=$1 gpg --batch --quiet --passphrase '' \
 		--quick-gen-key 'Stash Player test key' ed25519 sign never 2>/dev/null
 	local fpr
-	fpr=$(GNUPGHOME=$1 gpg --list-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+	fpr=$(GNUPGHOME=$1 gpg --list-keys --with-colons 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}')
 	GNUPGHOME=$1 gpg --export "$fpr" >"$2"
 	echo "$fpr"
 }
 
 export GNUPGHOME=$work/gnupg
-# shellcheck disable=SC2034
 key=$(new_key "$GNUPGHOME" "$work/pub.gpg")
 key_b64=$(base64 <"$work/pub.gpg" | tr -d '\n')
 
@@ -42,5 +41,55 @@ for line in "[Flatpak Ref]" "Name=$APP_ID" "Branch=$BRANCH" "Url=$REPO_URL" "IsR
 	"SuggestRemoteName=$REMOTE_NAME" "RuntimeRepo=$RUNTIME_REPO" "GPGKey=$key_b64"; do
 	grep -qxF "$line" "$ref_file" || fail "$ref_file lacks: $line"
 done
+
+# Release bundles are cached across runs; they never change once published.
+bundles=${XDG_CACHE_HOME:-$HOME/.cache}/stash-player-flatpak-test
+mkdir -p "$bundles"
+for v in v1.1.0 v1.2.0; do
+	[[ -s $bundles/$v.flatpak ]] || curl -fsSL -o "$bundles/$v.flatpak" \
+		"https://github.com/arsfeld/stash-player/releases/download/$v/stash-player.flatpak"
+done
+
+site=$work/site
+repo=$site/flatpak/repo
+ref=app/$APP_ID/$(flatpak --default-arch)/$BRANCH
+publish() {
+	"$here/publish.sh" "$bundles/$1.flatpak" "$site" "$key" "$work/pub.gpg" "$work/out.flatpak" >/dev/null
+}
+head_of() { ostree rev-parse --repo="$repo" "$ref"; }
+parent_of() { ostree log --repo="$repo" "$1" | awk '/^Parent:/ {print $2; exit}'; }
+
+echo "== first publish initialises the repo"
+publish v1.1.0
+[[ -f $site/flatpak/$REMOTE_NAME.flatpakrepo ]] || fail "no .flatpakrepo in site"
+[[ -f $site/flatpak/$APP_ID.flatpakref ]] || fail "no .flatpakref in site"
+[[ -s $work/out.flatpak ]] || fail "no re-exported bundle"
+first=$(head_of)
+
+echo "== second publish chains onto the first, with a delta"
+publish v1.2.0
+second=$(head_of)
+[[ $second != "$first" ]] || fail "head did not move"
+[[ $(parent_of "$second") == "$first" ]] || fail "new commit's parent is not the previous head"
+ostree static-delta list --repo="$repo" | grep -qxF "$first-$second" ||
+	fail "no incremental delta $first-$second"
+
+echo "== pruning keeps three commits"
+publish v1.1.0
+publish v1.2.0
+commits=$(ostree log --repo="$repo" "$ref" | grep -c '^commit ')
+[[ $commits == 3 ]] || fail "expected 3 commits after pruning, found $commits"
+
+echo "== verify passes on the published site"
+"$here/verify.sh" "$site/flatpak" >/dev/null || fail "verify rejected a good repo"
+
+echo "== verify rejects a repo whose .flatpakrepo carries another key"
+mkdir -p "$work/forged"
+ln -s "$repo" "$work/forged/repo"
+new_key "$work/other-gnupg" "$work/other.gpg" >/dev/null
+"$here/render-remote-files.sh" "$work/other.gpg" "$work/forged"
+if "$here/verify.sh" "$work/forged" >/dev/null 2>&1; then
+	fail "verify accepted a repo signed by a different key"
+fi
 
 echo PASS
