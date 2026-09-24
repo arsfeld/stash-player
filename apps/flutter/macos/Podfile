@@ -30,8 +30,12 @@ target 'Runner' do
   use_frameworks!
 
   # Auto-update channel shared with the SwiftUI client this replaces; the
-  # feed URL and EdDSA key live in Runner/Info.plist.
-  pod 'Sparkle', '~> 2.9'
+  # feed URL and EdDSA key live in Runner/Info.plist. Pinned exactly, to
+  # the same release as the SwiftUI app: Podfile.lock can't be regenerated
+  # on Linux, so a range would float on every CI `pod install`. Bump
+  # together with SPARKLE_VERSION (and SPARKLE_SHA256) in
+  # .github/workflows/macos.yml's appcast job.
+  pod 'Sparkle', '2.9.2'
 
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
