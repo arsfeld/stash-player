@@ -129,8 +129,9 @@ narrow to show.
 there, it:
 
 - builds an `AppToolbar`:
-  - a group of sort (menu), direction (toggle), minimum rating (menu),
-    organized (toggle) and hide watched (toggle)
+  - a group of sort (menu), direction (action: it isn't on/off, so each
+    press flips it and its icon shows the current direction), minimum
+    rating (menu), organized (toggle) and hide watched (toggle)
   - play random (action)
   - flexible space
   - search
@@ -316,6 +317,9 @@ its form again.
     26+).
   - Below 26, the tasks item shows the filled variant of its symbol while
     `badge` is true.
+  - The badge path is behind `#if compiler(>=6.2)`, so only an Xcode 26
+    build compiles it. Release builds run on Xcode 16, so shipped CI
+    builds always use the filled-symbol fallback, even on macOS 26.
   - The glass capsule look is whatever the running OS draws for a
     toolbar item group.
 
