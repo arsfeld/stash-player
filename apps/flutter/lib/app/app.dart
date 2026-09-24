@@ -33,6 +33,7 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
     final appearance =
         ref.watch(systemAppearanceProvider).valueOrNull ??
         SystemAppearance.none;
+    final nativeMenus = ref.watch(nativeMenusProvider);
     ThemeData themeFor(Brightness brightness) => buildAppTheme(
       brightness,
       accent: appearance.accent,
@@ -47,7 +48,7 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
         theme: themeFor(Brightness.light),
         darkTheme: themeFor(Brightness.dark),
         builder: (context, child) => NativeMenusScope(
-          menus: ref.watch(nativeMenusProvider),
+          menus: nativeMenus,
           child: ToastHost(child: child!),
         ),
         home: const AppRouter(),
