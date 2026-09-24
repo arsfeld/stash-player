@@ -71,8 +71,8 @@ The shipped app. Riverpod for state; no routing package —
 small destination union instead.
 
 - **`lib/app/`** — wiring: `AppController` (the `AppDestination` union —
-  connection / library / scene — plus bootstrap and the one-time legacy
-  import), `AppRouter` (destination → page), `providers.dart` (the
+  connection / library / scene — plus bootstrap), `AppRouter`
+  (destination → page), `providers.dart` (the
   provider graph: HTTP client, SOCKS proxy, connection store, thumbnail
   repo), `app.dart` (`MaterialApp` + toast/notice plumbing).
 - **`lib/domain/`** — pure data + rules, no I/O: `connection.dart`
