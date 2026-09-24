@@ -7,6 +7,7 @@ class MainFlutterWindow: NSWindow {
   private let appearanceStream = AppearanceStreamHandler()
   private var nativeMenus: NativeMenuChannel?
   private var nativeToolbar: NativeToolbarChannel?
+  private var connectionSheet: ConnectionSheetChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -57,6 +58,10 @@ class MainFlutterWindow: NSWindow {
       messenger: flutterViewController.engine.binaryMessenger,
       window: self,
       view: flutterViewController.view
+    )
+    connectionSheet = ConnectionSheetChannel(
+      messenger: flutterViewController.engine.binaryMessenger,
+      window: self
     )
     UpdatesChannel.register(with: flutterViewController.engine.binaryMessenger)
 
