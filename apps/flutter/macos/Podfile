@@ -29,6 +29,10 @@ flutter_macos_podfile_setup
 target 'Runner' do
   use_frameworks!
 
+  # Auto-update channel shared with the SwiftUI client this replaces; the
+  # feed URL and EdDSA key live in Runner/Info.plist.
+  pod 'Sparkle', '~> 2.9'
+
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

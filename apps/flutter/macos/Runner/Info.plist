@@ -30,5 +30,14 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Same feed and EdDSA public key as the SwiftUI client this replaces,
+	     so its users are updated into this app and keep updating. The
+	     private half lives in the SPARKLE_ED_PRIVATE_KEY Actions secret. -->
+	<key>SUFeedURL</key>
+	<string>https://arsfeld.github.io/stash-player/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Fx+Cc8kj5pSdtx3i/E+AhMmLUgefc8EXD1CxFh2VO5A=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>
