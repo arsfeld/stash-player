@@ -5,10 +5,19 @@ Implements the subset of the Stash schema that stash-player consumes:
   - version
   - findScenes / findScene
   - sceneSaveActivity, sceneIncrementO, sceneResetO
+  - metadataScan / jobQueue / findJob (a fake scan that runs for a few seconds)
 
 Thumbnails come from `./thumbs/<id>.jpg` (regenerate via gen_thumbs.sh).
 The data set is 12 SFW landscape-themed scenes — safe for screenshots
 and demos.
+
+Test-only observability (not part of the Stash schema): every accepted
+`sceneSaveActivity` call is recorded in-memory, in order, and can be read
+back via `GET /__test__/activity` or cleared via `POST /__test__/reset`.
+This exists so the Flutter integration smoke test (and any other client
+test) can assert on activity writeback without a real Stash instance.
+`/stream` stays a documented 404 — this does not add real video or
+bypass authentication in any way.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,11 +25,29 @@ import json
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 THUMB_DIR = os.path.join(HERE, "thumbs")
 HOST = os.environ.get("MOCK_STASH_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MOCK_STASH_PORT", "9999"))
+
+# In-memory, ordered record of every accepted `sceneSaveActivity` call —
+# test-only observability, see the module docstring. Never persisted, and
+# cleared only by `POST /__test__/reset` (not by any GraphQL mutation).
+ACTIVITY_LOG = []
+
+# Fake jobs started by `MetadataScan`, keyed by id, valued by start time.
+# Each reports RUNNING with rising progress for SCAN_SECONDS of wall time,
+# then leaves the queue, which is how Stash reports a job that has ended.
+SCAN_SECONDS = 6.0
+JOBS = {}
+NEXT_JOB_ID = [100]
+
+# Ids `JobQueue` has popped from `JOBS`, so `FindJob` can still answer for
+# them — mirrors how a real Stash keeps a job's final status reachable by
+# id after `jobQueue` stops listing it.
+ENDED_JOBS = set()
 
 STUDIOS = [
     {"id": "S1", "name": "Open Frame"},
@@ -173,6 +200,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/__test__/activity":
+            return self._json({"activity": ACTIVITY_LOG})
         m = re.match(r"^/scene/(\d+)/screenshot", self.path)
         if m:
             sid = m.group(1)
@@ -194,6 +223,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404); self.end_headers()
 
     def do_POST(self):
+        if self.path == "/__test__/reset":
+            ACTIVITY_LOG.clear()
+            JOBS.clear()
+            ENDED_JOBS.clear()
+            return self._json({"reset": True})
         if not self.path.startswith("/graphql"):
             self.send_response(404); self.end_headers(); return
         n = int(self.headers.get("Content-Length") or 0)
@@ -229,6 +263,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"data": {"findScene": None}})
 
         if op == "SceneSaveActivity":
+            ACTIVITY_LOG.append({
+                "id": str(variables.get("id")),
+                "resume_time": variables.get("resume_time"),
+                "playDuration": variables.get("playDuration"),
+            })
             return self._json({"data": {"sceneSaveActivity": True}})
 
         if op == "SceneIncrementO":
@@ -245,6 +284,46 @@ class Handler(BaseHTTPRequestHandler):
                 if s["id"] == sid:
                     s["o_counter"] = 0
             return self._json({"data": {"sceneResetO": 0}})
+
+        if op == "MetadataScan":
+            job_id = str(NEXT_JOB_ID[0])
+            NEXT_JOB_ID[0] += 1
+            JOBS[job_id] = time.monotonic()
+            return self._json({"data": {"metadataScan": job_id}})
+
+        if op == "JobQueue":
+            now = time.monotonic()
+            queue = []
+            for job_id, started in list(JOBS.items()):
+                elapsed = now - started
+                if elapsed >= SCAN_SECONDS:
+                    JOBS.pop(job_id, None)
+                    ENDED_JOBS.add(job_id)
+                    continue
+                queue.append({
+                    "id": job_id,
+                    "status": "RUNNING",
+                    "description": "Scanning...",
+                    "progress": round(elapsed / SCAN_SECONDS, 2),
+                    "error": None,
+                })
+            return self._json({"data": {"jobQueue": queue or None}})
+
+        if op == "FindJob":
+            job_id = str(((variables.get("input") or {}).get("id")))
+            if job_id in JOBS:
+                return self._json({"data": {"findJob": {
+                    "id": job_id, "status": "RUNNING",
+                    "description": "Scanning...", "progress": None,
+                    "error": None,
+                }}})
+            if job_id in ENDED_JOBS:
+                return self._json({"data": {"findJob": {
+                    "id": job_id, "status": "FINISHED",
+                    "description": "Scanning...", "progress": 1,
+                    "error": None,
+                }}})
+            return self._json({"data": {"findJob": None}})
 
         return self._json({"errors": [{"message": f"unknown op: {op!r}"}]}, 400)
 

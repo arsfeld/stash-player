@@ -1,0 +1,18 @@
+// Application-level settings for the Runner target.
+//
+// This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
+// future. If not, the values below would default to using the project name when this becomes a
+// 'flutter create' template.
+
+// The bundle's on-disk name (StashPlayer.app) and executable name. Kept
+// identical to the SwiftUI client this replaces so Sparkle's in-place
+// update, the appcast job, and the release asset name don't change. The
+// user-visible name is CFBundleName / CFBundleDisplayName in Info.plist.
+PRODUCT_NAME = StashPlayer
+
+// Shared with the SwiftUI client this replaces: Sparkle only installs an
+// update whose bundle ID matches the running app's.
+PRODUCT_BUNDLE_IDENTIFIER = dev.arsfeld.stash-player
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 Alexandre Rosenfeld. All rights reserved.

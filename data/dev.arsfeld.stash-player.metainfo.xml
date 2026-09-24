@@ -5,19 +5,20 @@
   <project_license>MIT</project_license>
 
   <name>Stash Player</name>
-  <summary>Native Linux client for Stash</summary>
+  <summary>Desktop client for the Stash media server</summary>
 
   <description>
     <p>
-      Stash Player is a native GTK4 + libadwaita client for the
-      Stash media server. Browse your library and play scenes locally
-      with hardware-accelerated video.
+      Stash Player is a desktop client for the Stash media server. Browse
+      and filter your library, then play scenes locally with
+      hardware-accelerated video.
     </p>
     <p>Features:</p>
     <ul>
-      <li>Adaptive libadwaita UI that fits in on GNOME</li>
-      <li>Local playback via GStreamer with VA-API where available</li>
-      <li>Resume position and play count synced back to Stash</li>
+      <li>Library grid with search, sorting, rating and tracking filters</li>
+      <li>Local playback via libmpv with VA-API where available</li>
+      <li>Resume position, play count, rating and O-counter synced back to Stash</li>
+      <li>Optional SOCKS proxy for servers reachable only over a tailnet</li>
     </ul>
   </description>
 
@@ -55,6 +56,14 @@
   </branding>
 
   <releases>
+    <release version="1.0.0" date="2026-10-01">
+      <description>
+        <p>
+          Stash Player has a new, rebuilt client. Your saved server
+          connection is imported automatically on first launch.
+        </p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-05-09">
       <description>
         <p>Initial release.</p>

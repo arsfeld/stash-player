@@ -1,0 +1,356 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:stash_player_flutter/domain/connection.dart';
+import 'package:stash_player_flutter/domain/failure.dart';
+import 'package:stash_player_flutter/domain/job.dart';
+import 'package:stash_player_flutter/domain/scene.dart';
+import 'package:stash_player_flutter/domain/scene_filter.dart';
+import 'package:stash_player_flutter/services/connection_store.dart';
+import 'package:stash_player_flutter/services/stash_api.dart';
+import 'package:stash_player_flutter/services/thumbnail_repository.dart';
+
+class FakeConnectionStore implements ConnectionStore {
+  FakeConnectionStore({this.saved = const ConnectionConfig(), this.loadFuture});
+
+  ConnectionConfig saved;
+
+  /// When set, `load()` returns this instead of resolving `saved`
+  /// immediately — lets tests hold a `load()` call pending (e.g. via a
+  /// `Completer`) to exercise late-resolution behavior.
+  final Future<ConnectionConfig>? loadFuture;
+
+  final List<ConnectionConfig> saveCalls = <ConnectionConfig>[];
+
+  @override
+  Future<ConnectionConfig> load(Map<String, String> environment) =>
+      loadFuture ?? Future.value(saved);
+
+  @override
+  Future<void> save(ConnectionConfig config) async {
+    saveCalls.add(config);
+    saved = config;
+  }
+}
+
+/// One recorded `findScenes` call, with its own [completer] so a test can
+/// resolve or reject calls individually and out of order — e.g. to
+/// exercise a stale-response race between two in-flight requests.
+class FindScenesCall {
+  FindScenesCall({
+    required this.filter,
+    required this.page,
+    required this.perPage,
+  });
+
+  final SceneFilter filter;
+  final int page;
+  final int perPage;
+  final Completer<ScenePage> completer = Completer<ScenePage>();
+}
+
+/// One recorded `findScene` call, with its own [completer] so a test can
+/// resolve or reject calls individually and out of order — mirrors
+/// [FindScenesCall] for the single-scene lookup `SceneController` uses.
+class FindSceneCall {
+  FindSceneCall(this.id);
+
+  final String id;
+  final Completer<Scene?> completer = Completer<Scene?>();
+}
+
+/// One recorded `jobQueue` call, with its own [completer] so a test can
+/// hold a fetch open (a slow server) and resolve it later.
+class JobQueueCall {
+  final Completer<List<Job>> completer = Completer<List<Job>>();
+}
+
+class FakeStashApi implements StashApi {
+  FakeStashApi({this.versionValue, this.versionFailure, this.versionFuture});
+
+  final String? versionValue;
+  final Failure? versionFailure;
+  final Future<String>? versionFuture;
+
+  /// Set `true` to opt out of the drain-safety default on both
+  /// [findScenes] and [findScene]: leave the relevant queues
+  /// ([pages]/[pageFailures]/[pageRawErrors], or
+  /// [sceneResults]/[sceneFailures]/[sceneRawErrors]) empty and
+  /// resolve/reject a specific call's `completer` from [calls]/[sceneCalls]
+  /// directly for full control over completion order and timing (e.g. a
+  /// late-response race). Defaults to `false`: a call made while its
+  /// queues are all empty completes with a [StateError] immediately
+  /// instead of leaving its `completer` open forever — a drained queue
+  /// used to hang any test that made one call too many (e.g. a stray
+  /// re-fetch a regression reintroduced) for the full `pumpAndSettle`
+  /// timeout instead of failing fast with a clear error (final review
+  /// §3b).
+  bool allowManualCompletion = false;
+
+  /// `findScenes` results consumed in call order: as long as this (or
+  /// [pageFailures]) has an entry, each call completes immediately with
+  /// the next one. Leave both empty (and set [allowManualCompletion])
+  /// and resolve/reject a specific [FindScenesCall.completer] from
+  /// [calls] directly for full control over completion order and timing.
+  final List<ScenePage> pages = [];
+
+  /// `findScenes` failures consumed in call order, consulted ahead of
+  /// [pages].
+  final List<Failure> pageFailures = [];
+
+  /// Non-`Failure` errors consumed in call order, consulted ahead of
+  /// [pageFailures] and [pages] — simulates the real app's
+  /// `DeferredStashApi` resolving `stashApiProvider` (and, beneath
+  /// that, `PlatformConnectionStore`/secure storage) throwing a bare
+  /// platform exception before `HttpStashApi` ever gets a chance to
+  /// normalize it to a `Failure`.
+  final List<Object> pageRawErrors = [];
+
+  /// Every `findScenes` call, in the order received.
+  final List<FindScenesCall> calls = [];
+
+  List<int> get requestedPages => calls.map((call) => call.page).toList();
+
+  List<int> get requestedPerPage => calls.map((call) => call.perPage).toList();
+
+  List<SceneFilter> get requestedFilters =>
+      calls.map((call) => call.filter).toList();
+
+  @override
+  Future<String> version() async {
+    if (versionFailure case final Failure failure) throw failure;
+    if (versionFuture case final Future<String> future) return future;
+    return versionValue!;
+  }
+
+  /// `findScene` results consumed in call order, mirroring [pages]/
+  /// [pageFailures]/[pageRawErrors] for `findScenes` below. Leave all
+  /// three empty (and set [allowManualCompletion]) and resolve/reject a
+  /// specific [FindSceneCall.completer] from [sceneCalls] directly for
+  /// full control over completion order and timing (e.g. a late-response
+  /// race for `SceneController`).
+  final List<Scene?> sceneResults = [];
+  final List<Failure> sceneFailures = [];
+  final List<Object> sceneRawErrors = [];
+
+  /// Every `findScene` call, in the order received.
+  final List<FindSceneCall> sceneCalls = [];
+
+  @override
+  Future<Scene?> findScene(String id) {
+    final call = FindSceneCall(id);
+    sceneCalls.add(call);
+    if (sceneRawErrors.isNotEmpty) {
+      call.completer.completeError(sceneRawErrors.removeAt(0));
+    } else if (sceneFailures.isNotEmpty) {
+      call.completer.completeError(sceneFailures.removeAt(0));
+    } else if (sceneResults.isNotEmpty) {
+      call.completer.complete(sceneResults.removeAt(0));
+    } else if (!allowManualCompletion) {
+      call.completer.completeError(
+        StateError(
+          'FakeStashApi.findScene("$id"): no queued sceneResults/'
+          'sceneFailures/sceneRawErrors entry and allowManualCompletion '
+          'is false — this call would otherwise hang forever. Queue a '
+          'result, or set allowManualCompletion = true and resolve '
+          'sceneCalls.last.completer directly.',
+        ),
+      );
+    }
+    return call.completer.future;
+  }
+
+  @override
+  Future<ScenePage> findScenes(
+    SceneFilter filter, {
+    required int page,
+    required int perPage,
+  }) {
+    final call = FindScenesCall(filter: filter, page: page, perPage: perPage);
+    calls.add(call);
+    if (pageRawErrors.isNotEmpty) {
+      call.completer.completeError(pageRawErrors.removeAt(0));
+    } else if (pageFailures.isNotEmpty) {
+      call.completer.completeError(pageFailures.removeAt(0));
+    } else if (pages.isNotEmpty) {
+      call.completer.complete(pages.removeAt(0));
+    } else if (!allowManualCompletion) {
+      call.completer.completeError(
+        StateError(
+          'FakeStashApi.findScenes(page: $page): no queued pages/'
+          'pageFailures/pageRawErrors entry and allowManualCompletion is '
+          'false — this call would otherwise hang forever. Queue a '
+          'ScenePage/Failure, or set allowManualCompletion = true and '
+          'resolve calls.last.completer directly.',
+        ),
+      );
+    }
+    return call.completer.future;
+  }
+
+  /// Every `saveSceneActivity` call, in the order received.
+  final List<SaveActivityCall> saveActivityCalls = [];
+
+  /// Failures consumed in call order for `saveSceneActivity`: as long as
+  /// this has an entry, the next call fails with it instead of succeeding.
+  final List<Object> saveActivityFailures = [];
+
+  @override
+  Future<void> saveSceneActivity({
+    required String id,
+    required double resumeTime,
+    required double playDuration,
+  }) async {
+    saveActivityCalls.add(
+      SaveActivityCall(
+        id: id,
+        resumeTime: resumeTime,
+        playDuration: playDuration,
+      ),
+    );
+    if (saveActivityFailures.isNotEmpty) {
+      throw saveActivityFailures.removeAt(0);
+    }
+  }
+
+  /// Every `incrementO`/`resetO` call, in the order received.
+  final List<OMutationCall> oCalls = [];
+
+  /// New counts consumed in call order. Empty means the next call
+  /// returns `0`.
+  final List<int> oResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [oResults].
+  final List<Object> oFailures = [];
+
+  @override
+  Future<int> incrementO(String id) => _mutateO(id, isReset: false);
+
+  @override
+  Future<int> resetO(String id) => _mutateO(id, isReset: true);
+
+  Future<int> _mutateO(String id, {required bool isReset}) async {
+    oCalls.add(OMutationCall(id: id, isReset: isReset));
+    if (oFailures.isNotEmpty) throw oFailures.removeAt(0);
+    return oResults.isNotEmpty ? oResults.removeAt(0) : 0;
+  }
+
+  /// `jobQueue` results consumed in call order. When this and
+  /// [jobQueueFailures] are both empty, a call reports an idle server (an
+  /// empty queue) instead of failing: the library screen asks for the
+  /// queue on every load, and most tests never care what it holds. Set
+  /// [holdJobQueue] to leave calls pending instead, and resolve them
+  /// through [jobQueueCalls].
+  final List<List<Job>> jobQueueResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [jobQueueResults].
+  final List<Object> jobQueueFailures = [];
+
+  bool holdJobQueue = false;
+
+  /// Every `jobQueue` call, in the order received.
+  final List<JobQueueCall> jobQueueCalls = [];
+
+  @override
+  Future<List<Job>> jobQueue() {
+    final call = JobQueueCall();
+    jobQueueCalls.add(call);
+    if (jobQueueFailures.isNotEmpty) {
+      call.completer.completeError(jobQueueFailures.removeAt(0));
+    } else if (jobQueueResults.isNotEmpty) {
+      call.completer.complete(jobQueueResults.removeAt(0));
+    } else if (!holdJobQueue) {
+      call.completer.complete(const <Job>[]);
+    }
+    return call.completer.future;
+  }
+
+  /// Job ids `metadataScan` returns, consumed in call order. Empty means
+  /// `'1'`.
+  final List<String> metadataScanResults = [];
+
+  /// Errors consumed in call order, consulted ahead of
+  /// [metadataScanResults].
+  final List<Object> metadataScanFailures = [];
+
+  /// Set to leave `metadataScan` calls pending; complete them through
+  /// [metadataScanCalls].
+  bool holdMetadataScan = false;
+
+  /// Every `metadataScan` call, in the order received.
+  final List<Completer<String>> metadataScanCalls = [];
+
+  @override
+  Future<String> metadataScan() {
+    final completer = Completer<String>();
+    metadataScanCalls.add(completer);
+    if (metadataScanFailures.isNotEmpty) {
+      completer.completeError(metadataScanFailures.removeAt(0));
+    } else if (!holdMetadataScan) {
+      completer.complete(
+        metadataScanResults.isNotEmpty ? metadataScanResults.removeAt(0) : '1',
+      );
+    }
+    return completer.future;
+  }
+
+  /// `findJob` results consumed in call order. Empty means `null`, a job
+  /// Stash no longer knows.
+  final List<Job?> findJobResults = [];
+
+  /// Errors consumed in call order, consulted ahead of [findJobResults].
+  final List<Object> findJobFailures = [];
+
+  /// Every id `findJob` was asked for, in order.
+  final List<String> findJobCalls = [];
+
+  @override
+  Future<Job?> findJob(String id) async {
+    findJobCalls.add(id);
+    if (findJobFailures.isNotEmpty) throw findJobFailures.removeAt(0);
+    return findJobResults.isNotEmpty ? findJobResults.removeAt(0) : null;
+  }
+}
+
+/// One recorded `incrementO`/`resetO` call. [isReset] rather than two
+/// separate lists so a test can assert the *order* the two mutations
+/// were issued in, not just their counts.
+class OMutationCall {
+  OMutationCall({required this.id, required this.isReset});
+
+  final String id;
+  final bool isReset;
+}
+
+/// One recorded `saveSceneActivity` call.
+class SaveActivityCall {
+  SaveActivityCall({
+    required this.id,
+    required this.resumeTime,
+    required this.playDuration,
+  });
+
+  final String id;
+  final double resumeTime;
+  final double playDuration;
+}
+
+/// A [ThumbnailRepository] that hands back a fixed result (or `null`, its
+/// default) for every [load] call and records what was asked for.
+///
+/// [ThumbnailRepository] itself never throws — see that interface's own
+/// contract — so this fake has no failure-injection knob; a `null` result
+/// (the default) already exercises the "couldn't be shown" fallback path.
+class FakeThumbnailRepository implements ThumbnailRepository {
+  FakeThumbnailRepository({this.bytes});
+
+  final Uint8List? bytes;
+
+  final List<String> requestedSources = [];
+
+  @override
+  Future<Uint8List?> load(String source, int width, int height) async {
+    requestedSources.add(source);
+    return bytes;
+  }
+}

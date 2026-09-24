@@ -3,13 +3,18 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Tooling for `nix run .#flatpak` only, locked separately so it can move
+    # without moving `nixpkgs` (which pins the Flutter 3.41.6 CI uses). The
+    # appstream 1.1.2 in the main pin can't read SVG icons during
+    # `appstreamcli compose` (file-read-error), which fails every build.
+    nixpkgs-flatpak.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, rust-overlay }:
+  outputs = { self, nixpkgs, nixpkgs-flatpak, rust-overlay }:
     let
       linuxSystems  = [ "x86_64-linux" "aarch64-linux" ];
       darwinSystems = [ "aarch64-darwin" "x86_64-darwin" ];
@@ -30,7 +35,7 @@
         };
 
       # ------------------------------------------------------------------
-      # Linux: existing GTK dev shell + Flatpak builder app.
+      # Linux: legacy GTK dev shell (frozen) + Flatpak builder app.
       # ------------------------------------------------------------------
 
       manifest = "build-aux/dev.arsfeld.stash-player.yml";
@@ -38,10 +43,14 @@
       repoDir  = "build-aux/repo";
 
       flatpakBuildFor = system:
-        let pkgs = pkgsFor system; in
+        let
+          pkgs = pkgsFor system;
+          flatpakPkgs = nixpkgs-flatpak.legacyPackages.${system};
+        in
         pkgs.writeShellApplication {
           name = "stash-player-flatpak";
-          runtimeInputs = with pkgs; [ flatpak-builder appstream flatpak ];
+          # From `nixpkgs-flatpak`, not `pkgs` — see the input's comment.
+          runtimeInputs = with flatpakPkgs; [ flatpak-builder appstream flatpak ];
           text = ''
             set -euo pipefail
             cd "$(git rev-parse --show-toplevel)"
@@ -54,12 +63,77 @@
           '';
         };
 
+      # media_kit links libmpv dynamically. Nixpkgs' mpv.pc retains its full
+      # static link closure in Requires.private, so give CMake a dynamic-link
+      # metadata file rather than pulling every mpv build dependency into the
+      # interactive shell.
+      mkMpvPkgConfig = pkgs: pkgs.writeTextDir "lib/pkgconfig/mpv.pc" ''
+        Name: mpv
+        Description: mpv media player client library
+        Version: ${pkgs.mpv.version}
+        Libs: -L${pkgs.mpv}/lib -lmpv
+        Cflags: -I${pkgs.lib.getDev pkgs.mpv}/include
+      '';
+
+      # GTK4/libadwaita/GStreamer for the Rust relm4 client, plus GTK3/mpv for
+      # the Flutter Linux embedder + media_kit. Shared between `default` and
+      # `flutter` dev shells so both keep the exact same runtime libraries.
+      linuxRuntimeLibs = pkgs: mpvPkgConfig: with pkgs; [
+        glib
+        gtk3
+        gtk4
+        libadwaita
+        graphene
+        cairo
+        pango
+        gdk-pixbuf
+
+        gst_all_1.gstreamer
+        gst_all_1.gst-plugins-base
+        gst_all_1.gst-plugins-good
+        gst_all_1.gst-plugins-bad
+        gst_all_1.gst-plugins-ugly
+        gst_all_1.gst-libav
+        gst_all_1.gst-plugins-rs
+
+        openssl
+        dbus
+        libsecret
+        libglvnd
+        mpv
+        mpvPkgConfig
+
+        desktop-file-utils
+        shared-mime-info
+      ];
+
+      linuxShellEnv = pkgs: mpvPkgConfig: ''
+        export PKG_CONFIG_PATH="${mpvPkgConfig}/lib/pkgconfig:$PKG_CONFIG_PATH"
+        export GST_PLUGIN_SYSTEM_PATH_1_0="${pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
+          pkgs.gst_all_1.gstreamer.out
+          pkgs.gst_all_1.gst-plugins-base
+          pkgs.gst_all_1.gst-plugins-good
+          pkgs.gst_all_1.gst-plugins-bad
+          pkgs.gst_all_1.gst-plugins-ugly
+          pkgs.gst_all_1.gst-libav
+          pkgs.gst_all_1.gst-plugins-rs
+        ]}"
+        export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
+      '';
+
       linuxDevShell = system:
         let
           pkgs = pkgsFor system;
           rustToolchain = rustFor system;
+          mpvPkgConfig = mkMpvPkgConfig pkgs;
         in
         pkgs.mkShell {
+          # Rust + the legacy GTK client only (frozen, no longer released).
+          # `flutter`, `cmake`, `ninja`, and `clang` live in
+          # `devShells.flutter` instead — clang-wrapper's
+          # cc/ld/ar otherwise precede gcc-wrapper's on PATH and silently
+          # change the compiler/linker `cargo build` picks up for every
+          # `cc`-crate build script (glib-sys, openssl-sys, …).
           nativeBuildInputs = with pkgs; [
             rustToolchain
             pkg-config
@@ -67,47 +141,40 @@
             appstream
           ];
 
-          buildInputs = with pkgs; [
-            glib
-            gtk4
-            libadwaita
-            graphene
-            cairo
-            pango
-            gdk-pixbuf
+          buildInputs = linuxRuntimeLibs pkgs mpvPkgConfig;
 
-            gst_all_1.gstreamer
-            gst_all_1.gst-plugins-base
-            gst_all_1.gst-plugins-good
-            gst_all_1.gst-plugins-bad
-            gst_all_1.gst-plugins-ugly
-            gst_all_1.gst-libav
-            gst_all_1.gst-plugins-rs
+          shellHook = linuxShellEnv pkgs mpvPkgConfig;
+        };
 
-            openssl
-            dbus
-            libsecret
-
-            desktop-file-utils
-            shared-mime-info
+      # Flutter-only toolchain (`flutter`, `cmake`, `ninja`, `clang`), kept out
+      # of the default shell so Rust-only contributors don't pay for the
+      # multi-GB Flutter closure or a shifted C compiler/linker. Shares the
+      # same runtime libraries as `default` since the Flutter Linux embedder
+      # (GTK3) and media_kit (libmpv) need them too.
+      linuxFlutterDevShell = system:
+        let
+          pkgs = pkgsFor system;
+          mpvPkgConfig = mkMpvPkgConfig pkgs;
+        in
+        pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            flutter
+            cmake
+            ninja
+            clang
+            pkg-config
           ];
 
+          buildInputs = linuxRuntimeLibs pkgs mpvPkgConfig;
+
           shellHook = ''
-            export GST_PLUGIN_SYSTEM_PATH_1_0="${pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
-              pkgs.gst_all_1.gstreamer.out
-              pkgs.gst_all_1.gst-plugins-base
-              pkgs.gst_all_1.gst-plugins-good
-              pkgs.gst_all_1.gst-plugins-bad
-              pkgs.gst_all_1.gst-plugins-ugly
-              pkgs.gst_all_1.gst-libav
-              pkgs.gst_all_1.gst-plugins-rs
-            ]}"
-            export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
-          '';
+            flutter --version
+          '' + linuxShellEnv pkgs mpvPkgConfig;
         };
 
       # ------------------------------------------------------------------
-      # macOS: SwiftUI app driven by stash-player-ffi.
+      # macOS: the legacy SwiftUI app (frozen, no longer released), driven
+      # by stash-player-ffi.
       #
       # Xcode itself isn't in nixpkgs — `xcodebuild`, `xcrun`, `lipo`, and
       # `open` come from Xcode / Command Line Tools on the host. Nix
@@ -121,13 +188,49 @@
           rustToolchain = rustFor system;
         in
         pkgs.mkShell {
+          # Rust + xcodegen for the legacy SwiftUI client only (frozen, no
+          # longer released). `flutter`, `cmake`, `ninja`, and `cocoapods`
+          # live in `devShells.flutter` instead — see the Linux shell's comment for why an explicit
+          # `clang` is a hazard for the Rust build (and on Darwin it
+          # compounds the documented `nix develop` + xcodebuild linker
+          # conflict). No shell on this platform ships one: the Flutter
+          # shell is `mkShellNoCC` for its own Apple-toolchain reason.
           nativeBuildInputs = with pkgs; [
             rustToolchain
+            pkg-config
             xcodegen
           ];
           shellHook = ''
             # Pin the Rust staticlib's deployment floor to match the Swift
             # target so the Apple linker doesn't warn on every object.
+            export MACOSX_DEPLOYMENT_TARGET=14.0
+          '';
+        };
+
+      # Flutter-only toolchain, kept out of the default shell for the same
+      # reasons as the Linux split above.
+      #
+      # `mkShellNoCC`, and no `clang` in the inputs, because on Darwin every
+      # compile this shell drives has to be Xcode's. `flutter test` builds
+      # the `objective_c` package's native-asset hook, and that hook picks
+      # its compiler off PATH: with nixpkgs' clang-wrapper there, its SDK
+      # lookup fails and clang is handed `-isysroot error: unable to find
+      # sdk: 'macosx'`, so every file dies on `Foundation/Foundation.h`.
+      # Plain `mkShell` is not enough to avoid that — it puts stdenv's own
+      # cc-wrapper on PATH even with `clang` dropped. Nothing here wants it:
+      # `flutter build macos` and the pods go through xcodebuild, which has
+      # its own reason to keep nixpkgs' wrapper away (see `macosRunFor`).
+      darwinFlutterDevShell = system:
+        let pkgs = pkgsFor system; in
+        pkgs.mkShellNoCC {
+          nativeBuildInputs = with pkgs; [
+            flutter
+            cmake
+            ninja
+            cocoapods
+          ];
+          shellHook = ''
+            flutter --version
             export MACOSX_DEPLOYMENT_TARGET=14.0
           '';
         };
@@ -193,8 +296,14 @@
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system; in
         if pkgs.stdenv.isDarwin
-        then { default = darwinDevShell system; }
-        else { default = linuxDevShell  system; }
+        then {
+          default = darwinDevShell system;
+          flutter = darwinFlutterDevShell system;
+        }
+        else {
+          default = linuxDevShell system;
+          flutter = linuxFlutterDevShell system;
+        }
       );
 
       apps =
@@ -206,12 +315,13 @@
         }))
         //
         (forDarwin (system: {
-          # `nix run .#macos` — full build-and-launch loop.
+          # `nix run .#macos` — legacy SwiftUI build-and-launch loop.
           macos = {
             type = "app";
             program = "${macosRunFor system}/bin/stash-player-macos";
           };
-          # `nix run .#macos-build` — rebuild xcframework + regenerate xcodeproj.
+          # `nix run .#macos-build` — legacy SwiftUI: rebuild xcframework +
+          # regenerate xcodeproj.
           macos-build = {
             type = "app";
             program = "${macosBuildFor system}/bin/stash-player-macos-build";

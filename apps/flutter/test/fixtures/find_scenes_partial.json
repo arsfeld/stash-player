@@ -1,0 +1,1 @@
+{"data":{"findScenes":{"count":1,"scenes":[{"id":"1004","title":"Sample Scene Delta","rating100":100,"paths":{"screenshot":"https://stash.example.test/scene/1004/screenshot","stream":"https://stash.example.test/scene/1004/stream"},"files":[{"duration":1810.0}],"studio":{"id":"103","name":"Studio Baz"},"performers":[{"id":"204","name":"Performer Delta"}]}]}}}

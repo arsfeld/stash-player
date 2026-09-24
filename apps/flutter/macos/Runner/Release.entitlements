@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Deliberately empty. Distributed with Developer ID, not the Mac App
+     Store, so there is no App Sandbox: Sparkle's installer and the legacy
+     keychain import both need to run unsandboxed. The file must still exist
+     and be passed explicitly — without it xcodebuild injects
+     com.apple.security.get-task-allow, which notarization rejects. -->
+<dict/>
+</plist>
