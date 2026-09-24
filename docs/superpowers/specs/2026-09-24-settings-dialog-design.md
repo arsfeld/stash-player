@@ -80,28 +80,33 @@ Form building blocks in the same file (or `app_form.dart` if it grows):
 - `AppPreferencesGroup(title, description?, children)`: on Adwaita, a
   heading above a boxed list (rounded card, 1px separators between rows)
   with an optional dimmed description below. On macOS, plain rows with no
-  card; the title is omitted when there is only one group.
+  card, and the title as a bold section label.
 - `AppEntryRow(label, controller, focusNode, obscure, trailing,
   errorText, …)`: on Adwaita, like `AdwEntryRow`, with the label inside the
-  row and the field filling the rest, and the error in the error colour
-  below the group row. On macOS, a right-aligned `Label:` column and a
-  bordered text field, with the error below the field.
+  row and a borderless field filling the rest. On macOS, a right-aligned
+  `Label:` column and a bordered text field. On both, the error is the
+  field's own `InputDecoration.errorText`, so it renders directly under the
+  field. The label and field share one semantics node, so a screen reader
+  announces the field by its label.
 
 ## 3. `ConnectionForm` (`lib/features/connection/connection_form.dart`)
 
 This is extracted from `ConnectionScreen` so the first-launch page and the
 dialog share one copy of the tricky logic.
 
-- It owns the three `TextEditingController`s, the focus nodes, the API key
-  show/hide toggle, `load()` on mount, and `_applyLoadedConfig`'s "don't
-  clobber text the user typed" seeding. These move over unchanged.
+- The widget owns the focus nodes, the API key show/hide toggle and the
+  `load()` call on mount, and it feeds each loaded config to
+  `ConnectionFields.applyLoaded`. `applyLoaded` is `_applyLoadedConfig`'s
+  "don't clobber text the user typed" seeding, moved over unchanged.
 - It renders the fields as two groups: **Server** (URL, and the API key with
   its eye toggle) and **Network** (SOCKS5 proxy, with the Tailscale hint as
   the group description). It uses `AppPreferencesGroup`/`AppEntryRow`, and
   also shows the controller's `fieldError`, `proxyFieldError` and `failure`.
-- It exposes a `ConnectionFormController` (or a `GlobalKey<…State>`
-  handle) with `ConnectionConfig current` and `bool get canSubmit` (the URL
-  is not blank), so the host decides which button submits.
+- The text state lives in a plain `ConnectionFields` object the host
+  creates and disposes. It holds the three `TextEditingController`s,
+  `ConnectionConfig get current`, `bool get canSubmit` (the URL is not
+  blank) and `applyLoaded(config)`, so the host decides which button
+  submits.
 
 `ConnectionScreen` keeps being the full-screen first-launch page: the
 "Connect to Stash" heading, `ConnectionForm`, and a "Connect" button that
@@ -122,11 +127,14 @@ branch are removed.
 - If it fails, the dialog stays open: `fieldError` shows under the URL row,
   `proxyFieldError` under the SOCKS row, and `failure` as an error line
   below the groups.
-- Cancel, Esc and the barrier close the dialog without saving. A test still
-  in flight when the dialog closes is ignored, because only the dialog's
-  own listener calls `replaceConnection`, and it is gone by then. Reopening
+- Cancel, Esc and the barrier close the dialog without saving. Reopening
   seeds from storage again, env overrides included (`STASH_URL`/
   `STASH_API_KEY`), the same as today.
+- While a test is running, Cancel, Esc and the barrier are disabled.
+  `testAndSave` writes the config to storage as soon as Stash answers, so a
+  dialog closed mid-test would leave a new connection saved but not applied
+  until the next launch. The wait is bounded by `HttpStashApi`'s 15 s
+  request timeout.
 
 ## 5. Entry points
 
@@ -142,11 +150,15 @@ branch are removed.
   completeness, although it is never shown there) at the end of the
   toolbar, tooltip "Main Menu". It shows an `AppMenu` spec through
   `NativeMenus` (a native `GtkMenu`, falling back to the drawn menu) with
-  a single item, **Preferences**, whose shortcut label is Ctrl+,.
-  `LibraryScreen` wraps its body in `CallbackShortcuts` with
-  `SingleActivator(comma, control: true)` → `openSettings()`, so the
-  shortcut works only in the library, not the player. On macOS the menu
-  bar item's own shortcut covers ⌘,.
+  a single item, **Preferences**. Popup menus don't draw shortcut labels
+  (`AppMenuAction.shortcut` is used only by the macOS menu bar), so the
+  item does not show "Ctrl+,".
+  `LibraryScreen` registers a `HardwareKeyboard` handler for Ctrl+, that
+  calls `openSettings()`. The handler runs only while the library page is
+  the top route (`ModalRoute.isCurrent`), so the shortcut works in the
+  library but not in the player or with the dialog already open, and it
+  does not depend on which widget has focus. On macOS the menu bar item's
+  own shortcut covers ⌘,.
 - The toolbar's tab-order values stay contiguous after the change: the
   primary menu takes the old settings slot on Linux, and on macOS the last
   slot is dropped.
@@ -186,4 +198,4 @@ branch are removed.
       row, and a good one closes it and shows the toast.
 - [ ] macOS: Stash Player → Settings… and ⌘, open the sheet, the item is
       disabled while a scene plays, and Return saves.
-- [ ] Both: Esc cancels mid-test without applying the result.
+- [ ] Both: during a slow test, Cancel and Esc are disabled until it ends.
