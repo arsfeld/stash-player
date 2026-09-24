@@ -6,6 +6,7 @@ import 'package:stash_player_flutter/app/providers.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/domain/job.dart';
+import 'package:stash_player_flutter/domain/scan_options.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/features/library/library_controller.dart';
 import 'package:stash_player_flutter/features/library/tasks_controller.dart';
@@ -303,6 +304,43 @@ void main() {
   });
 
   group('scan', () {
+    test("scans with the options Stash's web UI would use", () {
+      fakeAsync((async) {
+        final tasks = build();
+        const saved = ScanOptions(
+          generateCovers: true,
+          generatePreviews: true,
+          generateSprites: true,
+        );
+        api.scanDefaultsResult = saved;
+
+        tasks.startScan();
+        async.flushMicrotasks();
+
+        expect(api.scanDefaultsCallCount, 1);
+        expect(api.metadataScanOptions, [saved]);
+        tasks.dispose();
+      });
+    });
+
+    test('a failed defaults lookup still scans, generating covers only', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.scanDefaultsFailures.add(const TransportFailure());
+        Object? thrown;
+
+        tasks.startScan().catchError((Object error) {
+          thrown = error;
+        });
+        async.flushMicrotasks();
+
+        expect(thrown, isNull);
+        expect(api.metadataScanOptions, [ScanOptions.builtIn]);
+        expect(outcomes, [ScanOutcome.completed]);
+        tasks.dispose();
+      });
+    });
+
     test('shows "Starting scan…" while the mutation is in flight, hands over '
         "to Stash's own row, and reports the end exactly once", () {
       fakeAsync((async) {

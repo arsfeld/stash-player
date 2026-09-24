@@ -148,7 +148,7 @@ class TasksController extends ChangeNotifier {
 
   /// Asks Stash to scan and follows the job it queues. Does nothing while
   /// work is already active, which is also when the Scan button is
-  /// disabled. Rethrows whatever the mutation threw, for the caller to
+  /// disabled. Rethrows whatever the scan mutation threw, for the caller to
   /// surface; no row is left behind.
   Future<void> startScan() async {
     if (_disposed || hasActiveWork) return;
@@ -160,7 +160,7 @@ class TasksController extends ChangeNotifier {
 
     final String jobId;
     try {
-      jobId = await _api.metadataScan(ScanOptions.builtIn);
+      jobId = await _api.metadataScan(await _scanOptions());
     } catch (_) {
       // Only clear `_scan` back to idle if it is still this scan: a
       // failure streak, or a newer startScan replacing this one, must not
@@ -184,6 +184,17 @@ class TasksController extends ChangeNotifier {
     _scan = _ScanFollowing(jobId, judgeAfter: _fetchSerial);
     notifyListeners();
     await _fetch();
+  }
+
+  /// The options Stash's web UI would scan with. A failed lookup falls
+  /// back to covers only rather than failing the scan: a settings read is
+  /// no reason to leave new files without thumbnails.
+  Future<ScanOptions> _scanOptions() async {
+    try {
+      return await _api.scanDefaults();
+    } catch (_) {
+      return ScanOptions.builtIn;
+    }
   }
 
   @override
