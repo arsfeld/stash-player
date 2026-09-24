@@ -332,4 +332,63 @@ void main() {
 
     expect(a, isNot(b));
   });
+
+  group('settings dialog', () {
+    test('opens over the library and closes back to it', () async {
+      final container = buildContainer(
+        saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+      ).container;
+      final app = container.read(appControllerProvider.notifier);
+      await app.bootstrap();
+
+      app.openSettings();
+      expect(
+        container.read(appControllerProvider),
+        const LibraryDestination(settingsOpen: true),
+      );
+
+      app.closeSettings();
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.library(),
+      );
+    });
+
+    test('does nothing away from the library', () async {
+      final container = buildContainer().container;
+      final app = container.read(appControllerProvider.notifier);
+      await app.bootstrap();
+
+      app.openSettings();
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.connection(),
+      );
+
+      app.openScene('1');
+      app.openSettings();
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.scene('1'),
+      );
+    });
+
+    test('a successful replaceConnection closes it', () async {
+      final container = buildContainer(
+        saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+      ).container;
+      final app = container.read(appControllerProvider.notifier);
+      await app.bootstrap();
+      app.openSettings();
+
+      await app.replaceConnection(
+        const ConnectionConfig(serverUrl: 'https://new.test'),
+      );
+
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.library(),
+      );
+    });
+  });
 }
