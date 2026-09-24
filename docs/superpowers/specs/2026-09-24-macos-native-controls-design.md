@@ -3,7 +3,8 @@
 **Date:** 2026-09-24
 **Scope:** `apps/flutter/`, macOS only; Linux is unchanged
 **Follows:** `2026-09-24-native-look-and-feel-design.md`,
-`2026-09-24-settings-dialog-design.md` (amends its macOS half)
+`2026-09-24-settings-dialog-design.md` (built in #13; this replaces its
+drawn macOS sheet at runtime)
 
 ## Goal
 
@@ -173,13 +174,15 @@ traffic-light metrics don't change.
 
 ## 2. Native connection sheet
 
-This replaces the macOS half of the settings-dialog spec: `AppDialog`'s
-drawn macOS sheet variant is not built. These parts of that spec still
-apply on macOS:
+The settings dialog (#13) already ships a drawn macOS sheet:
+`AppDialog._macos`, pushed as an `AppDialogPage` by `AppRouter`. This
+design keeps that code as the fallback and puts a real AppKit sheet in
+front of it. These parts of the settings-dialog design still apply
+unchanged on macOS:
 - the `settingsOpen` router state, `openSettings`/`closeSettings`
 - the menu bar "Settings…" (⌘,) item
-- the `ConnectionFields`/`ConnectionForm` extraction, which remains
-  Linux's form and the macOS fallback
+- `ConnectionFields`/`ConnectionForm`, which remain Linux's form and the
+  macOS fallback
 
 ### Port (`lib/features/connection/connection_sheet.dart`)
 
@@ -251,21 +254,27 @@ convention for secure fields.
 - **First launch:** on macOS, `ConnectionScreen` draws only the window
   background and presents the sheet with `title: 'Connect to Stash'`,
   `confirmLabel: 'Connect'` and `cancellable: false`.
-- **Settings:** on macOS, `AppRouter._pagesFor` adds no dialog page for
-  `settingsOpen`. Instead a `ConnectionSheetHost` in the library screen
+- **Settings:** on macOS, when a `ConnectionSheet` is provided,
+  `AppRouter._pagesFor` doesn't add `_settingsPage` for `settingsOpen`. Instead a `ConnectionSheetHost` in the library screen
   watches `settingsOpen` and presents the sheet with
   `title: 'Connection'`, `confirmLabel: 'Save'` and `cancellable: true`.
   When the flag clears, it dismisses the sheet.
 
-The drawn `ConnectionScreen`/`ConnectionSettingsDialog` path is used when
-no `ConnectionSheet` is provided, as in widget tests, or when `present`
-throws `MissingPluginException`.
+When no `ConnectionSheet` is provided, as in widget tests, the drawn path
+from #13 is used: `ConnectionScreen`, and `ConnectionSettingsDialog` in
+`AppDialog`'s macOS layout. If `present` throws `MissingPluginException`,
+the host calls `connectionSheetProvider.notifier.disable()`, which sets
+the provider to null for the rest of the session. The router watches the
+provider, so it adds `_settingsPage` again, and `ConnectionScreen` draws
+its form again.
 
 ## 3. Wiring
 
-- `providers.dart` gains `nativeToolbarProvider` and
-  `connectionSheetProvider`: the channel implementation on macOS, null
-  elsewhere.
+- `providers.dart` gains `nativeToolbarProvider` (the channel
+  implementation on macOS, null elsewhere) and `connectionSheetProvider`.
+  The latter is a `Notifier<ConnectionSheet?>`: `ChannelConnectionSheet`
+  on macOS, null elsewhere, and set to null by `disable()` after a channel
+  failure.
 - `app.dart` provides `NativeToolbarScope` from the first.
 - `MainFlutterWindow.swift` registers `NativeToolbarChannel` (with the
   window and its toolbar) and `ConnectionSheetChannel` (with the window),
@@ -349,10 +358,8 @@ throws `MissingPluginException`.
 
 ## 6. Delivery order
 
-Before this starts, implement the settings-dialog plan
-(`docs/superpowers/plans/2026-09-24-settings-dialog.md`) with
-`AppDialog`'s macOS variant skipped: `AppDialog` draws the Adwaita layout
-only. Then, with each step leaving the app shippable:
+The settings dialog (#13) is already on `main`, so nothing blocks this.
+Each step leaves the app shippable:
 
 1. The toolbar spec, the `NativeToolbar` port, `NativeToolbarScope`, and
    SF Symbol names on `AppIcon`.
@@ -366,4 +373,5 @@ only. Then, with each step leaving the app shippable:
      `lib/ui/`
    - the look-and-feel spec: its organizing rule and "In-content native
      views" row now point here
-   - the settings-dialog spec: an amendment note for its macOS half
+   - the settings-dialog spec: a note that its macOS sheet is now the
+     fallback behind the native one
