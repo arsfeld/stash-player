@@ -8,6 +8,7 @@ import '../features/library/library_screen.dart';
 import '../features/player/scene_screen.dart';
 import '../ui/widgets/app_dialog.dart';
 import 'app_controller.dart';
+import 'providers.dart';
 
 /// Switches on [AppController]'s current [AppDestination] and renders it
 /// through a plain [Navigator] `pages` list — no routing package. The
@@ -20,9 +21,10 @@ class AppRouter extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final destination = ref.watch(appControllerProvider);
+    final nativeSheet = ref.watch(connectionSheetProvider) != null;
 
     return Navigator(
-      pages: _pagesFor(destination),
+      pages: _pagesFor(destination, nativeSheet: nativeSheet),
       onDidRemovePage: (page) {
         final app = ref.read(appControllerProvider.notifier);
         switch (page.name) {
@@ -37,28 +39,32 @@ class AppRouter extends ConsumerWidget {
     );
   }
 
-  List<Page<void>> _pagesFor(AppDestination destination) =>
-      switch (destination) {
-        ConnectionDestination() => const [
-          MaterialPage<void>(
-            key: ValueKey('connection'),
-            name: _connectionPageName,
-            child: _ConnectionDestinationScreen(),
-          ),
-        ],
-        LibraryDestination(:final settingsOpen) => [
-          _libraryPage,
-          if (settingsOpen) _settingsPage,
-        ],
-        SceneDestination(:final sceneId, :final browse) => [
-          _libraryPage,
-          MaterialPage<void>(
-            key: ValueKey('scene-$sceneId'),
-            name: _scenePageName,
-            child: SceneScreen(sceneId: sceneId, browse: browse),
-          ),
-        ],
-      };
+  List<Page<void>> _pagesFor(
+    AppDestination destination, {
+    required bool nativeSheet,
+  }) => switch (destination) {
+    ConnectionDestination() => const [
+      MaterialPage<void>(
+        key: ValueKey('connection'),
+        name: _connectionPageName,
+        child: _ConnectionDestinationScreen(),
+      ),
+    ],
+    LibraryDestination(:final settingsOpen) => [
+      _libraryPage,
+      // On macOS the library's `ConnectionSheetHost` shows settings as
+      // a native sheet instead.
+      if (settingsOpen && !nativeSheet) _settingsPage,
+    ],
+    SceneDestination(:final sceneId, :final browse) => [
+      _libraryPage,
+      MaterialPage<void>(
+        key: ValueKey('scene-$sceneId'),
+        name: _scenePageName,
+        child: SceneScreen(sceneId: sceneId, browse: browse),
+      ),
+    ],
+  };
 }
 
 const _connectionPageName = 'connection';

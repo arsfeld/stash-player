@@ -17,6 +17,7 @@ import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 
+import '../support/fake_connection_sheet.dart';
 import '../support/fake_playback_engine.dart';
 import '../support/fakes.dart';
 
@@ -125,6 +126,45 @@ void main() {
     );
     expect(container.read(connectionGenerationProvider), generationBefore);
   });
+
+  testWidgets(
+    'settings with a native sheet: presents the sheet, no drawn dialog',
+    (tester) async {
+      final sheet = FakeConnectionSheet();
+      final container = ProviderContainer(
+        overrides: [
+          appControllerProvider.overrideWith(
+            () => _FixedDestinationController(
+              const LibraryDestination(settingsOpen: true),
+            ),
+          ),
+          connectionSheetProvider.overrideWith(
+            () => FakeConnectionSheetNotifier(sheet),
+          ),
+          connectionStoreProvider.overrideWithValue(
+            FakeConnectionStore(
+              saved: const ConnectionConfig(serverUrl: 'https://stash.test'),
+            ),
+          ),
+          environmentProvider.overrideWithValue(const {}),
+          stashApiFactoryProvider.overrideWithValue(
+            (config) =>
+                FakeStashApi(versionValue: 'v0.31.0')
+                  ..pages.add(ScenePage(total: 0, scenes: const [])),
+          ),
+          connectionControllerOverride,
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_app(container));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectionSettingsDialog), findsNothing);
+      expect(find.byType(LibraryScreen), findsOneWidget);
+      expect(sheet.presented!.title, 'Connection');
+    },
+  );
 
   testWidgets('popping the scene page returns to the library', (tester) async {
     // Task 11 wired the real `SceneScreen` into the `scene(sceneId)`
