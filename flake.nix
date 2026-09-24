@@ -35,7 +35,7 @@
         };
 
       # ------------------------------------------------------------------
-      # Linux: existing GTK dev shell + Flatpak builder app.
+      # Linux: legacy GTK dev shell (frozen) + Flatpak builder app.
       # ------------------------------------------------------------------
 
       manifest = "build-aux/dev.arsfeld.stash-player.yml";
@@ -128,8 +128,9 @@
           mpvPkgConfig = mkMpvPkgConfig pkgs;
         in
         pkgs.mkShell {
-          # Rust + the released GTK client only. `flutter`, `cmake`, `ninja`,
-          # and `clang` live in `devShells.flutter` instead — clang-wrapper's
+          # Rust + the legacy GTK client only (frozen, no longer released).
+          # `flutter`, `cmake`, `ninja`, and `clang` live in
+          # `devShells.flutter` instead — clang-wrapper's
           # cc/ld/ar otherwise precede gcc-wrapper's on PATH and silently
           # change the compiler/linker `cargo build` picks up for every
           # `cc`-crate build script (glib-sys, openssl-sys, …).
@@ -172,7 +173,8 @@
         };
 
       # ------------------------------------------------------------------
-      # macOS: SwiftUI app driven by stash-player-ffi.
+      # macOS: the legacy SwiftUI app (frozen, no longer released), driven
+      # by stash-player-ffi.
       #
       # Xcode itself isn't in nixpkgs — `xcodebuild`, `xcrun`, `lipo`, and
       # `open` come from Xcode / Command Line Tools on the host. Nix
@@ -186,9 +188,9 @@
           rustToolchain = rustFor system;
         in
         pkgs.mkShell {
-          # Rust + xcodegen for the released SwiftUI client only. `flutter`,
-          # `cmake`, `ninja`, and `cocoapods` live in `devShells.flutter`
-          # instead — see the Linux shell's comment for why an explicit
+          # Rust + xcodegen for the legacy SwiftUI client only (frozen, no
+          # longer released). `flutter`, `cmake`, `ninja`, and `cocoapods`
+          # live in `devShells.flutter` instead — see the Linux shell's comment for why an explicit
           # `clang` is a hazard for the Rust build (and on Darwin it
           # compounds the documented `nix develop` + xcodebuild linker
           # conflict). No shell on this platform ships one: the Flutter
@@ -313,12 +315,13 @@
         }))
         //
         (forDarwin (system: {
-          # `nix run .#macos` — full build-and-launch loop.
+          # `nix run .#macos` — legacy SwiftUI build-and-launch loop.
           macos = {
             type = "app";
             program = "${macosRunFor system}/bin/stash-player-macos";
           };
-          # `nix run .#macos-build` — rebuild xcframework + regenerate xcodeproj.
+          # `nix run .#macos-build` — legacy SwiftUI: rebuild xcframework +
+          # regenerate xcodeproj.
           macos-build = {
             type = "app";
             program = "${macosBuildFor system}/bin/stash-player-macos-build";
