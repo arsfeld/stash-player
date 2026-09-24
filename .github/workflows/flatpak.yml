@@ -29,7 +29,7 @@ jobs:
         with:
           bundle: stash-player.flatpak
           manifest-path: build-aux/dev.arsfeld.stash-player.yml
-          cache-key: flatpak-builder-${{ hashFiles('Cargo.lock', 'build-aux/dev.arsfeld.stash-player.yml') }}
+          cache-key: flatpak-builder-${{ hashFiles('apps/flutter/pubspec.lock', 'build-aux/dev.arsfeld.stash-player.yml') }}
           # Run appstream + desktop file validation as part of the build.
           verbose: false
 
