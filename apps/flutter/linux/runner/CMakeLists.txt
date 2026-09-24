@@ -23,4 +23,9 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
+# Legacy-client API key import (see my_application.cc). Already a
+# transitive requirement of flutter_secure_storage_linux.
+pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::LIBSECRET)
+
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

@@ -35,7 +35,49 @@ class MainFlutterWindow: NSWindow {
     self.minSize = NSSize(width: 480, height: 400)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    LegacySecretChannel.register(with: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
+  }
+}
+
+/// Handles `readApiKey` on `stash_player/legacy_secret`: the API key the
+/// SwiftUI client stored (a generic password, service `stash-player`,
+/// account `stash-api-key`, in the file-based login keychain), nil when
+/// there is none, or a `lookup-failed` error. Same bundle ID and team as
+/// that client, so the item's access list admits this app without a prompt.
+enum LegacySecretChannel {
+  static func register(with messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "stash_player/legacy_secret",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "readApiKey" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "stash-player",
+        kSecAttrAccount as String: "stash-api-key",
+        kSecReturnData as String: true,
+        kSecMatchLimit as String: kSecMatchLimitOne,
+      ]
+      var item: CFTypeRef?
+      let status = SecItemCopyMatching(query as CFDictionary, &item)
+      switch status {
+      case errSecSuccess:
+        result((item as? Data).flatMap { String(data: $0, encoding: .utf8) })
+      case errSecItemNotFound:
+        result(nil)
+      default:
+        result(FlutterError(
+          code: "lookup-failed",
+          message: "SecItemCopyMatching returned \(status)",
+          details: nil
+        ))
+      }
+    }
   }
 }

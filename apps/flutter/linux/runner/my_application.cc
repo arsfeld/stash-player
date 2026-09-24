@@ -1,6 +1,7 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+#include <libsecret/secret.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -10,6 +11,7 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  FlMethodChannel* legacy_secret_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -17,6 +19,49 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+// The Secret Service item the legacy GTK client (Rust `secret-service`
+// crate) wrote. That crate sets no `xdg:schema` attribute, so the lookup
+// must not match on the schema name.
+static const SecretSchema* legacy_secret_schema() {
+  static const SecretSchema schema = {
+      "dev.arsfeld.stash-player.Legacy",
+      SECRET_SCHEMA_DONT_MATCH_NAME,
+      {
+          {"application", SECRET_SCHEMA_ATTRIBUTE_STRING},
+          {"key", SECRET_SCHEMA_ATTRIBUTE_STRING},
+          {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING},
+      }};
+  return &schema;
+}
+
+// Handles `readApiKey` on `stash_player/legacy_secret`: the stored key, null
+// when there is none, or a `lookup-failed` error. Synchronous because it
+// runs at most once per install (see PlatformConnectionStore) and the
+// connection screen can't render meaningfully before it answers anyway.
+static void legacy_secret_method_cb(FlMethodChannel* channel,
+                                    FlMethodCall* method_call,
+                                    gpointer user_data) {
+  g_autoptr(FlMethodResponse) response = nullptr;
+  if (g_strcmp0(fl_method_call_get_name(method_call), "readApiKey") == 0) {
+    g_autoptr(GError) error = nullptr;
+    gchar* secret = secret_password_lookup_sync(
+        legacy_secret_schema(), nullptr, &error, "application", "stash-player",
+        "key", "stash-api-key", nullptr);
+    if (error != nullptr) {
+      response = FL_METHOD_RESPONSE(
+          fl_method_error_response_new("lookup-failed", error->message, nullptr));
+    } else {
+      g_autoptr(FlValue) value = secret != nullptr ? fl_value_new_string(secret)
+                                                   : fl_value_new_null();
+      response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+    }
+    secret_password_free(secret);
+  } else {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+  fl_method_call_respond(method_call, response, nullptr);
 }
 
 // Implements GApplication::activate.
@@ -75,6 +120,13 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  self->legacy_secret_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+      "stash_player/legacy_secret", FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      self->legacy_secret_channel, legacy_secret_method_cb, nullptr, nullptr);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -121,6 +173,7 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->legacy_secret_channel);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
