@@ -1,9 +1,25 @@
 name: Tests
 
+# The Rust crates back the legacy GTK / SwiftUI clients, which are frozen
+# (kept building and linted, no longer released). Only run when they or
+# the workspace manifests change.
 on:
   push:
+    branches: [main, master]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - ".github/workflows/tests.yml"
   pull_request:
     branches: [main, master]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - ".github/workflows/tests.yml"
   workflow_dispatch:
 
 env:
