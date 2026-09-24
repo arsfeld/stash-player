@@ -4,7 +4,7 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   // Retained for the window's lifetime: FlutterEventChannel holds its
   // handler weakly.
-  private let appearance = AppearanceStreamHandler()
+  private let appearanceStream = AppearanceStreamHandler()
   private var nativeMenus: NativeMenuChannel?
 
   override func awakeFromNib() {
@@ -44,7 +44,7 @@ class MainFlutterWindow: NSWindow {
     FlutterEventChannel(
       name: "stash_player/appearance",
       binaryMessenger: flutterViewController.engine.binaryMessenger
-    ).setStreamHandler(appearance)
+    ).setStreamHandler(appearanceStream)
     nativeMenus = NativeMenuChannel(
       messenger: flutterViewController.engine.binaryMessenger,
       view: flutterViewController.view
