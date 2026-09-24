@@ -68,9 +68,11 @@ class AppMenuBar extends ConsumerWidget {
               .invokeMethod<void>('checkForUpdates')
               .catchError((Object error) => logDiagnostic('updates', '$error')),
         ),
-        onOpenSettings: destination is LibraryDestination
-            ? ref.read(appControllerProvider.notifier).openSettings
-            : null,
+        onOpenSettings: switch (destination) {
+          LibraryDestination(settingsOpen: false) =>
+            ref.read(appControllerProvider.notifier).openSettings,
+          _ => null,
+        },
       ),
       child: child,
     );
@@ -88,7 +90,8 @@ class AppMenuBar extends ConsumerWidget {
 /// real fullscreen support lands.
 ///
 /// `onOpenSettings` is null wherever settings can't open (anywhere but the
-/// library), which AppKit shows as a disabled Settings… item.
+/// library, and on the library itself while its dialog is already open),
+/// which AppKit shows as a disabled Settings… item.
 List<PlatformMenuItem> buildMacMenuBar({
   required AppMenu playback,
   required VoidCallback onCheckForUpdates,
