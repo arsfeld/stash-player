@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:stash_player_flutter/domain/connection.dart';
@@ -17,6 +18,12 @@ class FakeLegacySecretReader implements LegacySecretReader {
     reads++;
     return key;
   }
+}
+
+class _ThrowingLegacySecretReader implements LegacySecretReader {
+  @override
+  Future<String?> readApiKey() async =>
+      throw PlatformException(code: 'lookup-failed');
 }
 
 void main() {
@@ -64,6 +71,28 @@ void main() {
       const ConnectionConfig(serverUrl: 'http://nas:9999'),
     );
   });
+
+  test(
+    'a keyring failure still imports the URL and proxy, with an empty key',
+    () async {
+      final path = writeConfig(
+        'config.toml',
+        'stash_url = "https://stash.lan"\nproxy_url = "socks5h://127.0.0.1:1055"\n',
+      );
+      final importer = LegacyConnectionImporter(
+        configPaths: [path],
+        secrets: _ThrowingLegacySecretReader(),
+      );
+
+      expect(
+        await importer.importConnection(),
+        const ConnectionConfig(
+          serverUrl: 'https://stash.lan',
+          socksProxy: '127.0.0.1:1055',
+        ),
+      );
+    },
+  );
 
   test('skips missing and unusable candidates in order', () async {
     final unusable = writeConfig('bad.toml', 'stash_url = ""');

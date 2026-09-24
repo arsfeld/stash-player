@@ -123,14 +123,35 @@ void main() {
     );
 
     test(
-      'a failed import falls through to an empty connection, once',
+      'a keyring failure still imports the URL and proxy, with an empty key, '
+      'once',
       () async {
         final failing = _StubSecrets.failing();
         final store = buildImportingStore(failing);
+        const expected = ConnectionConfig(
+          serverUrl: 'https://legacy.lan',
+          socksProxy: '127.0.0.1:1055',
+        );
+
+        expect(await store.load(const {}), expected);
+        expect(await store.load(const {}), expected);
+        expect(failing.reads, 1);
+      },
+    );
+
+    test(
+      'a failure persisting the import falls through to an empty connection, '
+      'once',
+      () async {
+        SharedPreferencesAsyncPlatform.instance = _FlakyPreferences(
+          failingSetString: serverUrlPreferenceKey,
+        );
+        final secrets = _StubSecrets('legacy-key');
+        final store = buildImportingStore(secrets);
 
         expect((await store.load(const {})).serverUrl, '');
         expect((await store.load(const {})).serverUrl, '');
-        expect(failing.reads, 1);
+        expect(secrets.reads, 1);
       },
     );
 
@@ -167,7 +188,7 @@ void main() {
     test('a preferences failure during the import is retried on the next '
         'load(), not replayed forever', () async {
       SharedPreferencesAsyncPlatform.instance = _FlakyPreferences(
-        legacyImportAttemptedPreferenceKey,
+        failingGetBool: legacyImportAttemptedPreferenceKey,
       );
       final secrets = _StubSecrets('legacy-key');
       final store = buildImportingStore(secrets);
@@ -187,26 +208,46 @@ void main() {
   });
 }
 
-/// Throws once on the first `getBool` call for [_failingKey], then answers
-/// like a normal in-memory store. Stands in for a preferences backend that
-/// glitches on `_importLegacy`'s unguarded read of
+/// Throws once on the first `getBool` call for [_failingGetBool], or the
+/// first `setString` call for [_failingSetString], then answers like a
+/// normal in-memory store. The `getBool` case stands in for a preferences
+/// backend that glitches on `_importLegacy`'s unguarded read of
 /// [legacyImportAttemptedPreferenceKey] (the reads/writes around that flag
 /// aren't inside its try/catch — only the actual import is), so a `load()`
 /// call can be asserted to retry afterwards rather than replay the same
-/// rejected import forever.
+/// rejected import forever. The `setString` case fails persisting an
+/// import, inside that try/catch.
 base class _FlakyPreferences extends InMemorySharedPreferencesAsync {
-  _FlakyPreferences(this._failingKey) : super.empty();
+  _FlakyPreferences({String? failingGetBool, String? failingSetString})
+    : _failingGetBool = failingGetBool,
+      _failingSetString = failingSetString,
+      super.empty();
 
-  final String _failingKey;
-  bool _thrown = false;
+  final String? _failingGetBool;
+  final String? _failingSetString;
+  bool _getBoolThrown = false;
+  bool _setStringThrown = false;
 
   @override
   Future<bool?> getBool(String key, SharedPreferencesOptions options) {
-    if (key == _failingKey && !_thrown) {
-      _thrown = true;
+    if (key == _failingGetBool && !_getBoolThrown) {
+      _getBoolThrown = true;
       return Future<bool?>.error(Exception('preferences unavailable'));
     }
     return super.getBool(key, options);
+  }
+
+  @override
+  Future<bool> setString(
+    String key,
+    String value,
+    SharedPreferencesOptions options,
+  ) {
+    if (key == _failingSetString && !_setStringThrown) {
+      _setStringThrown = true;
+      return Future<bool>.error(Exception('preferences unavailable'));
+    }
+    return super.setString(key, value, options);
   }
 }
 

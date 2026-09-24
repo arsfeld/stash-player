@@ -201,8 +201,12 @@ else.
 - The flag is set before the importer's result is used, so the import runs
   at most once, whatever the outcome.
 - On success, the result is persisted through the normal `save()` path.
-- Any exception is logged and swallowed, which leaves the user on the
-  connection screen, as today.
+- A keyring failure costs only the key: it is logged, and the URL and
+  proxy still import with an empty key, so the user lands on a
+  connection that needs just the key re-entered.
+- Any other exception (reading the config, persisting the result) is
+  logged and swallowed, which leaves the user on the connection screen,
+  as today.
 - Environment overrides (`STASH_URL`/`STASH_API_KEY`) still win.
 - Legacy data is never modified or deleted, so rolling back to 0.5.0
   keeps working.
@@ -212,6 +216,7 @@ else.
 - a full import
 - a missing config file
 - a missing key → empty key
+- a keyring failure → URL and proxy with an empty key
 - proxy scheme stripping
 - malformed TOML → null
 - the run-once flag, including after a failure
