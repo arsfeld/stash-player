@@ -99,8 +99,9 @@ static void portal_signal_cb(GDBusProxy* proxy, const gchar* sender,
                              const gchar* signal, GVariant* parameters,
                              gpointer user_data) {
   if (g_strcmp0(signal, "SettingChanged") != 0) return;
-  const gchar* ns;
-  const gchar* key;
+  if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(ssv)"))) return;
+  const gchar* ns = nullptr;
+  const gchar* key = nullptr;
   g_autoptr(GVariant) value = nullptr;
   g_variant_get(parameters, "(&s&sv)", &ns, &key, &value);
   apply_setting(static_cast<AppearanceChannel*>(user_data), ns, key, value);
