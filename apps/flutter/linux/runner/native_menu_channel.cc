@@ -115,8 +115,8 @@ static void show_menu(NativeMenuChannel* self, FlMethodCall* call) {
     gtk_widget_show(widget);
     gtk_menu_shell_append(GTK_MENU_SHELL(session->menu), widget);
   }
-  g_signal_connect(session->menu, "deactivate",
-                   G_CALLBACK(menu_deactivate_cb), session);
+  gulong deactivate_id = g_signal_connect(
+      session->menu, "deactivate", G_CALLBACK(menu_deactivate_cb), session);
   gtk_menu_attach_to_widget(GTK_MENU(session->menu), view, nullptr);
 
   // A no-window widget draws into its parent's GdkWindow, where its own
@@ -134,9 +134,41 @@ static void show_menu(NativeMenuChannel* self, FlMethodCall* call) {
       MAX(1, static_cast<gint>(lookup_double(anchor, "width"))),
       MAX(1, static_cast<gint>(lookup_double(anchor, "height"))),
   };
+  // gtk_menu_popup_at_rect needs a real event to take the pointer/keyboard
+  // grab it opens with. Called from a platform-channel handler there is no
+  // current GDK event for it to fall back on (gtk_get_current_event()
+  // returns null here, which would otherwise make it warn and still try
+  // the grab with a null event), so one is synthesized: a button-press on
+  // the view's own window, timestamped now, attributed to the default
+  // seat's pointer.
+  GdkEvent* trigger_event = gdk_event_new(GDK_BUTTON_PRESS);
+  trigger_event->button.window = GDK_WINDOW(g_object_ref(window));
+  trigger_event->button.time = GDK_CURRENT_TIME;
+  GdkSeat* seat = gdk_display_get_default_seat(gdk_window_get_display(window));
+  if (seat != nullptr) {
+    gdk_event_set_device(trigger_event, gdk_seat_get_pointer(seat));
+  }
   gtk_menu_popup_at_rect(GTK_MENU(session->menu), window, &rect,
                          GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST,
-                         nullptr);
+                         trigger_event);
+  gdk_event_free(trigger_event);
+
+  // If GTK couldn't take the grab the popup needs (another surface already
+  // holds it, for instance), gtk_menu_popup_at_rect returns without ever
+  // showing the menu or emitting "deactivate", so menu_deactivate_cb would
+  // never run and the pending call (and whatever the Dart side is holding
+  // open while it awaits the reply, e.g. the player bar staying pinned
+  // visible) would hang forever. Answer with an error instead:
+  // ChannelNativeMenus turns any PlatformException into its DrawnMenus
+  // fallback, so the user still gets a menu.
+  if (!session->answered && !gtk_widget_get_visible(session->menu)) {
+    g_signal_handler_disconnect(session->menu, deactivate_id);
+    respond_error(call, "popup-failed", "the menu failed to open");
+    g_object_unref(session->call);
+    gtk_widget_destroy(session->menu);
+    g_object_unref(session->menu);
+    g_free(session);
+  }
 }
 
 static void method_cb(FlMethodChannel* channel, FlMethodCall* call,

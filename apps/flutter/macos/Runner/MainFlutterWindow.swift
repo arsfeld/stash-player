@@ -156,8 +156,11 @@ final class NativeMenuChannel: NSObject {
       result(FlutterMethodNotImplemented)
       return
     }
-    guard let view,
-      let args = call.arguments as? [String: Any],
+    guard let view else {
+      result(FlutterError(code: "no-window", message: "the Flutter view is not available", details: nil))
+      return
+    }
+    guard let args = call.arguments as? [String: Any],
       let anchor = args["anchor"] as? [String: Double],
       let items = args["items"] as? [[String: Any]]
     else {

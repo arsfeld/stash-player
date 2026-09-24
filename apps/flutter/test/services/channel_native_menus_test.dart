@@ -105,17 +105,16 @@ void main() {
   ) async {
     await pumpContext(tester);
     // Leaving the channel with no mock handler at all (rather than one
-    // that throws) doesn't simulate "no native side" here: on this
-    // project's resolved Flutter SDK (3.41.6 stable),
+    // that throws) doesn't simulate "no native side" here:
     // `TestDefaultBinaryMessenger.send` falls through to the real
     // `flutter_tester` engine for a channel with no handler registered,
     // and that call never completes inside a test's `FakeAsync` zone, so
     // the test hangs to its 10-minute timeout instead of failing fast.
     // Registering a handler that throws `MissingPluginException` is what
-    // a genuinely absent platform side looks like on the wire (the
-    // channel's codec turns it into a null reply, which is what
-    // `MethodChannel.invokeMethod` treats as "no plugin"), so this
-    // reproduces the real case deterministically.
+    // a genuinely absent platform side looks like on the wire (the mock
+    // wrapper `setMockMethodCallHandler` installs turns that throw into a
+    // null reply, which is what `MethodChannel.invokeMethod` treats as
+    // "no plugin"), so this reproduces the real case deterministically.
     answer((_) => throw MissingPluginException());
     final fallback = RecordingMenus(choose: 'One');
     await ChannelNativeMenus(fallback: fallback).show(context, menu, Rect.zero);
