@@ -158,9 +158,22 @@ class TasksController extends ChangeNotifier {
     _scan = _ScanRequesting(token);
     notifyListeners();
 
+    final options = await _scanOptions();
+    // The defaults lookup is its own async gap, on top of the mutation's:
+    // a reconnect can have disposed this controller by now, or a failure
+    // streak (or a newer startScan) can already have moved this scan
+    // aside. Bail before sending a mutation that would otherwise land on
+    // a disposed controller or queue a second scan.
+    final requesting = _scan;
+    if (_disposed ||
+        requesting is! _ScanRequesting ||
+        requesting.token != token) {
+      return;
+    }
+
     final String jobId;
     try {
-      jobId = await _api.metadataScan(await _scanOptions());
+      jobId = await _api.metadataScan(options);
     } catch (_) {
       // Only clear `_scan` back to idle if it is still this scan: a
       // failure streak, or a newer startScan replacing this one, must not

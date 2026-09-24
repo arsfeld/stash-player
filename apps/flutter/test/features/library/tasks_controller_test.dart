@@ -341,6 +341,74 @@ void main() {
       });
     });
 
+    test('shows "Starting scan…" while the defaults lookup is in flight', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.holdScanDefaults = true;
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        expect(tasks.rows, [_startingRow]);
+        expect(tasks.hasActiveWork, isTrue);
+
+        api.scanDefaultsCalls.single.complete(ScanOptions.builtIn);
+        async.flushMicrotasks();
+        expect(outcomes, [ScanOutcome.completed]);
+
+        async.elapse(scanEndedRowDuration);
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
+    test('disposing during the defaults lookup drops the late scan and '
+        'sends no mutation', () {
+      fakeAsync((async) {
+        final tasks = build();
+        api.holdScanDefaults = true;
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        tasks.dispose();
+        api.scanDefaultsCalls.single.complete(ScanOptions.builtIn);
+        async.flushMicrotasks();
+
+        expect(api.metadataScanOptions, isEmpty);
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('a failure streak that drops the scan while the defaults lookup is '
+        'still in flight leaves the late lookup sending no mutation', () {
+      // Mirrors "a late continuation cannot act on a newer scan", but the
+      // async gap that outlives the failure streak is the scanDefaults
+      // lookup rather than the metadataScan mutation.
+      fakeAsync((async) {
+        final tasks = build();
+        api.holdScanDefaults = true;
+        api.jobQueueFailures.addAll(
+          List.filled(maxConsecutiveFetchFailures, const TransportFailure()),
+        );
+
+        tasks.startScan();
+        async.flushMicrotasks();
+        tasks.popoverOpened();
+        async.flushMicrotasks();
+        async.elapse(tasksPollInterval * (maxConsecutiveFetchFailures - 1));
+        // The failure streak dropped the scan while its defaults lookup
+        // was still in flight.
+        expect(tasks.hasActiveWork, isFalse);
+
+        api.scanDefaultsCalls.single.complete(ScanOptions.builtIn);
+        async.flushMicrotasks();
+
+        expect(api.metadataScanOptions, isEmpty);
+        tasks.popoverClosed();
+        expect(async.pendingTimers, isEmpty);
+        tasks.dispose();
+      });
+    });
+
     test('shows "Starting scan…" while the mutation is in flight, hands over '
         "to Stash's own row, and reports the end exactly once", () {
       fakeAsync((async) {

@@ -275,11 +275,24 @@ class FakeStashApi implements StashApi {
 
   int scanDefaultsCallCount = 0;
 
+  /// Set to leave `scanDefaults` calls pending; complete them through
+  /// [scanDefaultsCalls].
+  bool holdScanDefaults = false;
+
+  /// Every `scanDefaults` call, in the order received.
+  final List<Completer<ScanOptions>> scanDefaultsCalls = [];
+
   @override
-  Future<ScanOptions> scanDefaults() async {
+  Future<ScanOptions> scanDefaults() {
     scanDefaultsCallCount++;
-    if (scanDefaultsFailures.isNotEmpty) throw scanDefaultsFailures.removeAt(0);
-    return scanDefaultsResult;
+    final completer = Completer<ScanOptions>();
+    scanDefaultsCalls.add(completer);
+    if (scanDefaultsFailures.isNotEmpty) {
+      completer.completeError(scanDefaultsFailures.removeAt(0));
+    } else if (!holdScanDefaults) {
+      completer.complete(scanDefaultsResult);
+    }
+    return completer.future;
   }
 
   /// The options every `metadataScan` call was given, in order.
