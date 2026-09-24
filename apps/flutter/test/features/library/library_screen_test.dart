@@ -19,10 +19,13 @@ import 'package:stash_player_flutter/features/library/library_toolbar.dart';
 import 'package:stash_player_flutter/features/library/tasks_controller.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
+import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
+import '../../support/app_icons.dart';
 import '../../support/fakes.dart';
 
 Scene _scene({
@@ -183,10 +186,9 @@ void main() {
         // controller stays in `loading` forever — exactly the
         // "initial/loading with no data" bucket — instead of the call
         // completing with a `StateError`. Deliberately bounded pumps
-        // rather than `pumpAndSettle`: the indeterminate
-        // `CircularProgressIndicator` this state renders schedules
-        // frames forever, which `pumpAndSettle` would wait on forever
-        // too.
+        // rather than `pumpAndSettle`: the indeterminate `AppSpinner` this
+        // state renders schedules frames forever, which `pumpAndSettle`
+        // would wait on forever too.
         await _pumpLibrary(
           tester,
           api: FakeStashApi()..allowManualCompletion = true,
@@ -195,7 +197,7 @@ void main() {
         await tester.pump();
 
         expect(find.bySemanticsLabel('Loading scenes'), findsOneWidget);
-        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.byType(AppSpinner), findsOneWidget);
       },
     );
 
@@ -240,7 +242,7 @@ void main() {
       await tester.pump();
 
       expect(harness.controller.state.isLoading, isTrue);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AppSpinner), findsOneWidget);
       // The already-accepted cards stay put while the next page loads.
       expect(find.text('Scene 0'), findsOneWidget);
 
@@ -1240,7 +1242,7 @@ void main() {
       expect(find.byKey(AppIconAction.badgeKey), findsOneWidget);
       expect(find.byTooltip('A task is already running'), findsOneWidget);
       final scan = tester.widget<AppIconAction>(
-        find.widgetWithIcon(AppIconAction, Icons.library_add_outlined),
+        findWidgetWithAppIcon(AppIconAction, AppIcon.scan),
       );
       expect(scan.onPressed, isNull);
 
@@ -1311,7 +1313,7 @@ void main() {
 
       expect(api.metadataScanCalls, hasLength(1));
       final scan = tester.widget<AppIconAction>(
-        find.widgetWithIcon(AppIconAction, Icons.library_add_outlined),
+        findWidgetWithAppIcon(AppIconAction, AppIcon.scan),
       );
       expect(scan.onPressed, isNull);
       expect(FocusManager.instance.primaryFocus?.debugLabel, 'library-tasks');

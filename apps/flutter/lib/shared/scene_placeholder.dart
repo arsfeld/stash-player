@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/icons/app_icons.dart';
+
 /// Aspect ratio used for every scene thumbnail in the UI — this
 /// placeholder and the library grid's cards both render at 16:9, and
 /// share this constant rather than each hardcoding `16 / 9` separately.
@@ -28,8 +30,9 @@ class ScenePlaceholder extends StatelessWidget {
         child: Material(
           color: colorScheme.surfaceContainerHighest,
           child: Center(
-            child: Icon(
-              Icons.movie_outlined,
+            child: AppIconView(
+              AppIcon.video,
+              size: 24,
               color: colorScheme.onSurfaceVariant,
             ),
           ),

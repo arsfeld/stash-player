@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/job.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/app_spinner.dart';
 import 'tasks_controller.dart';
 
 const double tasksPopoverWidth = 300;
@@ -146,7 +148,7 @@ class TasksPopoverPanel extends StatelessWidget {
     return Material(
       elevation: 8,
       color: theme.colorScheme.surfaceContainerHigh,
-      borderRadius: BorderRadius.circular(AppTokens.radiusPanel),
+      borderRadius: BorderRadius.circular(tokens.radiusPanel),
       clipBehavior: Clip.antiAlias,
       child: Semantics(
         scopesRoute: true,
@@ -280,30 +282,33 @@ class _StatusIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return switch (status) {
-      JobStatus.ready => Icon(
-        Icons.schedule,
+      JobStatus.ready => AppIconView(
+        AppIcon.clock,
         size: 16,
         color: scheme.onSurfaceVariant,
       ),
       JobStatus.running || JobStatus.stopping => const Padding(
         padding: EdgeInsets.all(2),
-        child: CircularProgressIndicator(strokeWidth: 2),
+        child: AppSpinner(size: 12),
       ),
-      JobStatus.finished => Icon(
-        Icons.check_circle,
+      JobStatus.finished => AppIconView(
+        AppIcon.done,
         size: 16,
         color: scheme.primary,
       ),
-      JobStatus.failed || JobStatus.cancelled => Icon(
-        Icons.warning_amber_rounded,
+      JobStatus.failed || JobStatus.cancelled => AppIconView(
+        AppIcon.warning,
         size: 16,
         color: scheme.error,
       ),
       JobStatus.unknown => Center(
-        child: Icon(
-          Icons.circle,
-          size: 8,
-          color: AppTokens.of(context).textFaint,
+        child: Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: AppTokens.of(context).textFaint,
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     };

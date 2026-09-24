@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <defs id="defs1" fill="rgb(0,0,0)" stroke="none" class="foreground foreground-fill">
+    </defs>
+  <path id="dialog" fill="none" stroke="rgb(0,0,0)" stroke-opacity="1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="4" stroke-dashoffset="22.5589" d="M 2.91994452 1 L 13.0800552 1 C 14.1437054 1, 15 1.85629535, 15 2.91994452 L 15 12.0800552 C 15 13.1437054, 14.1437054 14, 13.0800552 14 L 2.91994452 14 C 1.85629535 14, 1 13.1437054, 1 12.0800552 L 1 2.91994452 C 1 1.85629535, 1.85629535 1, 2.91994452 1 Z" class="transparent-fill foreground-stroke">
+    </path>
+  <path id="list" fill="none" stroke="rgb(0,0,0)" stroke-opacity="1" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="4" stroke-dashoffset="22.5589" d="M 1 9.5 L 15 9.5 M 1 5.5 L 15 5.5" class="transparent-fill foreground-stroke">
+    </path>
+  </svg>

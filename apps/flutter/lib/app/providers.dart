@@ -1,17 +1,25 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../domain/connection.dart';
+import '../domain/system_appearance.dart';
 import '../features/connection/connection_controller.dart';
+import '../services/channel_native_menus.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
 import '../services/socks_forward_proxy.dart';
 import '../services/stash_api.dart';
+import '../services/system_appearance_channel.dart';
 import '../services/thumbnail_repository.dart';
+import '../shared/diagnostics.dart';
+import '../ui/menu/drawn_menus.dart';
+import '../ui/menu/native_menus.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -134,4 +142,38 @@ final connectionControllerOverride = connectionControllerProvider.overrideWith(
     environment: ref.watch(environmentProvider),
     apiFactory: ref.watch(stashApiFactoryProvider),
   ),
+);
+
+/// The desktop's accent colour and UI font. Only the Linux and macOS
+/// runners implement the channel; everywhere else (including tests, which
+/// run as Android) this is permanently unknown, and the theme uses its
+/// built-in defaults. A channel error is logged and otherwise ignored for
+/// the same reason.
+final systemAppearanceProvider = StreamProvider<SystemAppearance>((ref) {
+  if (defaultTargetPlatform != TargetPlatform.linux &&
+      defaultTargetPlatform != TargetPlatform.macOS) {
+    return Stream.value(SystemAppearance.none);
+  }
+  return watchSystemAppearance().handleError(
+    (Object error) => logDiagnostic(
+      'appearance',
+      'using the built-in accent and font: $error',
+    ),
+  );
+});
+
+/// How popup menus are shown: natively on the two desktop platforms the
+/// runners implement the channel for, drawn everywhere else (including
+/// tests, which run as Android).
+final nativeMenusProvider = Provider<NativeMenus>(
+  (ref) => switch (defaultTargetPlatform) {
+    TargetPlatform.linux || TargetPlatform.macOS => ChannelNativeMenus(),
+    _ => const DrawnMenus(),
+  },
+);
+
+/// Asks the macOS runner to run Sparkle's "Check for Updates…" (see
+/// `UpdatesChannel` in `MainFlutterWindow.swift`).
+final updatesChannelProvider = Provider<MethodChannel>(
+  (ref) => const MethodChannel('stash_player/updates'),
 );

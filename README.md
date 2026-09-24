@@ -158,3 +158,5 @@ and [*Tears of Steel*](https://mango.blender.org/). © Blender Foundation,
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+Icons: GNOME's [icon-development-kit](https://gitlab.gnome.org/Teams/Design/icon-development-kit) (CC0-1.0) on Linux and [Lucide](https://lucide.dev) (ISC) on macOS; licence texts ship in `apps/flutter/assets/icons/`.

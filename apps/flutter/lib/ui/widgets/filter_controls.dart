@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../icons/app_icons.dart';
+import '../menu/app_menu.dart';
+import '../menu/native_menus.dart';
 import '../theme/app_tokens.dart';
 
 /// One entry in an [AppMenuButton]'s value list.
@@ -20,12 +23,13 @@ class AppMenuItem<T> {
 /// as `null` (minimum rating) pass a sentinel value and map it back at the
 /// callback boundary.
 ///
-/// Built on [InkWell] plus [showMenu] rather than `PopupMenuButton` so the
-/// caller can supply its own [FocusNode]: the library toolbar pins an
-/// explicit Tab order across controls that move between rows, which needs
-/// a node per control. `MenuAnchor` is not an option here: its overlay is
-/// not part of the surrounding traversal chain, so nothing inside it is
-/// reachable by sequential Tab.
+/// Built on [InkWell] rather than `PopupMenuButton` so the caller can
+/// supply its own [FocusNode]: the library toolbar pins an explicit Tab
+/// order across controls that move between rows, which needs a node per
+/// control. The menu itself opens through [NativeMenusScope] (a native
+/// `NSMenu`/`GtkMenu` in the app, a drawn one in tests). A native popup
+/// menu takes keyboard focus itself while open, so the strip's Tab order
+/// is unaffected.
 class AppMenuButton<T extends Object> extends StatefulWidget {
   const AppMenuButton({
     required this.value,
@@ -47,40 +51,18 @@ class AppMenuButton<T extends Object> extends StatefulWidget {
 }
 
 class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
-  Future<void> _open() async {
-    final button = context.findRenderObject()! as RenderBox;
-    final overlay =
-        Overlay.of(context).context.findRenderObject()! as RenderBox;
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(
-        button.localToGlobal(
-          button.size.bottomLeft(Offset.zero),
-          ancestor: overlay,
+  Future<void> _open() => NativeMenusScope.of(context).show(
+    context,
+    AppMenu([
+      for (final item in widget.items)
+        AppMenuAction(
+          label: item.label,
+          checked: item.value == widget.value,
+          onSelected: () => widget.onChanged(item.value),
         ),
-        button.localToGlobal(
-          button.size.bottomRight(Offset.zero),
-          ancestor: overlay,
-        ),
-      ),
-      Offset.zero & overlay.size,
-    );
-
-    final selected = await showMenu<T>(
-      context: context,
-      position: position,
-      initialValue: widget.value,
-      items: [
-        for (final item in widget.items)
-          PopupMenuItem<T>(
-            value: item.value,
-            height: 36,
-            child: Text(item.label),
-          ),
-      ],
-    );
-
-    if (selected != null) widget.onChanged(selected);
-  }
+    ]),
+    globalRectOf(context),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +81,7 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
         height: AppTokens.controlBandHeight,
         decoration: BoxDecoration(
           color: tokens.controlSurface,
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          borderRadius: BorderRadius.circular(tokens.radiusControl),
         ),
         // A Material of its own, *between* the fill and the InkWell. An
         // ink feature paints immediately above the Material hosting it
@@ -116,7 +98,7 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
             hoverColor: tokens.controlHover,
             highlightColor: tokens.controlActive,
             splashColor: tokens.controlActive,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
             // Padding inside the InkWell, not on the fill above it, so
             // hover and press cover the control's whole box.
             child: Padding(
@@ -126,9 +108,9 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
                 children: [
                   Text(label, style: theme.textTheme.labelMedium),
                   const SizedBox(width: AppTokens.space1),
-                  Icon(
-                    Icons.arrow_drop_down,
-                    size: 16,
+                  AppIconView(
+                    AppIcon.dropdown,
+                    size: 12,
                     color: tokens.textFaint,
                   ),
                 ],
@@ -163,7 +145,7 @@ class AppIconToggle extends StatelessWidget {
          'an icon-only control needs a semantics label',
        );
 
-  final IconData icon;
+  final AppIcon icon;
   final String tooltip;
   final String semanticLabel;
   final bool selected;
@@ -194,7 +176,7 @@ class AppIconToggle extends StatelessWidget {
           height: AppTokens.controlBandHeight,
           decoration: BoxDecoration(
             color: selected ? scheme.primary : tokens.controlSurface,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
           ),
           // See the matching note in AppMenuButton.build: this Material
           // has to sit between the fill and the InkWell for ink to be
@@ -219,9 +201,9 @@ class AppIconToggle extends StatelessWidget {
               splashColor: selected
                   ? scheme.onPrimary.withValues(alpha: 0.2)
                   : tokens.controlActive,
-              borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+              borderRadius: BorderRadius.circular(tokens.radiusControl),
               child: Center(
-                child: Icon(
+                child: AppIconView(
                   icon,
                   size: 16,
                   color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
@@ -262,7 +244,7 @@ class AppIconAction extends StatelessWidget {
   /// On the badge dot, so a test can find it.
   static const Key badgeKey = Key('app-icon-action-badge');
 
-  final IconData icon;
+  final AppIcon icon;
   final String tooltip;
   final String semanticLabel;
   final VoidCallback? onPressed;
@@ -288,7 +270,7 @@ class AppIconAction extends StatelessWidget {
           height: AppTokens.controlBandHeight,
           decoration: BoxDecoration(
             color: tokens.controlSurface,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
           ),
           child: Stack(
             children: [
@@ -304,11 +286,9 @@ class AppIconAction extends StatelessWidget {
                     hoverColor: tokens.controlHover,
                     highlightColor: tokens.controlActive,
                     splashColor: tokens.controlActive,
-                    borderRadius: BorderRadius.circular(
-                      AppTokens.radiusControl,
-                    ),
+                    borderRadius: BorderRadius.circular(tokens.radiusControl),
                     child: Center(
-                      child: Icon(
+                      child: AppIconView(
                         icon,
                         size: 16,
                         color: enabled
@@ -381,7 +361,14 @@ class AppSearchField extends StatelessWidget {
         style: Theme.of(context).textTheme.labelMedium,
         decoration: InputDecoration(
           hintText: hintText,
-          prefixIcon: Icon(Icons.search, size: 16, color: tokens.textFaint),
+          prefixIcon: Center(
+            widthFactor: 1,
+            child: AppIconView(
+              AppIcon.search,
+              size: 16,
+              color: tokens.textFaint,
+            ),
+          ),
           prefixIconConstraints: const BoxConstraints(
             minWidth: 30,
             minHeight: AppTokens.controlBandHeight,

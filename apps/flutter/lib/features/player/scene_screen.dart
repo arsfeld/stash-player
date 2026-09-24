@@ -9,6 +9,8 @@ import '../../app/providers.dart';
 import '../../domain/browse_context.dart';
 import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
+import '../../ui/icons/app_icons.dart';
+import '../../ui/widgets/app_spinner.dart';
 import 'loading_overlay.dart';
 import 'playback_controller.dart';
 import 'playback_state.dart';
@@ -806,7 +808,7 @@ class _SceneUnavailableView extends StatelessWidget {
       return Center(
         child: Semantics(
           label: 'Loading scene',
-          child: const CircularProgressIndicator(color: Colors.white),
+          child: const AppSpinner(size: 32, color: Colors.white),
         ),
       );
     }
@@ -820,7 +822,7 @@ class _SceneUnavailableView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 40),
+            const AppIconView(AppIcon.error, color: Colors.white, size: 40),
             const SizedBox(height: 12),
             Text(
               message,
@@ -874,7 +876,7 @@ class _PlaybackFailureOverlay extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline, color: Colors.white, size: 40),
+          const AppIconView(AppIcon.error, color: Colors.white, size: 40),
           const SizedBox(height: 12),
           Text(
             title,
@@ -942,8 +944,8 @@ class _TransientPlaybackFailureBanner extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             children: [
-              Icon(
-                Icons.error_outline,
+              AppIconView(
+                AppIcon.error,
                 color: theme.colorScheme.onErrorContainer,
               ),
               const SizedBox(width: 12),

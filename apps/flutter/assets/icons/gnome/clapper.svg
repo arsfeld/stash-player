@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <defs id="defs1" fill="rgb(0,0,0)" stroke="none" class="foreground foreground-fill">
+    </defs>
+  <path id="clapper" fill="none" stroke="rgb(0,0,0)" stroke-opacity="1" stroke-width="2" stroke-linecap="butt" stroke-linejoin="round" stroke-miterlimit="7.20339" d="M 0.825195014 5.04489994 L 2.73816991 4.46059179 M 3.69449878 4.16848564 L 5.60747433 3.58417726 M 6.56352329 3.29215717 L 8.47651196 2.7078445 M 9.43256092 2.41582417 L 11.3455362 1.83151567 M 12.3016043 1.53948975 L 14.2148447 0.9551 M 10 8 L 12 8 M 7 8 L 9 8 M 4 8 L 6 8 M 2 7 L 2 13 C 2 14.1045694, 2.89543056 15, 4 15 L 12 15 C 13.1045694 15, 14 14.1045694, 14 13 L 14 7" class="transparent-fill foreground-stroke">
+    </path>
+  </svg>

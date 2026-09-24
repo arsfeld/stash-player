@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/scene.dart';
 import '../../shared/formatters.dart';
+import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
 
 /// The right-hand metadata overlay: title, details, date, studio,
@@ -115,7 +116,7 @@ class SceneMetadataDrawer extends StatelessWidget {
                 Tooltip(
                   message: 'Close metadata',
                   child: IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: const AppIconView(AppIcon.close),
                     onPressed: onClose,
                   ),
                 ),

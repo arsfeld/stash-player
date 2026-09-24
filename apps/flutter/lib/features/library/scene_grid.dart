@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/scene.dart';
 import '../../services/thumbnail_repository.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/app_spinner.dart';
 import '../../ui/widgets/scene_tile.dart';
 
 /// Signature of [LibraryController.ensureViewportFilled], threaded through
@@ -143,6 +144,7 @@ class _SceneGridState extends State<SceneGrid> {
             final geometry = SceneGridGeometry.resolve(
               availableWidth: constraints.maxWidth - AppTokens.space5 * 2,
               textScaler: MediaQuery.textScalerOf(context),
+              textTheme: Theme.of(context).textTheme,
             );
             return GridView.builder(
               key: const Key('library-scene-grid'),
@@ -182,13 +184,7 @@ class _SceneGridState extends State<SceneGrid> {
       if (widget.isLoadingMore)
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 12),
-          child: Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
+          child: Center(child: AppSpinner(size: 24)),
         ),
     ],
   );

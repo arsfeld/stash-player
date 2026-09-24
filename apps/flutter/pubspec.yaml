@@ -49,6 +49,7 @@ dependencies:
   path: ^1.9.1
   url_launcher: ^6.3.2
   toml: ^0.18.0
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +76,10 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # Parses every bundled SVG in app_icons_test.dart, so an icon flutter_svg
+  # can't draw fails a test instead of rendering blank.
+  vector_graphics_compiler: ^1.3.0
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -85,6 +90,12 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Per-dialect icon sets; see tool/fetch_icons.py for where they come
+  # from and lib/ui/icons/app_icons.dart for how they are picked.
+  assets:
+    - assets/icons/gnome/
+    - assets/icons/lucide/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

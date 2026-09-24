@@ -1,12 +1,15 @@
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
 
 /// Design values Material's [ThemeData] has no slot for.
 ///
-/// Metrics and player colours are static consts: they never vary. Only
-/// the four control/text colours are instance fields, because those are
-/// the ones that differ between light and dark, and reading them through
+/// Spacing, durations and player colours are static consts: they never
+/// vary. The four control/text colours and the two corner radii are
+/// instance fields, because those differ per dialect (and, for the
+/// colours, between light and dark), and reading them through
 /// `Theme.of(context).extension<AppTokens>()` is what makes a widget
-/// brightness-correct without asking about brightness.
+/// dialect- and brightness-correct without asking about either.
 ///
 /// Player chrome sits over video and stays dark in both themes, which is
 /// why its colours are consts here rather than fields.
@@ -17,6 +20,8 @@ class AppTokens extends ThemeExtension<AppTokens> {
     required this.controlHover,
     required this.controlActive,
     required this.textFaint,
+    required this.radiusControl,
+    required this.radiusPanel,
   });
 
   // Spacing scale.
@@ -27,9 +32,9 @@ class AppTokens extends ThemeExtension<AppTokens> {
   static const double space5 = 24;
   static const double space6 = 32;
 
-  // Corner radii.
-  static const double radiusControl = 7;
-  static const double radiusPanel = 10;
+  // Corner radii that do not vary by dialect. The player's chrome sits
+  // over video and keeps one look on every platform.
+  static const double radiusPlayerControl = 7;
   static const double radiusPlayerBar = 16;
 
   /// The top strip's total height, and the control band inside it. The
@@ -101,6 +106,11 @@ class AppTokens extends ThemeExtension<AppTokens> {
   final Color controlActive;
   final Color textFaint;
 
+  /// Corner radius of compact controls and of panels (popovers, banners).
+  /// Per dialect: libadwaita uses 6/12, AppKit 5/10.
+  final double radiusControl;
+  final double radiusPanel;
+
   /// The [AppTokens] registered on the ambient theme.
   ///
   /// Asserts rather than letting the bare null check speak for itself: a
@@ -125,11 +135,15 @@ class AppTokens extends ThemeExtension<AppTokens> {
     Color? controlHover,
     Color? controlActive,
     Color? textFaint,
+    double? radiusControl,
+    double? radiusPanel,
   }) => AppTokens(
     controlSurface: controlSurface ?? this.controlSurface,
     controlHover: controlHover ?? this.controlHover,
     controlActive: controlActive ?? this.controlActive,
     textFaint: textFaint ?? this.textFaint,
+    radiusControl: radiusControl ?? this.radiusControl,
+    radiusPanel: radiusPanel ?? this.radiusPanel,
   );
 
   @override
@@ -140,6 +154,8 @@ class AppTokens extends ThemeExtension<AppTokens> {
       controlHover: Color.lerp(controlHover, other.controlHover, t)!,
       controlActive: Color.lerp(controlActive, other.controlActive, t)!,
       textFaint: Color.lerp(textFaint, other.textFaint, t)!,
+      radiusControl: lerpDouble(radiusControl, other.radiusControl, t)!,
+      radiusPanel: lerpDouble(radiusPanel, other.radiusPanel, t)!,
     );
   }
 }

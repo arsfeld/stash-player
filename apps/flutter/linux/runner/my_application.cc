@@ -6,12 +6,16 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "appearance_channel.h"
 #include "flutter/generated_plugin_registrant.h"
+#include "native_menu_channel.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   FlMethodChannel* legacy_secret_channel;
+  AppearanceChannel* appearance_channel;
+  NativeMenuChannel* native_menus;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -159,6 +163,11 @@ static void my_application_activate(GApplication* application) {
   fl_method_channel_set_method_call_handler(
       self->legacy_secret_channel, legacy_secret_method_cb, nullptr, nullptr);
 
+  self->appearance_channel = appearance_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)));
+
+  self->native_menus = native_menu_channel_new(view);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -206,6 +215,8 @@ static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
   g_clear_object(&self->legacy_secret_channel);
+  g_clear_pointer(&self->appearance_channel, appearance_channel_free);
+  g_clear_pointer(&self->native_menus, native_menu_channel_free);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 

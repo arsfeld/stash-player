@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../icons/app_icons.dart';
 import '../theme/app_tokens.dart';
+import 'app_spinner.dart';
 
 /// Private layout widget shared by AppEmptyView and AppErrorView.
 class _StatusColumn extends StatelessWidget {
@@ -40,14 +42,7 @@ class AppLoadingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Semantics(
-      label: semanticLabel,
-      child: const SizedBox(
-        width: 28,
-        height: 28,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
-    ),
+    child: Semantics(label: semanticLabel, child: const AppSpinner(size: 28)),
   );
 }
 
@@ -69,8 +64,8 @@ class AppEmptyView extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = AppTokens.of(context);
     return _StatusColumn(
-      icon: Icon(
-        Icons.movie_filter_outlined,
+      icon: AppIconView(
+        AppIcon.emptyLibrary,
         size: 32,
         color: tokens.textFaint,
       ),
@@ -98,7 +93,11 @@ class AppErrorView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return _StatusColumn(
-      icon: Icon(Icons.error_outline, size: 32, color: theme.colorScheme.error),
+      icon: AppIconView(
+        AppIcon.error,
+        size: 32,
+        color: theme.colorScheme.error,
+      ),
       message: message,
       messageStyle: theme.textTheme.bodyMedium,
       actionWidget: FilledButton(
@@ -135,11 +134,11 @@ class AppInlineBanner extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: theme.colorScheme.error.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPanel),
+        borderRadius: BorderRadius.circular(AppTokens.of(context).radiusPanel),
       ),
       child: Row(
         children: [
-          Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
+          AppIconView(AppIcon.error, size: 16, color: theme.colorScheme.error),
           const SizedBox(width: AppTokens.space2),
           Expanded(child: Text(message, style: theme.textTheme.bodySmall)),
           TextButton(onPressed: onAction, child: Text(actionLabel)),

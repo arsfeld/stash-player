@@ -1,196 +1,279 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'app_palette.dart';
 import 'app_tokens.dart';
+import 'platform_dialect.dart';
 
-/// Every colour the app uses.
+export 'app_palette.dart';
+
+/// Builds the app's theme for [brightness] in [platform]'s dialect.
 ///
-/// Neutral greys with a single blue accent, used only for focus rings,
-/// active toggles and primary buttons. The accent is the GNOME blue the
-/// GTK client already uses, which also sits close enough to the macOS
-/// default accent that one value looks at home on both platforms.
-abstract final class AppPalette {
-  static const Color accent = Color(0xFF3584E4);
-  static const Color onAccent = Color(0xFFFFFFFF);
-
-  static const Color darkBackground = Color(0xFF131416);
-  static const Color darkChrome = Color(0xFF1A1B1E);
-  static const Color darkControl = Color(0xFF26272B);
-  static const Color darkControlHover = Color(0xFF303236);
-  static const Color darkControlActive = Color(0xFF3A3C41);
-  static const Color darkOutline = Color(0xFF2E3033);
-  static const Color darkText = Color(0xFFE8E9EA);
-  static const Color darkTextDim = Color(0xFF9A9CA1);
-  static const Color darkTextFaint = Color(0xFF75777C);
-  static const Color darkError = Color(0xFFF2777A);
-  static const Color onDarkError = Color(0xFF1A1B1E);
-
-  static const Color lightBackground = Color(0xFFFAFAFA);
-  static const Color lightChrome = Color(0xFFFFFFFF);
-  static const Color lightControl = Color(0xFFEDEEF0);
-  static const Color lightControlHover = Color(0xFFE4E6E8);
-  static const Color lightControlActive = Color(0xFFD9DBDE);
-  static const Color lightOutline = Color(0xFFE2E4E7);
-  static const Color lightText = Color(0xFF1A1B1E);
-  static const Color lightTextDim = Color(0xFF5F6368);
-  static const Color lightTextFaint = Color(0xFF8A8D91);
-  static const Color lightError = Color(0xFFB3261E);
-  static const Color onLightError = Color(0xFFFFFFFF);
-}
-
-/// Builds the app's theme for [brightness].
+/// [platform] defaults to the host's. [accent] is the OS accent colour
+/// when one is known. [fontFamily] and [bodyFontPt] are the desktop's UI
+/// font as GNOME reports it (`"Adwaita Sans 11"` → `"Adwaita Sans"`,
+/// `11`); they only apply to the Adwaita dialect, since macOS always uses
+/// its system font.
 ///
 /// Component themes are set for every Material surface the app does not
-/// hand-build (inputs, popup menus, snackbars, chips, sliders, scrollbars,
-/// buttons) so those still match the hand-built ones. `CardTheme` is
-/// deliberately absent: no screen uses `Card` any more.
-ThemeData buildAppTheme(Brightness brightness) {
-  final dark = brightness == Brightness.dark;
+/// hand-build (buttons, inputs, tooltips, popup menus, chips, sliders,
+/// scrollbars) so they speak the same dialect as the hand-built ones.
+ThemeData buildAppTheme(
+  Brightness brightness, {
+  TargetPlatform? platform,
+  Color? accent,
+  String? fontFamily,
+  double? bodyFontPt,
+}) {
+  final resolvedPlatform = platform ?? defaultTargetPlatform;
+  final dialect = PlatformDialect.forPlatform(resolvedPlatform);
+  final adwaita = dialect == PlatformDialect.adwaita;
+  final palette = AppPalette.resolve(dialect, brightness);
+  final accentColor = accent ?? AppPalette.fallbackAccent;
 
-  final background = dark
-      ? AppPalette.darkBackground
-      : AppPalette.lightBackground;
-  final chrome = dark ? AppPalette.darkChrome : AppPalette.lightChrome;
-  final control = dark ? AppPalette.darkControl : AppPalette.lightControl;
-  final controlHover = dark
-      ? AppPalette.darkControlHover
-      : AppPalette.lightControlHover;
-  final controlActive = dark
-      ? AppPalette.darkControlActive
-      : AppPalette.lightControlActive;
-  final outline = dark ? AppPalette.darkOutline : AppPalette.lightOutline;
-  final text = dark ? AppPalette.darkText : AppPalette.lightText;
-  final textDim = dark ? AppPalette.darkTextDim : AppPalette.lightTextDim;
-  final textFaint = dark ? AppPalette.darkTextFaint : AppPalette.lightTextFaint;
-  final error = dark ? AppPalette.darkError : AppPalette.lightError;
-  final onError = dark ? AppPalette.onDarkError : AppPalette.onLightError;
+  final radiusControl = adwaita ? 6.0 : 5.0;
+  final radiusPanel = adwaita ? 12.0 : 10.0;
+
+  final family = adwaita
+      ? (fontFamily ?? 'Adwaita Sans')
+      : '.AppleSystemUIFont';
+  final fallbackFamilies = adwaita
+      ? const ['Cantarell', 'Inter', 'sans-serif']
+      : const <String>[];
+  // GNOME's font-name portal setting is free text and has been observed
+  // reporting nonsensical sizes; clamp to a sane desktop UI-font range so
+  // a bad value can't blow up the type scale (or collapse it to nothing)
+  // instead of just looking a little off.
+  final clampedBodyFontPt = bodyFontPt?.clamp(8, 20).toDouble();
+  final textTheme = _textTheme(
+    dialect,
+    bodyFontPt: clampedBodyFontPt,
+  ).apply(bodyColor: palette.text, displayColor: palette.text);
 
   final colorScheme = ColorScheme(
     brightness: brightness,
-    primary: AppPalette.accent,
+    primary: accentColor,
     onPrimary: AppPalette.onAccent,
-    secondary: AppPalette.accent,
+    secondary: accentColor,
     onSecondary: AppPalette.onAccent,
-    error: error,
-    onError: onError,
-    surface: background,
-    onSurface: text,
-    onSurfaceVariant: textDim,
-    surfaceContainer: chrome,
-    surfaceContainerHigh: control,
-    surfaceContainerHighest: controlActive,
-    outline: outline,
-    outlineVariant: outline,
+    error: palette.error,
+    onError: palette.onError,
+    surface: palette.background,
+    onSurface: palette.text,
+    onSurfaceVariant: palette.textDim,
+    surfaceContainer: palette.chrome,
+    surfaceContainerHigh: palette.control,
+    surfaceContainerHighest: palette.controlActive,
+    outline: palette.outline,
+    outlineVariant: palette.outline,
   );
-
-  final textTheme = const TextTheme(
-    titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-    titleSmall: TextStyle(
-      fontSize: 13,
-      fontWeight: FontWeight.w600,
-      height: 1.3,
-    ),
-    bodyMedium: TextStyle(fontSize: 13),
-    bodySmall: TextStyle(fontSize: 12, height: 1.3),
-    labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-    labelSmall: TextStyle(
-      fontSize: 10,
-      fontWeight: FontWeight.w600,
-      letterSpacing: 0.7,
-    ),
-  ).apply(bodyColor: text, displayColor: text);
 
   final controlShape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+    borderRadius: BorderRadius.circular(radiusControl),
   );
   final panelShape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(AppTokens.radiusPanel),
+    borderRadius: BorderRadius.circular(radiusPanel),
   );
   final fieldBorder = OutlineInputBorder(
-    borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+    borderRadius: BorderRadius.circular(radiusControl),
     borderSide: BorderSide.none,
   );
+
+  // libadwaita sets every button label in bold and sizes buttons to 34px;
+  // AppKit's regular push button is 22-24pt tall with a regular-weight
+  // label.
+  final buttonText = textTheme.labelMedium?.copyWith(
+    fontWeight: adwaita ? FontWeight.w700 : FontWeight.w400,
+  );
+  final buttonMinimum = Size(0, adwaita ? 34 : 24);
+  final buttonPadding = EdgeInsets.symmetric(horizontal: adwaita ? 17 : 12);
 
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
+    platform: resolvedPlatform,
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: background,
+    scaffoldBackgroundColor: palette.background,
+    fontFamily: family,
+    fontFamilyFallback: fallbackFamilies,
     textTheme: textTheme,
     extensions: [
       AppTokens(
-        controlSurface: control,
-        controlHover: controlHover,
-        controlActive: controlActive,
-        textFaint: textFaint,
+        controlSurface: palette.control,
+        controlHover: palette.controlHover,
+        controlActive: palette.controlActive,
+        textFaint: palette.textFaint,
+        radiusControl: radiusControl,
+        radiusPanel: radiusPanel,
       ),
     ],
-    dividerTheme: DividerThemeData(color: outline, thickness: 1, space: 1),
+    dividerTheme: DividerThemeData(
+      color: palette.outline,
+      thickness: 1,
+      space: 1,
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: control,
+      fillColor: palette.control,
       isDense: true,
       contentPadding: const EdgeInsets.symmetric(
         horizontal: AppTokens.space3,
         vertical: AppTokens.space2,
       ),
-      hintStyle: textTheme.labelMedium?.copyWith(color: textFaint),
+      hintStyle: textTheme.labelMedium?.copyWith(color: palette.textFaint),
       border: fieldBorder,
       enabledBorder: fieldBorder,
+      // Adwaita draws a solid 2px accent focus ring; AppKit a softer 3px
+      // one at half opacity.
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusControl),
-        borderSide: const BorderSide(color: AppPalette.accent, width: 2),
+        borderRadius: BorderRadius.circular(radiusControl),
+        borderSide: BorderSide(
+          color: adwaita ? accentColor : accentColor.withValues(alpha: 0.5),
+          width: adwaita ? 2 : 3,
+        ),
       ),
     ),
+    tooltipTheme: adwaita
+        ? TooltipThemeData(
+            decoration: BoxDecoration(
+              color: const Color(0xE6000000),
+              borderRadius: BorderRadius.circular(radiusControl),
+            ),
+            textStyle: textTheme.bodySmall?.copyWith(
+              color: const Color(0xFFFFFFFF),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            waitDuration: const Duration(milliseconds: 500),
+          )
+        : TooltipThemeData(
+            decoration: BoxDecoration(
+              color: palette.chrome,
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: palette.outline, width: 0.5),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+            textStyle: TextStyle(fontSize: 11, color: palette.text),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            waitDuration: const Duration(seconds: 1),
+          ),
     popupMenuTheme: PopupMenuThemeData(
-      color: chrome,
+      color: palette.chrome,
       surfaceTintColor: Colors.transparent,
       shape: panelShape,
-      textStyle: textTheme.labelMedium?.copyWith(color: text),
-    ),
-    snackBarTheme: SnackBarThemeData(
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: chrome,
-      contentTextStyle: textTheme.bodyMedium?.copyWith(color: text),
-      shape: panelShape,
+      textStyle: textTheme.labelMedium?.copyWith(color: palette.text),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: control,
+      backgroundColor: palette.control,
       side: BorderSide.none,
-      labelStyle: textTheme.labelMedium?.copyWith(color: text),
+      labelStyle: textTheme.labelMedium?.copyWith(color: palette.text),
       shape: const StadiumBorder(),
     ),
     scrollbarTheme: ScrollbarThemeData(
-      thumbColor: WidgetStatePropertyAll(textFaint.withValues(alpha: 0.5)),
+      thumbColor: WidgetStatePropertyAll(
+        palette.textFaint.withValues(alpha: 0.5),
+      ),
       thickness: const WidgetStatePropertyAll(6),
       radius: const Radius.circular(3),
     ),
     sliderTheme: SliderThemeData(
-      activeTrackColor: AppPalette.accent,
-      inactiveTrackColor: control,
-      thumbColor: AppPalette.accent,
+      activeTrackColor: accentColor,
+      inactiveTrackColor: palette.control,
+      thumbColor: accentColor,
       trackHeight: 4,
     ),
+    // The default action: Adwaita's "suggested-action", AppKit's default
+    // push button.
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: AppPalette.accent,
+        backgroundColor: accentColor,
         foregroundColor: AppPalette.onAccent,
-        textStyle: textTheme.labelMedium,
+        textStyle: buttonText,
         shape: controlShape,
+        minimumSize: buttonMinimum,
+        padding: buttonPadding,
       ),
     ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        foregroundColor: AppPalette.accent,
-        textStyle: textTheme.labelMedium,
-      ),
-    ),
+    // A standard button: a wash on Adwaita, a hairline-bordered bezel on
+    // macOS.
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: text,
-        side: BorderSide(color: outline),
-        textStyle: textTheme.labelMedium,
+        backgroundColor: palette.buttonFace,
+        foregroundColor: palette.text,
+        side: adwaita
+            ? BorderSide.none
+            : BorderSide(color: palette.outline, width: 0.5),
+        textStyle: buttonText,
         shape: controlShape,
+        minimumSize: buttonMinimum,
+        padding: buttonPadding,
+      ),
+    ),
+    // A flat button: text-coloured on Adwaita, accent-coloured (link
+    // style) on macOS.
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: adwaita ? palette.text : accentColor,
+        textStyle: buttonText,
+        shape: controlShape,
+        minimumSize: buttonMinimum,
+        padding: buttonPadding,
       ),
     ),
   );
+}
+
+/// The type scale, without colours or family (both applied by the caller).
+///
+/// Adwaita sizes follow GTK, which specifies fonts in points at 96 dpi:
+/// one point is 4/3 of a logical pixel, so the default 11pt body is
+/// 14.67px. Caption is 82% and caption-heading 75% of body, bold, as in
+/// libadwaita's stylesheet. macOS uses AppKit's fixed sizes: 13pt body,
+/// 11pt small, 10pt mini.
+TextTheme _textTheme(PlatformDialect dialect, {double? bodyFontPt}) {
+  switch (dialect) {
+    case PlatformDialect.adwaita:
+      final body = (bodyFontPt ?? 11) * 4 / 3;
+      return TextTheme(
+        titleMedium: TextStyle(
+          fontSize: body * 1.1,
+          fontWeight: FontWeight.w700,
+        ),
+        titleSmall: TextStyle(
+          fontSize: body,
+          fontWeight: FontWeight.w700,
+          height: 1.3,
+        ),
+        bodyMedium: TextStyle(fontSize: body),
+        bodySmall: TextStyle(fontSize: body * 0.82, height: 1.3),
+        labelMedium: TextStyle(fontSize: body),
+        labelSmall: TextStyle(
+          fontSize: body * 0.75,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.7,
+        ),
+      );
+    case PlatformDialect.macos:
+      return const TextTheme(
+        titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        titleSmall: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          height: 1.3,
+        ),
+        bodyMedium: TextStyle(fontSize: 13),
+        bodySmall: TextStyle(fontSize: 11, height: 1.3),
+        labelMedium: TextStyle(fontSize: 13),
+        labelSmall: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.7,
+        ),
+      );
+  }
 }

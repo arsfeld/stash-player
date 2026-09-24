@@ -8,6 +8,7 @@ import '../../services/thumbnail_repository.dart';
 import '../../shared/formatters.dart';
 import '../../shared/scene_labels.dart';
 import '../../shared/scene_placeholder.dart';
+import '../icons/app_icons.dart';
 import '../theme/app_tokens.dart';
 
 /// Geometry for the library grid.
@@ -31,10 +32,6 @@ class SceneGridGeometry {
   static const double crossAxisSpacing = AppTokens.space4;
   static const double mainAxisSpacing = AppTokens.space5;
 
-  static const double titleFontSize = 13;
-  static const double subtitleFontSize = 12;
-  static const double lineHeight = 1.3;
-
   final int columnCount;
   final double tileWidth;
   final double tileHeight;
@@ -42,22 +39,34 @@ class SceneGridGeometry {
   /// Height of the text block beneath a thumbnail: the gap under the
   /// image, a title line, a small gap, and a subtitle line.
   ///
+  /// Reads the actual sizes the tile paints its text with, `titleSmall`
+  /// and `bodySmall` from [textTheme] (see `app_theme.dart`'s
+  /// `_textTheme`), rather than a size baked in here: those are
+  /// per-dialect, and on Adwaita `titleSmall`/`bodySmall` scale with the
+  /// desktop's own UI font size (`bodyFontPt`), which regularly exceeds
+  /// GNOME's 11pt default. A constant sized for 11pt used to under-count
+  /// the block's height, and so the tile, at any larger font.
+  ///
   /// Each line height is ceiled to a whole logical pixel: Flutter's text
   /// layout rounds a paragraph's height up to the device pixel grid, so
-  /// the raw `fontSize * lineHeight` product (e.g. 12 * 1.3 = 15.6)
-  /// under-predicts the actual rendered height (16.0 at a 1x device pixel
-  /// ratio) by a fraction of a pixel per line. Ceiling to the nearest
-  /// logical pixel is a safe upper bound at any device pixel ratio, since
-  /// a higher ratio only rounds to a *finer* grid.
-  static double textBlockHeight(TextScaler textScaler) =>
-      AppTokens.space2 +
-      (textScaler.scale(titleFontSize) * lineHeight).ceilToDouble() +
-      AppTokens.space1 / 2 +
-      (textScaler.scale(subtitleFontSize) * lineHeight).ceilToDouble();
+  /// the raw `fontSize * height` product under-predicts the actual
+  /// rendered height by a fraction of a pixel per line. Ceiling to the
+  /// nearest logical pixel is a safe upper bound at any device pixel
+  /// ratio, since a higher ratio only rounds to a *finer* grid.
+  static double textBlockHeight(TextScaler textScaler, TextTheme textTheme) {
+    final title = textTheme.titleSmall!;
+    final subtitle = textTheme.bodySmall!;
+    return AppTokens.space2 +
+        (textScaler.scale(title.fontSize!) * title.height!).ceilToDouble() +
+        AppTokens.space1 / 2 +
+        (textScaler.scale(subtitle.fontSize!) * subtitle.height!)
+            .ceilToDouble();
+  }
 
   static SceneGridGeometry resolve({
     required double availableWidth,
     required TextScaler textScaler,
+    required TextTheme textTheme,
   }) {
     final usable = math.max(1.0, availableWidth);
     final columnCount = math.max(1, (usable / maxTileWidth).ceil());
@@ -67,7 +76,8 @@ class SceneGridGeometry {
       columnCount: columnCount,
       tileWidth: tileWidth,
       tileHeight:
-          tileWidth / sceneThumbnailAspectRatio + textBlockHeight(textScaler),
+          tileWidth / sceneThumbnailAspectRatio +
+          textBlockHeight(textScaler, textTheme),
     );
   }
 }
@@ -151,7 +161,9 @@ class _SceneTileState extends State<SceneTile> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           onFocusChange: (focused) => setState(() => _focused = focused),
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          borderRadius: BorderRadius.circular(
+            AppTokens.of(context).radiusControl,
+          ),
           // Ink is the wrong mechanism for this tile, so it is turned off
           // rather than left to paint where nobody can see it. An ink
           // feature paints immediately above the Material hosting it and
@@ -180,7 +192,7 @@ class _SceneTileState extends State<SceneTile> {
                 // footprint.
                 foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(
-                    AppTokens.radiusControl + 2,
+                    AppTokens.of(context).radiusControl + 2,
                   ),
                   border: Border.all(
                     color: _focused
@@ -190,7 +202,9 @@ class _SceneTileState extends State<SceneTile> {
                   ),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+                  borderRadius: BorderRadius.circular(
+                    AppTokens.of(context).radiusControl,
+                  ),
                   child: Stack(
                     fit: StackFit.passthrough,
                     children: [
@@ -215,11 +229,21 @@ class _SceneTileState extends State<SceneTile> {
                           bottom: AppTokens.space2,
                           child: Tooltip(
                             message: 'Resume available',
-                            child: Icon(
-                              Icons.play_circle_fill,
-                              size: 20,
-                              color: Colors.white,
-                              shadows: [Shadow(blurRadius: 4)],
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Color(0x66000000),
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                              child: AppIconView(
+                                AppIcon.playFilled,
+                                size: 20,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -278,7 +302,9 @@ class _RatingBadge extends StatelessWidget {
     child: DecoratedBox(
       decoration: BoxDecoration(
         color: AppTokens.playerPanel,
-        borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+        borderRadius: BorderRadius.circular(
+          AppTokens.of(context).radiusControl,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(
@@ -288,7 +314,11 @@ class _RatingBadge extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.star, size: 12, color: AppTokens.playerText),
+            const AppIconView(
+              AppIcon.star,
+              size: 12,
+              color: AppTokens.playerText,
+            ),
             const SizedBox(width: 2),
             Text(
               formatRating(rating100),

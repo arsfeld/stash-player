@@ -8,6 +8,7 @@ import 'package:stash_player_flutter/domain/failure.dart';
 import 'package:stash_player_flutter/features/connection/connection_controller.dart';
 import 'package:stash_player_flutter/features/connection/connection_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 
 import '../../support/fakes.dart';
 
@@ -160,7 +161,7 @@ void main() {
       await tester.tap(find.text('Test connection'));
       await tester.pump();
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AppSpinner), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       await tester.tap(find.text('Cancel'));
       expect(cancelled, 1);
