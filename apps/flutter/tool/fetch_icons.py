@@ -12,6 +12,18 @@ in one file, with the inactive states marked visibility="hidden". A
 plain SVG renderer would draw every state on top of each other, so each
 icon is flattened to one state here: "outline" by default, or the state
 named after "@" (e.g. "star@filled").
+
+They also paint via a `fill`/`stroke` of the form `url(#gpa:foreground)
+rgb(0,0,0)`: a reference to a paint server GTK's own "grappa" editor
+supplies at runtime, with a plain colour as a fallback for everyone
+else, `id="gpa:foreground"` is never actually defined in these files.
+CSS honours that fallback when the url() doesn't resolve, but
+vector_graphics_compiler 1.3.0 (flutter_svg's backend) does not: an
+unresolvable `url()` paint is dropped silently rather than falling back,
+so the path renders with no fill and no stroke at all. Every such
+reference is rewritten to its fallback colour here for that reason; a
+`url()` whose id *is* defined elsewhere in the file (a real gradient/
+pattern) is left alone.
 """
 
 import pathlib
@@ -58,6 +70,38 @@ def fetch(url: str) -> bytes:
         return response.read()
 
 
+def _resolve_paint_value(value: str, defined_ids: set[str]) -> str:
+    """Rewrites a `fill`/`stroke` value of the form `url(#id) fallback`
+    (optionally with quotes around the fragment, however ElementTree
+    happened to escape them) to just `fallback`, since
+    vector_graphics_compiler silently drops the whole paint rather than
+    falling back to it when `#id` doesn't resolve. A `url()` with no
+    fallback is left alone if `#id` is actually defined in this file
+    (a real gradient/pattern), and otherwise replaced with black, the
+    same default CSS would use for an unresolvable paint.
+    """
+    stripped = value.strip()
+    if not stripped.startswith("url("):
+        return value
+    close = stripped.find(")")
+    if close == -1:
+        return value
+    ref = stripped[4:close].strip().strip("\"'").lstrip("#")
+    fallback = stripped[close + 1 :].strip()
+    if fallback:
+        return fallback
+    return value if ref in defined_ids else "rgb(0,0,0)"
+
+
+def _resolve_paint_references(root: ET.Element) -> None:
+    defined_ids = {el.get("id") for el in root.iter() if el.get("id")}
+    for el in root.iter():
+        for attr in ("fill", "stroke"):
+            value = el.get(attr)
+            if value is not None:
+                el.set(attr, _resolve_paint_value(value, defined_ids))
+
+
 def flatten_gpa(svg: bytes, state: str) -> bytes:
     ET.register_namespace("", SVG_NS)
     root = ET.fromstring(svg)
@@ -84,6 +128,7 @@ def flatten_gpa(svg: bytes, state: str) -> bytes:
     for key in [k for k in root.attrib if k.startswith(f"{{{GPA_NS}}}")]:
         del root.attrib[key]
     root.set("viewBox", root.get("viewBox", "0 0 16 16"))
+    _resolve_paint_references(root)
     return ET.tostring(root, encoding="utf-8")
 
 
