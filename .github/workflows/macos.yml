@@ -435,9 +435,40 @@ jobs:
             --maximum-versions 10 \
             release-assets/
 
+          # `--download-url-prefix` points every enclosure at this tag's
+          # release, but historical zips were staged under renamed copies
+          # (`StashPlayer-macos-arm64-<tag>.zip`) that only exist on their
+          # own tag's release, as `StashPlayer-macos-arm64.zip`. Point them
+          # back there. The feed itself isn't signed (only the archives are,
+          # and their EdDSA signatures cover bytes, not URLs), so rewriting
+          # URLs after generation is safe.
+          sed -E -i '' \
+            "s#/releases/download/${GITHUB_REF_NAME}/StashPlayer-macos-arm64-(v[^/\"]+)\.zip#/releases/download/\1/StashPlayer-macos-arm64.zip#g" \
+            release-assets/appcast.xml
+
           # Sanity-check the generated feed has an item for this tag.
           grep -q "sparkle:version" release-assets/appcast.xml
           echo "Appcast generated for ${GITHUB_REF_NAME}"
+
+      - name: Attach delta updates to the GitHub Release
+        # generate_appcast writes a `.delta` per prior version into
+        # release-assets/ and lists each one in the feed under this tag's
+        # release. Upload them before the feed goes live, or every client
+        # 404s on the delta and falls back to the full zip.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          DELTAS=(release-assets/*.delta)
+          if [ ${#DELTAS[@]} -eq 0 ]; then
+            echo "No delta updates generated"
+            exit 0
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            "${DELTAS[@]}"
 
       - name: Publish appcast to gh-pages
         # Separate `run:` block — runs only if signing succeeded. Push has
