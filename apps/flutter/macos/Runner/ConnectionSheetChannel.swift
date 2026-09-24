@@ -58,7 +58,7 @@ final class ConnectionSheetChannel: NSObject, NSTextFieldDelegate {
     content.proxyField.stringValue = args["socksProxy"] as? String ?? ""
     for field in content.fields { field.delegate = self }
 
-    let panel = NSPanel(
+    let panel = ConnectionSheetPanel(
       contentRect: NSRect(x: 0, y: 0, width: 480, height: 200),
       styleMask: [.titled],
       backing: .buffered,
@@ -128,6 +128,19 @@ final class ConnectionSheetChannel: NSObject, NSTextFieldDelegate {
   }
 }
 
+/// Esc's default handling on `NSPanel` is `cancelOperation(_:)`, which
+/// closes the panel directly — bypassing `endSheet`, so the parent window
+/// never hears about it and `ConnectionSheetChannel.panel` stays set,
+/// wedging every later `present` behind an `already-open` error. It also
+/// never tells Dart, which owns cancellation: Esc must act only through
+/// the Cancel button's key equivalent, which Dart enables or disables
+/// (absent on first launch; disabled while a test is running, since the
+/// sheet can't close mid-test). This override makes plain Esc a no-op,
+/// leaving cancellation entirely to that button.
+private final class ConnectionSheetPanel: NSPanel {
+  override func cancelOperation(_ sender: Any?) {}
+}
+
 /// The sheet's views, built fresh for each presentation.
 ///
 /// Every view is built as a local and assigned at the end of `init`:
@@ -158,11 +171,11 @@ private final class ConnectionSheetContent {
       field.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
     }
 
-    let urlError = Self.messageLabel(color: .systemRed)
-    let proxyError = Self.messageLabel(color: .systemRed)
-    let failure = Self.messageLabel(color: .systemRed)
+    let urlError = ConnectionSheetContent.messageLabel(color: .systemRed)
+    let proxyError = ConnectionSheetContent.messageLabel(color: .systemRed)
+    let failure = ConnectionSheetContent.messageLabel(color: .systemRed)
     failure.isHidden = true
-    let hint = Self.messageLabel(color: .secondaryLabelColor)
+    let hint = ConnectionSheetContent.messageLabel(color: .secondaryLabelColor)
     hint.stringValue = proxyHint
 
     let heading = NSTextField(labelWithString: title)
@@ -171,10 +184,10 @@ private final class ConnectionSheetContent {
     // Messages get rows of their own, so the label/field rows can align
     // on the first baseline and an empty message row can be hidden.
     let grid = NSGridView(views: [
-      [Self.fieldLabel("Server URL:"), urlField],
+      [ConnectionSheetContent.fieldLabel("Server URL:"), urlField],
       [NSGridCell.emptyContentView, urlError],
-      [Self.fieldLabel("API Key:"), apiKeyField],
-      [Self.fieldLabel("SOCKS5 Proxy:"), proxyField],
+      [ConnectionSheetContent.fieldLabel("API Key:"), apiKeyField],
+      [ConnectionSheetContent.fieldLabel("SOCKS5 Proxy:"), proxyField],
       [NSGridCell.emptyContentView, proxyError],
       [NSGridCell.emptyContentView, hint],
     ])
