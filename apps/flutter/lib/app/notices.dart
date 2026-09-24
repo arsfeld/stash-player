@@ -1,10 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// How prominently a global [AppNotice] should be presented. The root
-/// [ScaffoldMessenger] uses this to tint the resulting `SnackBar`.
+/// How prominently a global [AppNotice] should be presented. `ToastHost`
+/// uses this to tint the resulting toast.
 enum AppNoticeSeverity { info, success, warning, error }
 
-/// A single non-modal notice surfaced through the root `ScaffoldMessenger`.
+/// A single non-modal notice surfaced by `ToastHost`.
 ///
 /// Per the app shell's design, this is reserved for things that aren't
 /// local to a screen: a successful reconnection, an activity-write

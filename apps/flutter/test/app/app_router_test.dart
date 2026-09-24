@@ -291,8 +291,8 @@ ProviderContainer _container({
       // Task 7 made the library destination a real `LibraryScreen`, which
       // fetches its first page on mount — an empty-but-resolved page
       // keeps that fetch from staying in `loading` forever (an
-      // indeterminate `CircularProgressIndicator`, which would hang any
-      // `pumpAndSettle` in this file that lands on the library).
+      // indeterminate `AppSpinner`, which would hang any `pumpAndSettle`
+      // in this file that lands on the library).
       (config) =>
           FakeStashApi(versionValue: 'v0.31.0')
             ..pages.add(ScenePage(total: 0, scenes: const [])),

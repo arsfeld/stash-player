@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/connection.dart';
 import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/app_spinner.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
 import 'connection_controller.dart';
@@ -251,13 +252,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                                             ),
                                           ),
                                     child: loading
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
+                                        ? const AppSpinner(size: 18)
                                         : const Text('Test connection'),
                                   ),
                                 ),

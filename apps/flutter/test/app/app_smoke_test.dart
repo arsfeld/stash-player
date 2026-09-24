@@ -7,6 +7,7 @@ import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/system_appearance.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
+import 'package:stash_player_flutter/ui/widgets/app_toast.dart';
 
 import '../support/fakes.dart';
 
@@ -87,7 +88,7 @@ void main() {
     },
   );
   testWidgets(
-    'a bootstrap-failure notice SnackBar resolves the app theme, not the '
+    'a bootstrap-failure notice toast resolves the app theme, not the '
     'Material fallback',
     (tester) async {
       await _pumpApp(
@@ -97,23 +98,20 @@ void main() {
           () => throw Exception('disk error'),
         ),
       );
-      // One pump to let bootstrap's error path run and the notice/SnackBar
-      // appear, a second to let the SnackBar's entrance animation start
+      // One pump to let bootstrap's error path run and the notice/toast
+      // appear, a second to let the toast's entrance animation start
       // (short of pumpAndSettle, which would fast-forward through its
       // auto-dismiss timer and remove it from the tree again).
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Connect to Stash'), findsOneWidget);
-      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
-      final themeContext = tester.element(find.text('Connect to Stash'));
-      final expectedColor = Theme.of(themeContext).colorScheme.error;
-
-      expect(snackBar.backgroundColor, expectedColor);
-      // Sanity check this isn't just coincidentally matching: AppTokens is
-      // only registered by this app's real theme, never by the Material
-      // fallback ThemeData(), so its presence here proves the SnackBar
-      // resolved through the app's own Theme rather than a default one.
+      final toast = tester.widget<AppToast>(find.byType(AppToast));
+      final themeContext = tester.element(find.byType(AppToast));
+      expect(toast.background, Theme.of(themeContext).colorScheme.error);
+      // AppTokens is only registered by this app's real theme, never by
+      // the Material fallback ThemeData(), so its presence proves the
+      // toast resolved through the app's own Theme, not a default one.
       expect(Theme.of(themeContext).extension<AppTokens>(), isNotNull);
     },
   );

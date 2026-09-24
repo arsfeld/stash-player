@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../shared/formatters.dart';
+import '../../ui/widgets/app_spinner.dart';
 import 'load_diagnostics.dart';
 import 'playback_state.dart';
 
@@ -109,14 +110,7 @@ class _PlaybackLoadingOverlayState extends State<PlaybackLoadingOverlay> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(
-            width: 32,
-            height: 32,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Colors.white,
-            ),
-          ),
+          const AppSpinner(size: 32, color: Colors.white),
           const SizedBox(height: 16),
           Text(
             headline,

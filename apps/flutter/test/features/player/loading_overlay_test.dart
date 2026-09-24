@@ -7,6 +7,7 @@ import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_state.dart';
 import 'package:stash_player_flutter/features/player/stream_selection.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 
 Scene _scene({double? resumeTime}) => Scene(
   id: 's1',
@@ -96,7 +97,7 @@ void main() {
       await _mount(tester, _loading());
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(AppSpinner), findsNothing);
       expect(find.byType(Text), findsNothing);
     });
 
@@ -106,7 +107,7 @@ void main() {
       await _mount(tester, _loading());
       await tester.pump(loadingOverlayGrace + const Duration(milliseconds: 1));
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AppSpinner), findsOneWidget);
     });
   });
 

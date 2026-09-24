@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/job.dart';
 import '../../ui/icons/app_icons.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/widgets/app_spinner.dart';
 import 'tasks_controller.dart';
 
 const double tasksPopoverWidth = 300;
@@ -288,7 +289,7 @@ class _StatusIndicator extends StatelessWidget {
       ),
       JobStatus.running || JobStatus.stopping => const Padding(
         padding: EdgeInsets.all(2),
-        child: CircularProgressIndicator(strokeWidth: 2),
+        child: AppSpinner(size: 12),
       ),
       JobStatus.finished => AppIconView(
         AppIcon.done,

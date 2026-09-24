@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../icons/app_icons.dart';
 import '../theme/app_tokens.dart';
+import 'app_spinner.dart';
 
 /// Private layout widget shared by AppEmptyView and AppErrorView.
 class _StatusColumn extends StatelessWidget {
@@ -41,14 +42,7 @@ class AppLoadingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Semantics(
-      label: semanticLabel,
-      child: const SizedBox(
-        width: 28,
-        height: 28,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
-    ),
+    child: Semantics(label: semanticLabel, child: const AppSpinner(size: 28)),
   );
 }
 

@@ -163,12 +163,6 @@ ThemeData buildAppTheme(
       shape: panelShape,
       textStyle: textTheme.labelMedium?.copyWith(color: palette.text),
     ),
-    snackBarTheme: SnackBarThemeData(
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: palette.chrome,
-      contentTextStyle: textTheme.bodyMedium?.copyWith(color: palette.text),
-      shape: panelShape,
-    ),
     chipTheme: ChipThemeData(
       backgroundColor: palette.control,
       side: BorderSide.none,

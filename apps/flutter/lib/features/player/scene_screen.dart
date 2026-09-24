@@ -10,6 +10,7 @@ import '../../domain/browse_context.dart';
 import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
 import '../../ui/icons/app_icons.dart';
+import '../../ui/widgets/app_spinner.dart';
 import 'loading_overlay.dart';
 import 'playback_controller.dart';
 import 'playback_state.dart';
@@ -807,7 +808,7 @@ class _SceneUnavailableView extends StatelessWidget {
       return Center(
         child: Semantics(
           label: 'Loading scene',
-          child: const CircularProgressIndicator(color: Colors.white),
+          child: const AppSpinner(size: 32, color: Colors.white),
         ),
       );
     }

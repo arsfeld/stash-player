@@ -21,6 +21,7 @@ import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
@@ -185,10 +186,9 @@ void main() {
         // controller stays in `loading` forever — exactly the
         // "initial/loading with no data" bucket — instead of the call
         // completing with a `StateError`. Deliberately bounded pumps
-        // rather than `pumpAndSettle`: the indeterminate
-        // `CircularProgressIndicator` this state renders schedules
-        // frames forever, which `pumpAndSettle` would wait on forever
-        // too.
+        // rather than `pumpAndSettle`: the indeterminate `AppSpinner` this
+        // state renders schedules frames forever, which `pumpAndSettle`
+        // would wait on forever too.
         await _pumpLibrary(
           tester,
           api: FakeStashApi()..allowManualCompletion = true,
@@ -197,7 +197,7 @@ void main() {
         await tester.pump();
 
         expect(find.bySemanticsLabel('Loading scenes'), findsOneWidget);
-        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.byType(AppSpinner), findsOneWidget);
       },
     );
 
@@ -242,7 +242,7 @@ void main() {
       await tester.pump();
 
       expect(harness.controller.state.isLoading, isTrue);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AppSpinner), findsOneWidget);
       // The already-accepted cards stay put while the next page loads.
       expect(find.text('Scene 0'), findsOneWidget);
 

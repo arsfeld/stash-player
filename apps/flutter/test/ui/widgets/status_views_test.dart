@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
+import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/status_views.dart';
 
 Future<void> _pump(WidgetTester tester, Widget child) => tester.pumpWidget(
@@ -14,7 +15,7 @@ void main() {
   testWidgets('the loading view is a labelled spinner', (tester) async {
     await _pump(tester, const AppLoadingView(semanticLabel: 'Loading scenes'));
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AppSpinner), findsOneWidget);
     expect(find.bySemanticsLabel('Loading scenes'), findsOneWidget);
   });
 
