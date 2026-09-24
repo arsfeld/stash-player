@@ -135,7 +135,7 @@ class AppInlineBanner extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: theme.colorScheme.error.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPanel),
+        borderRadius: BorderRadius.circular(AppTokens.of(context).radiusPanel),
       ),
       child: Row(
         children: [

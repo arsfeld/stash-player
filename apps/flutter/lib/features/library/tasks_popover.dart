@@ -146,7 +146,7 @@ class TasksPopoverPanel extends StatelessWidget {
     return Material(
       elevation: 8,
       color: theme.colorScheme.surfaceContainerHigh,
-      borderRadius: BorderRadius.circular(AppTokens.radiusPanel),
+      borderRadius: BorderRadius.circular(tokens.radiusPanel),
       clipBehavior: Clip.antiAlias,
       child: Semantics(
         scopesRoute: true,

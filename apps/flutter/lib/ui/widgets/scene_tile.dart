@@ -31,8 +31,14 @@ class SceneGridGeometry {
   static const double crossAxisSpacing = AppTokens.space4;
   static const double mainAxisSpacing = AppTokens.space5;
 
-  static const double titleFontSize = 13;
-  static const double subtitleFontSize = 12;
+  // The title and subtitle are painted in `titleSmall` / `bodySmall`,
+  // whose size is per-dialect (see `app_theme.dart`'s `_textTheme`).
+  // libadwaita's default 11pt body is the larger of the two dialects'
+  // sizes, so predicting from it here is a safe upper bound for macOS's
+  // fixed 13/11pt too; a desktop that reports a larger UI font than 11pt
+  // is the one case this does not cover.
+  static const double titleFontSize = 11 * 4 / 3;
+  static const double subtitleFontSize = 11 * 4 / 3 * 0.82;
   static const double lineHeight = 1.3;
 
   final int columnCount;
@@ -151,7 +157,9 @@ class _SceneTileState extends State<SceneTile> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           onFocusChange: (focused) => setState(() => _focused = focused),
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          borderRadius: BorderRadius.circular(
+            AppTokens.of(context).radiusControl,
+          ),
           // Ink is the wrong mechanism for this tile, so it is turned off
           // rather than left to paint where nobody can see it. An ink
           // feature paints immediately above the Material hosting it and
@@ -180,7 +188,7 @@ class _SceneTileState extends State<SceneTile> {
                 // footprint.
                 foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(
-                    AppTokens.radiusControl + 2,
+                    AppTokens.of(context).radiusControl + 2,
                   ),
                   border: Border.all(
                     color: _focused
@@ -190,7 +198,9 @@ class _SceneTileState extends State<SceneTile> {
                   ),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+                  borderRadius: BorderRadius.circular(
+                    AppTokens.of(context).radiusControl,
+                  ),
                   child: Stack(
                     fit: StackFit.passthrough,
                     children: [
@@ -278,7 +288,9 @@ class _RatingBadge extends StatelessWidget {
     child: DecoratedBox(
       decoration: BoxDecoration(
         color: AppTokens.playerPanel,
-        borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+        borderRadius: BorderRadius.circular(
+          AppTokens.of(context).radiusControl,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(

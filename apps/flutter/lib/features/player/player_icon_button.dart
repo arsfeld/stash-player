@@ -55,7 +55,7 @@ class PlayerIconButton extends StatelessWidget {
     final extent = primary ? primarySize : size;
     final radius = BorderRadius.circular(
       variant == PlayerIconButtonVariant.tile
-          ? AppTokens.radiusControl
+          ? AppTokens.radiusPlayerControl
           : extent / 2,
     );
     // Player chrome is always dark, so its hovered and pressed states are

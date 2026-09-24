@@ -99,7 +99,7 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
         height: AppTokens.controlBandHeight,
         decoration: BoxDecoration(
           color: tokens.controlSurface,
-          borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+          borderRadius: BorderRadius.circular(tokens.radiusControl),
         ),
         // A Material of its own, *between* the fill and the InkWell. An
         // ink feature paints immediately above the Material hosting it
@@ -116,7 +116,7 @@ class _AppMenuButtonState<T extends Object> extends State<AppMenuButton<T>> {
             hoverColor: tokens.controlHover,
             highlightColor: tokens.controlActive,
             splashColor: tokens.controlActive,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
             // Padding inside the InkWell, not on the fill above it, so
             // hover and press cover the control's whole box.
             child: Padding(
@@ -194,7 +194,7 @@ class AppIconToggle extends StatelessWidget {
           height: AppTokens.controlBandHeight,
           decoration: BoxDecoration(
             color: selected ? scheme.primary : tokens.controlSurface,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
           ),
           // See the matching note in AppMenuButton.build: this Material
           // has to sit between the fill and the InkWell for ink to be
@@ -219,7 +219,7 @@ class AppIconToggle extends StatelessWidget {
               splashColor: selected
                   ? scheme.onPrimary.withValues(alpha: 0.2)
                   : tokens.controlActive,
-              borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+              borderRadius: BorderRadius.circular(tokens.radiusControl),
               child: Center(
                 child: Icon(
                   icon,
@@ -288,7 +288,7 @@ class AppIconAction extends StatelessWidget {
           height: AppTokens.controlBandHeight,
           decoration: BoxDecoration(
             color: tokens.controlSurface,
-            borderRadius: BorderRadius.circular(AppTokens.radiusControl),
+            borderRadius: BorderRadius.circular(tokens.radiusControl),
           ),
           child: Stack(
             children: [
@@ -304,9 +304,7 @@ class AppIconAction extends StatelessWidget {
                     hoverColor: tokens.controlHover,
                     highlightColor: tokens.controlActive,
                     splashColor: tokens.controlActive,
-                    borderRadius: BorderRadius.circular(
-                      AppTokens.radiusControl,
-                    ),
+                    borderRadius: BorderRadius.circular(tokens.radiusControl),
                     child: Center(
                       child: Icon(
                         icon,
