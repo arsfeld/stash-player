@@ -20,6 +20,8 @@ import 'package:stash_player_flutter/features/library/tasks_controller.dart';
 import 'package:stash_player_flutter/services/thumbnail_repository.dart';
 import 'package:stash_player_flutter/shared/scene_placeholder.dart';
 import 'package:stash_player_flutter/ui/icons/app_icons.dart';
+import 'package:stash_player_flutter/ui/menu/app_menu.dart';
+import 'package:stash_player_flutter/ui/menu/native_menus.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
@@ -27,6 +29,7 @@ import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
 import '../../support/app_icons.dart';
 import '../../support/fakes.dart';
+import '../../support/recording_menus.dart';
 
 Scene _scene({
   required String id,
@@ -141,7 +144,8 @@ Future<_Harness> _pumpLibrary(
   WidgetTester tester, {
   FakeStashApi? api,
   ThumbnailRepository? thumbnailRepository,
-  VoidCallback? onOpenSettings,
+  NativeMenus? menus,
+  List<Override> overrides = const [],
   Size size = const Size(1200, 900),
 }) async {
   addTearDown(tester.view.resetPhysicalSize);
@@ -158,6 +162,7 @@ Future<_Harness> _pumpLibrary(
       thumbnailRepositoryProvider.overrideWith(
         (ref) async => thumbnailRepository ?? FakeThumbnailRepository(),
       ),
+      ...overrides,
     ],
   );
   addTearDown(container.dispose);
@@ -167,7 +172,9 @@ Future<_Harness> _pumpLibrary(
       container: container,
       child: MaterialApp(
         theme: buildAppTheme(Brightness.light),
-        home: LibraryScreen(onOpenSettings: onOpenSettings ?? () {}),
+        home: menus == null
+            ? const LibraryScreen()
+            : NativeMenusScope(menus: menus, child: const LibraryScreen()),
       ),
     ),
   );
@@ -723,7 +730,7 @@ void main() {
         ('Play random', 'Play a random scene'),
         ('Scan library for new files', 'Scan library'),
         ('Background tasks', 'Background tasks'),
-        ('Connection settings', 'Connection settings'),
+        ('Main Menu', 'Main menu'),
       ];
       const expectedMenus = ['Sort by', 'Minimum rating'];
 
@@ -845,7 +852,7 @@ void main() {
       // read "Sort descending".
       expect(find.byTooltip('Sort descending'), findsOneWidget);
       expect(find.byTooltip('Minimum rating'), findsOneWidget);
-      expect(find.byTooltip('Connection settings'), findsOneWidget);
+      expect(find.byTooltip('Main Menu'), findsOneWidget);
       expect(find.byTooltip('Organized: any'), findsOneWidget);
     });
   });
@@ -990,8 +997,8 @@ void main() {
 
   group('keyboard reachability', () {
     testWidgets('Tab reaches sort, direction, minimum rating, organized, hide '
-        'tracked, random, search, scan, tasks, settings, and the first scene '
-        'card, in the order they render', (tester) async {
+        'tracked, random, search, scan, tasks, the main menu, and the first '
+        'scene card, in the order they render', (tester) async {
       final api = FakeStashApi()
         ..pages.add(ScenePage(total: 2, scenes: _scenes(2)));
       await _pumpLibrary(tester, api: api, size: const Size(1200, 900));
@@ -1011,7 +1018,7 @@ void main() {
         'library-search',
         'library-scan',
         'library-tasks',
-        'library-settings',
+        'library-main-menu',
         'scene-tile-0',
       ];
 
@@ -1206,7 +1213,7 @@ void main() {
     );
 
     testWidgets('at a narrow width Tab walks random, scan, tasks, then '
-        'settings', (tester) async {
+        'the main menu', (tester) async {
       final api = FakeStashApi()
         ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
       await _pumpLibrary(tester, api: api, size: const Size(620, 900));
@@ -1218,7 +1225,7 @@ void main() {
         'library-random',
         'library-scan',
         'library-tasks',
-        'library-settings',
+        'library-main-menu',
       ]) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
@@ -1431,4 +1438,86 @@ void main() {
       expect(find.byKey(AppIconAction.badgeKey), findsNothing);
     });
   });
+
+  group('settings entry points', () {
+    testWidgets('the main menu offers Preferences, which opens settings', (
+      tester,
+    ) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      final menus = RecordingMenus(choose: 'Preferences');
+      final harness = await _pumpLibrary(
+        tester,
+        api: api,
+        menus: menus,
+        overrides: [
+          appControllerProvider.overrideWith(_LibraryAppController.new),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Main Menu'));
+      await tester.pump();
+
+      expect(
+        menus.shown.single.entries.whereType<AppMenuAction>().map(
+          (action) => action.label,
+        ),
+        ['Preferences'],
+      );
+      expect(
+        harness.container.read(appControllerProvider),
+        const LibraryDestination(settingsOpen: true),
+      );
+    });
+
+    testWidgets('Ctrl+, opens settings from the library', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      final harness = await _pumpLibrary(
+        tester,
+        api: api,
+        overrides: [
+          appControllerProvider.overrideWith(_LibraryAppController.new),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+
+      expect(
+        harness.container.read(appControllerProvider),
+        const LibraryDestination(settingsOpen: true),
+      );
+    });
+
+    testWidgets('a bare comma does not open settings', (tester) async {
+      final api = FakeStashApi()
+        ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+      final harness = await _pumpLibrary(
+        tester,
+        api: api,
+        overrides: [
+          appControllerProvider.overrideWith(_LibraryAppController.new),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+
+      expect(
+        harness.container.read(appControllerProvider),
+        const AppDestination.library(),
+      );
+    });
+  });
+}
+
+/// Starts on the library, so `openSettings` has somewhere to act. The
+/// default `AppController` starts on the connection destination.
+class _LibraryAppController extends AppController {
+  @override
+  AppDestination build() => const AppDestination.library();
 }

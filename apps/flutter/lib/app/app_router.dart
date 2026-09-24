@@ -69,7 +69,7 @@ const _settingsPageName = 'settings';
 const _libraryPage = MaterialPage<void>(
   key: ValueKey('library'),
   name: _libraryPageName,
-  child: _LibraryRoute(),
+  child: LibraryScreen(),
 );
 
 const _settingsPage = AppDialogPage<void>(
@@ -90,18 +90,5 @@ class _ConnectionDestinationScreen extends ConsumerWidget {
       final config = ref.read(connectionControllerProvider).state.config;
       ref.read(appControllerProvider.notifier).replaceConnection(config);
     },
-  );
-}
-
-/// Renders the library, wiring its "open settings" intent to
-/// [AppController.openSettings]. Task 5 moves that call into the library
-/// feature itself and deletes this wrapper.
-class _LibraryRoute extends ConsumerWidget {
-  const _LibraryRoute();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => LibraryScreen(
-    onOpenSettings: () =>
-        ref.read(appControllerProvider.notifier).openSettings(),
   );
 }
