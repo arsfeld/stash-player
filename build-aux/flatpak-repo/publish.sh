@@ -24,6 +24,20 @@ sign=(--gpg-sign="$key" --gpg-homedir="$GNUPGHOME")
 
 [[ -d $repo ]] || { mkdir -p "$repo"; ostree init --mode=archive-z2 --repo="$repo"; }
 
+# Git doesn't track empty directories, so a repo checked out from gh-pages
+# (as CI does between releases) is missing the directories `ostree init`
+# creates but leaves empty — refs/remotes, refs/mirrors, tmp/cache, state,
+# extensions — and `flatpak build-update-repo` fails trying to list them.
+# Recreate them unconditionally, every publish, before touching the repo.
+mkdir -p "$repo"/refs/remotes "$repo"/refs/mirrors "$repo"/tmp/cache "$repo"/state "$repo"/extensions
+
+# repo/.lock and repo/tmp/ are runtime scratch state, not part of the repo
+# proper — keep them out of the gh-pages commit.
+cat >"$site/flatpak/.gitignore" <<'EOF'
+repo/.lock
+repo/tmp/
+EOF
+
 # A bundle's commit has no parent, so importing it straight into the repo
 # would replace the previous version rather than follow it — no rollback, no
 # incremental delta. Stage it, then re-commit it on top of the current head.

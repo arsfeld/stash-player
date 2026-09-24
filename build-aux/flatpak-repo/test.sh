@@ -53,6 +53,30 @@ done
 site=$work/site
 repo=$site/flatpak/repo
 ref=app/$APP_ID/$(flatpak --default-arch)/$BRANCH
+
+# Simulates what CI does between releases: commit the published site as a
+# gh-pages checkout, then start the next publish from a fresh clone. Git
+# doesn't track empty directories, which is exactly what exposes ostree's
+# empty refs/remotes, refs/mirrors, tmp/cache, state and extensions going
+# missing after the round trip. Git's own chatter is silenced so stdout
+# stays limited to `==` lines and PASS. Old clones are left for $work's exit
+# trap to clean up, rather than rm -rf'd here — git occasionally has a
+# maintenance helper still touching .git/objects right after commit/clone,
+# and racing it with rm -rf here caused sporadic "Directory not empty".
+round_trip_site() {
+	if [[ ! -d $site/.git ]]; then
+		git init -q "$site" >/dev/null
+	fi
+	git -C "$site" -c user.name=t -c user.email=t@example.invalid add -A >/dev/null
+	git -C "$site" -c user.name=t -c user.email=t@example.invalid \
+		commit -q -m "flatpak: round-trip" >/dev/null
+	local clone
+	clone=$(mktemp -d "$work/clone-XXXXXX")
+	rmdir "$clone"
+	git clone -q "$site" "$clone" >/dev/null 2>&1
+	site=$clone
+	repo=$site/flatpak/repo
+}
 publish() {
 	"$here/publish.sh" "$bundles/$1.flatpak" "$site" "$key" "$work/pub.gpg" "$work/out.flatpak" >/dev/null
 }
@@ -66,6 +90,10 @@ publish v1.1.0
 [[ -s $work/out.flatpak ]] || fail "no re-exported bundle"
 first=$(head_of)
 
+# Round-trip through git before the next publish, the way CI's gh-pages
+# checkout does — this is what exposes ostree's empty dirs going missing.
+round_trip_site
+
 echo "== second publish chains onto the first, with a delta"
 publish v1.2.0
 second=$(head_of)
@@ -73,6 +101,9 @@ second=$(head_of)
 [[ $(parent_of "$second") == "$first" ]] || fail "new commit's parent is not the previous head"
 ostree static-delta list --repo="$repo" | grep -qxF "$first-$second" ||
 	fail "no incremental delta $first-$second"
+
+# Round-trip again so the pruning case also starts from a cloned site.
+round_trip_site
 
 echo "== pruning keeps three commits"
 publish v1.1.0
