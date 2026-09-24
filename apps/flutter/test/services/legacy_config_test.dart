@@ -72,6 +72,15 @@ proxy_url = "socks5h://127.0.0.1:1055"
       expect(parseLegacyConfig('stash_url = ""'), isNull);
     });
 
+    test('the legacy default placeholder URL means nothing to import', () {
+      // What `Config::default()` wrote for a user who never configured a
+      // server; the Rust `has_custom_stash_url` treats it as unset too.
+      expect(
+        parseLegacyConfig('stash_url = "https://stash.example.com"'),
+        isNull,
+      );
+    });
+
     test('malformed TOML means nothing to import', () {
       expect(parseLegacyConfig('stash_url = "unterminated'), isNull);
     });

@@ -177,7 +177,10 @@ else.
   the `toml` package. Returns `stash_url` and `proxy_url`. It strips the
   scheme from `proxy_url` (`socks5h://host:port` → `host:port`) to match
   the Flutter proxy setting. HTTP proxies and proxies with credentials map
-  to no proxy, because the Flutter client can't honour them.
+  to no proxy, because the Flutter client can't honour them. A
+  `stash_url` equal to the Rust `Config::default()` placeholder
+  (`https://stash.example.com`) counts as no URL, as the Rust
+  `has_custom_stash_url` does.
 - **`LegacySecretReader`:** a Dart interface over the method channel
   `stash_player/legacy_secret`, method `readApiKey` → `String?`.
   - **Linux runner (C):** `secret_password_lookup_sync` with a schema

@@ -46,8 +46,14 @@ List<String> legacyConfigCandidates({
   ];
 }
 
+/// The `stash_url` the Rust `Config::default()` wrote for a user who never
+/// configured a server (`DEFAULT_STASH_URL` in
+/// `crates/stash-player-core/src/config.rs`).
+const legacyPlaceholderStashUrl = 'https://stash.example.com';
+
 /// Parses a legacy `config.toml`, or returns null when it holds no usable
-/// server URL (including when it isn't valid TOML at all).
+/// server URL (including when it isn't valid TOML at all, or holds only
+/// [legacyPlaceholderStashUrl]).
 LegacyConfig? parseLegacyConfig(String source) {
   final Map<String, dynamic> values;
   try {
@@ -56,7 +62,13 @@ LegacyConfig? parseLegacyConfig(String source) {
     return null;
   }
   final url = values['stash_url'];
-  if (url is! String || url.trim().isEmpty) return null;
+  // Same test as the Rust `Config::has_custom_stash_url`: blank after
+  // trimming, or exactly (untrimmed) the placeholder.
+  if (url is! String ||
+      url.trim().isEmpty ||
+      url == legacyPlaceholderStashUrl) {
+    return null;
+  }
   final proxy = values['proxy_url'];
   return LegacyConfig(
     serverUrl: url.trim(),
