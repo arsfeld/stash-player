@@ -7,6 +7,7 @@ import '../../ui/icons/app_icons.dart';
 import '../../ui/menu/app_menu.dart';
 import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/theme/platform_dialect.dart';
 import '../../ui/widgets/filter_controls.dart';
 import '../../ui/widgets/window_chrome.dart';
 
@@ -175,6 +176,12 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     super.dispose();
   }
 
+  /// GNOME apps keep Preferences in a primary menu in the header bar.
+  /// macOS apps have no such button: Settings… lives in the app menu, which
+  /// `AppMenuBar` provides.
+  bool get _showsMainMenu =>
+      PlatformDialect.of(context) == PlatformDialect.adwaita;
+
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 250), () {
@@ -233,8 +240,10 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _ordered(8, _scanButton()),
     const SizedBox(width: AppTokens.space2),
     _ordered(9, _tasksButton()),
-    const SizedBox(width: AppTokens.space2),
-    _ordered(10, _mainMenuButton()),
+    if (_showsMainMenu) ...[
+      const SizedBox(width: AppTokens.space2),
+      _ordered(10, _mainMenuButton()),
+    ],
   ];
 
   /// The strip below [libraryToolbarWideBreakpoint].
@@ -253,8 +262,10 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     _ordered(9, _scanButton()),
     const SizedBox(width: AppTokens.space2),
     _ordered(10, _tasksButton()),
-    const SizedBox(width: AppTokens.space2),
-    _ordered(11, _mainMenuButton()),
+    if (_showsMainMenu) ...[
+      const SizedBox(width: AppTokens.space2),
+      _ordered(11, _mainMenuButton()),
+    ],
   ];
 
   Widget _secondaryRow() => Padding(

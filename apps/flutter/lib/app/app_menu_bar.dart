@@ -28,7 +28,8 @@ class AppMenuBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     if (defaultTargetPlatform != TargetPlatform.macOS) return child;
 
-    final onScene = ref.watch(appControllerProvider) is SceneDestination;
+    final destination = ref.watch(appControllerProvider);
+    final onScene = destination is SceneDestination;
     // Only watched on the scene screen, and only for the two fields the
     // menu actually shows (`select`): the controller is created lazily,
     // the first time a scene loads, and the menu bar must not be what
@@ -67,6 +68,9 @@ class AppMenuBar extends ConsumerWidget {
               .invokeMethod<void>('checkForUpdates')
               .catchError((Object error) => logDiagnostic('updates', '$error')),
         ),
+        onOpenSettings: destination is LibraryDestination
+            ? ref.read(appControllerProvider.notifier).openSettings
+            : null,
       ),
       child: child,
     );
@@ -82,9 +86,13 @@ class AppMenuBar extends ConsumerWidget {
 /// (see `playback_controller.dart`'s `setFullscreenPlatform` doc), so a
 /// View → Enter Full Screen item would never have worked. It returns once
 /// real fullscreen support lands.
+///
+/// `onOpenSettings` is null wherever settings can't open (anywhere but the
+/// library), which AppKit shows as a disabled Settings… item.
 List<PlatformMenuItem> buildMacMenuBar({
   required AppMenu playback,
   required VoidCallback onCheckForUpdates,
+  required VoidCallback? onOpenSettings,
 }) => [
   PlatformMenu(
     label: 'Stash Player',
@@ -97,6 +105,18 @@ List<PlatformMenuItem> buildMacMenuBar({
           PlatformMenuItem(
             label: 'Check for Updates…',
             onSelected: onCheckForUpdates,
+          ),
+        ],
+      ),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformMenuItem(
+            label: 'Settings…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.comma,
+              meta: true,
+            ),
+            onSelected: onOpenSettings,
           ),
         ],
       ),

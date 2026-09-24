@@ -47,7 +47,7 @@ flutter run -d macos    # macOS
 
 On first launch (no persisted connection), the app opens the connection
 screen — enter a Stash **URL** and, if your server has auth enabled, an
-**API key** — then "Test connection". Once verified, both persist
+**API key** — then "Connect". Once verified, both persist
 (URL to platform preferences, key to the system keyring) and the app
 starts straight into the library on future launches.
 

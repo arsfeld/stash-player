@@ -90,9 +90,10 @@ The first time you open the app, it asks for your Stash server:
 - **SOCKS5 proxy** (optional): `host:port`, if your server is only
   reachable through a proxy.
 
-Click **Test connection**. Once it connects, your library opens, and next
-time the app goes straight there. To change servers later, use the gear
-icon in the library toolbar.
+Click **Connect**. Once it connects, your library opens, and next time the
+app goes straight there. To change servers later, open **Stash Player →
+Settings…** (⌘,) on macOS, or **Preferences** in the main menu (Ctrl+,) on
+Linux.
 
 **Upgrading from an older Stash Player?** Your saved server, API key and
 proxy are imported automatically on first launch, so you skip this step.

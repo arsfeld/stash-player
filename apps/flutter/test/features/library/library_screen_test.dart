@@ -1512,6 +1512,45 @@ void main() {
         const AppDestination.library(),
       );
     });
+
+    testWidgets(
+      'macOS has no main menu in the toolbar',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        await _pumpLibrary(tester, api: api);
+        await tester.pumpAndSettle();
+
+        expect(find.byTooltip('Main Menu'), findsNothing);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
+    testWidgets(
+      'Ctrl+, does nothing on macOS, where ⌘, is the menu bar\'s',
+      (tester) async {
+        final api = FakeStashApi()
+          ..pages.add(ScenePage(total: 1, scenes: _scenes(1)));
+        final harness = await _pumpLibrary(
+          tester,
+          api: api,
+          overrides: [
+            appControllerProvider.overrideWith(_LibraryAppController.new),
+          ],
+        );
+        await tester.pumpAndSettle();
+
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+
+        expect(
+          harness.container.read(appControllerProvider),
+          const AppDestination.library(),
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
   });
 }
 
