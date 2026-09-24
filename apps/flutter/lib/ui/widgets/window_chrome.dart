@@ -31,8 +31,7 @@ import '../theme/app_tokens.dart';
 /// arrive already wrapped in [Flexible] or [Expanded] and carry its own
 /// `overflow` behaviour, or the strip will render a `RenderFlex
 /// overflowed` at a width the rest of the app supports. The library
-/// toolbar flexes its search field; the connection screen flexes its
-/// title.
+/// toolbar flexes its search field.
 class AppWindowChrome extends StatelessWidget {
   const AppWindowChrome({required this.children, super.key});
 

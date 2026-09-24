@@ -18,9 +18,9 @@ import 'stash_api.dart';
 /// host on the wrong port) would otherwise hang the awaiting call forever.
 /// 15s is generous enough for a slow-but-working Stash instance (a cold
 /// `findScenes` against a large library over a slow link) while still
-/// bounding first-launch "Test connection", the library spinner, and
-/// activity checkpoints to a duration a user will actually wait out rather
-/// than kill the app. `TimeoutException` falls through `_post`'s existing
+/// bounding first-launch "Connect", the library spinner, and activity
+/// checkpoints to a duration a user will actually wait out rather than
+/// kill the app. `TimeoutException` falls through `_post`'s existing
 /// catch-all into a `TransportFailure`, same as any other transport error.
 const _requestTimeout = Duration(seconds: 15);
 

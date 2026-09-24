@@ -158,7 +158,7 @@ void main() {
     );
 
     // Get the controller into `ready` for `config` directly, the same
-    // way ConnectionScreen's own "Test connection" button would, before
+    // way ConnectionScreen's own "Connect" button would, before
     // AppController ever gets involved.
     await container.read(connectionControllerProvider).testAndSave(config);
     expect(store.saveCalls, hasLength(1));
