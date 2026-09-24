@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 
 /// Design values Material's [ThemeData] has no slot for.
 ///
-/// Metrics and player colours are static consts: they never vary. Only
-/// the four control/text colours are instance fields, because those are
-/// the ones that differ between light and dark, and reading them through
+/// Spacing, durations and player colours are static consts: they never
+/// vary. The four control/text colours and the two corner radii are
+/// instance fields, because those differ per dialect (and, for the
+/// colours, between light and dark), and reading them through
 /// `Theme.of(context).extension<AppTokens>()` is what makes a widget
-/// brightness-correct without asking about brightness.
+/// dialect- and brightness-correct without asking about either.
 ///
 /// Player chrome sits over video and stays dark in both themes, which is
 /// why its colours are consts here rather than fields.

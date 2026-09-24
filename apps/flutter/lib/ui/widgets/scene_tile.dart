@@ -32,16 +32,6 @@ class SceneGridGeometry {
   static const double crossAxisSpacing = AppTokens.space4;
   static const double mainAxisSpacing = AppTokens.space5;
 
-  // The title and subtitle are painted in `titleSmall` / `bodySmall`,
-  // whose size is per-dialect (see `app_theme.dart`'s `_textTheme`).
-  // libadwaita's default 11pt body is the larger of the two dialects'
-  // sizes, so predicting from it here is a safe upper bound for macOS's
-  // fixed 13/11pt too; a desktop that reports a larger UI font than 11pt
-  // is the one case this does not cover.
-  static const double titleFontSize = 11 * 4 / 3;
-  static const double subtitleFontSize = 11 * 4 / 3 * 0.82;
-  static const double lineHeight = 1.3;
-
   final int columnCount;
   final double tileWidth;
   final double tileHeight;
@@ -49,22 +39,34 @@ class SceneGridGeometry {
   /// Height of the text block beneath a thumbnail: the gap under the
   /// image, a title line, a small gap, and a subtitle line.
   ///
+  /// Reads the actual sizes the tile paints its text with, `titleSmall`
+  /// and `bodySmall` from [textTheme] (see `app_theme.dart`'s
+  /// `_textTheme`), rather than a size baked in here: those are
+  /// per-dialect, and on Adwaita `titleSmall`/`bodySmall` scale with the
+  /// desktop's own UI font size (`bodyFontPt`), which regularly exceeds
+  /// GNOME's 11pt default. A constant sized for 11pt used to under-count
+  /// the block's height, and so the tile, at any larger font.
+  ///
   /// Each line height is ceiled to a whole logical pixel: Flutter's text
   /// layout rounds a paragraph's height up to the device pixel grid, so
-  /// the raw `fontSize * lineHeight` product (e.g. 12 * 1.3 = 15.6)
-  /// under-predicts the actual rendered height (16.0 at a 1x device pixel
-  /// ratio) by a fraction of a pixel per line. Ceiling to the nearest
-  /// logical pixel is a safe upper bound at any device pixel ratio, since
-  /// a higher ratio only rounds to a *finer* grid.
-  static double textBlockHeight(TextScaler textScaler) =>
-      AppTokens.space2 +
-      (textScaler.scale(titleFontSize) * lineHeight).ceilToDouble() +
-      AppTokens.space1 / 2 +
-      (textScaler.scale(subtitleFontSize) * lineHeight).ceilToDouble();
+  /// the raw `fontSize * height` product under-predicts the actual
+  /// rendered height by a fraction of a pixel per line. Ceiling to the
+  /// nearest logical pixel is a safe upper bound at any device pixel
+  /// ratio, since a higher ratio only rounds to a *finer* grid.
+  static double textBlockHeight(TextScaler textScaler, TextTheme textTheme) {
+    final title = textTheme.titleSmall!;
+    final subtitle = textTheme.bodySmall!;
+    return AppTokens.space2 +
+        (textScaler.scale(title.fontSize!) * title.height!).ceilToDouble() +
+        AppTokens.space1 / 2 +
+        (textScaler.scale(subtitle.fontSize!) * subtitle.height!)
+            .ceilToDouble();
+  }
 
   static SceneGridGeometry resolve({
     required double availableWidth,
     required TextScaler textScaler,
+    required TextTheme textTheme,
   }) {
     final usable = math.max(1.0, availableWidth);
     final columnCount = math.max(1, (usable / maxTileWidth).ceil());
@@ -74,7 +76,8 @@ class SceneGridGeometry {
       columnCount: columnCount,
       tileWidth: tileWidth,
       tileHeight:
-          tileWidth / sceneThumbnailAspectRatio + textBlockHeight(textScaler),
+          tileWidth / sceneThumbnailAspectRatio +
+          textBlockHeight(textScaler, textTheme),
     );
   }
 }

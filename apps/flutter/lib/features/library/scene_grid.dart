@@ -144,6 +144,7 @@ class _SceneGridState extends State<SceneGrid> {
             final geometry = SceneGridGeometry.resolve(
               availableWidth: constraints.maxWidth - AppTokens.space5 * 2,
               textScaler: MediaQuery.textScalerOf(context),
+              textTheme: Theme.of(context).textTheme,
             );
             return GridView.builder(
               key: const Key('library-scene-grid'),

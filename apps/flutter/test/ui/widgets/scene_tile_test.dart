@@ -7,12 +7,18 @@ import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 
+final _defaultTextTheme = buildAppTheme(
+  Brightness.dark,
+  platform: TargetPlatform.linux,
+).textTheme;
+
 void main() {
   group('SceneGridGeometry', () {
     test('fills the width with tiles no wider than the target', () {
       final geometry = SceneGridGeometry.resolve(
         availableWidth: 1000,
         textScaler: TextScaler.noScaling,
+        textTheme: _defaultTextTheme,
       );
 
       expect(geometry.columnCount, 4);
@@ -27,6 +33,7 @@ void main() {
       final geometry = SceneGridGeometry.resolve(
         availableWidth: 0,
         textScaler: TextScaler.noScaling,
+        textTheme: _defaultTextTheme,
       );
 
       expect(geometry.columnCount, 1);
@@ -37,10 +44,12 @@ void main() {
       final plain = SceneGridGeometry.resolve(
         availableWidth: 1000,
         textScaler: TextScaler.noScaling,
+        textTheme: _defaultTextTheme,
       );
       final scaled = SceneGridGeometry.resolve(
         availableWidth: 1000,
         textScaler: const TextScaler.linear(2),
+        textTheme: _defaultTextTheme,
       );
 
       expect(scaled.columnCount, plain.columnCount);
@@ -219,6 +228,13 @@ void main() {
     // a `RenderFlex overflowed` exception in the real grid, which is
     // exactly what shipped undetected until the library screen started
     // rendering real data.
+    //
+    // Looped over several desktop UI font sizes and both dialects: the
+    // geometry used to predict the text block's height from a size
+    // baked in for an 11pt Adwaita body, which under-counted it (and so
+    // overflowed the tile) the moment the real theme's `bodyFontPt` rose
+    // above 11, since GNOME's settings portal reports whatever the user
+    // picked, not always the 11pt default.
     Scene longTitledScene() => Scene(
       id: '1',
       paths: const ScenePaths(),
@@ -228,12 +244,13 @@ void main() {
 
     Future<Size> measureNaturalHeight(
       WidgetTester tester, {
+      required ThemeData theme,
       required double tileWidth,
       required TextScaler textScaler,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
-          theme: buildAppTheme(Brightness.dark),
+          theme: theme,
           home: Builder(
             builder: (context) => MediaQuery(
               data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -259,13 +276,14 @@ void main() {
 
     Future<void> pumpAtGeometryTightHeight(
       WidgetTester tester, {
+      required ThemeData theme,
       required double tileWidth,
       required double tileHeight,
       required TextScaler textScaler,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
-          theme: buildAppTheme(Brightness.dark),
+          theme: theme,
           home: Builder(
             builder: (context) => MediaQuery(
               data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -289,57 +307,59 @@ void main() {
       );
     }
 
-    testWidgets(
-      'fits within the geometry-predicted height at the default text scale',
-      (tester) async {
-        const textScaler = TextScaler.noScaling;
-        final geometry = SceneGridGeometry.resolve(
-          availableWidth: 1000,
-          textScaler: textScaler,
-        );
+    final themeCases = {
+      'Adwaita 11pt': buildAppTheme(
+        Brightness.dark,
+        platform: TargetPlatform.linux,
+        bodyFontPt: 11,
+      ),
+      'Adwaita 13pt': buildAppTheme(
+        Brightness.dark,
+        platform: TargetPlatform.linux,
+        bodyFontPt: 13,
+      ),
+      'Adwaita 16pt': buildAppTheme(
+        Brightness.dark,
+        platform: TargetPlatform.linux,
+        bodyFontPt: 16,
+      ),
+      'macOS': buildAppTheme(Brightness.dark, platform: TargetPlatform.macOS),
+    };
+    final scaleCases = {
+      'the default text scale': TextScaler.noScaling,
+      'a raised text scale': const TextScaler.linear(1.3),
+    };
 
-        final natural = await measureNaturalHeight(
-          tester,
-          tileWidth: geometry.tileWidth,
-          textScaler: textScaler,
-        );
-        expect(natural.height, lessThanOrEqualTo(geometry.tileHeight));
+    for (final MapEntry(key: themeLabel, value: theme) in themeCases.entries) {
+      for (final MapEntry(key: scaleLabel, value: textScaler)
+          in scaleCases.entries) {
+        testWidgets('fits within the geometry-predicted height at $scaleLabel '
+            '($themeLabel)', (tester) async {
+          final geometry = SceneGridGeometry.resolve(
+            availableWidth: 1000,
+            textScaler: textScaler,
+            textTheme: theme.textTheme,
+          );
 
-        // Exercise the exact tight-constraint path `SceneGrid` uses.
-        await pumpAtGeometryTightHeight(
-          tester,
-          tileWidth: geometry.tileWidth,
-          tileHeight: geometry.tileHeight,
-          textScaler: textScaler,
-        );
-        expect(tester.takeException(), isNull);
-      },
-    );
+          final natural = await measureNaturalHeight(
+            tester,
+            theme: theme,
+            tileWidth: geometry.tileWidth,
+            textScaler: textScaler,
+          );
+          expect(natural.height, lessThanOrEqualTo(geometry.tileHeight));
 
-    testWidgets(
-      'fits within the geometry-predicted height at a raised text scale',
-      (tester) async {
-        const textScaler = TextScaler.linear(1.3);
-        final geometry = SceneGridGeometry.resolve(
-          availableWidth: 1000,
-          textScaler: textScaler,
-        );
-
-        final natural = await measureNaturalHeight(
-          tester,
-          tileWidth: geometry.tileWidth,
-          textScaler: textScaler,
-        );
-        expect(natural.height, lessThanOrEqualTo(geometry.tileHeight));
-
-        await pumpAtGeometryTightHeight(
-          tester,
-          tileWidth: geometry.tileWidth,
-          tileHeight: geometry.tileHeight,
-          textScaler: textScaler,
-        );
-        expect(tester.takeException(), isNull);
-      },
-    );
+          // Exercise the exact tight-constraint path `SceneGrid` uses.
+          await pumpAtGeometryTightHeight(
+            tester,
+            theme: theme,
+            tileWidth: geometry.tileWidth,
+            tileHeight: geometry.tileHeight,
+            textScaler: textScaler,
+          );
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
   });
 }
