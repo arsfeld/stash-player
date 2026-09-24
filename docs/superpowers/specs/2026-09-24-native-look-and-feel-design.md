@@ -267,6 +267,37 @@ property assertions above pin the same decisions.
 
 `just flutter-check` stays the CI gate. There are no new CI jobs.
 
+### Manual gate results
+
+Leave the boxes unticked for whoever runs them.
+
+- [ ] Open the sort dropdown in the library strip and the video-quality
+  menu on a scene with several streams. Both appear as GTK menus below
+  their buttons, the current value is checked, choosing an item applies
+  it, and Escape or clicking outside dismisses without a change. Repeat
+  with the window moved and resized, and in the player's fullscreen mode.
+- [ ] The menu bar shows Stash Player, Edit, Playback, View, Window. On
+  the library screen, Playback/View items are disabled. On a scene,
+  Playback → Pause pauses, Mute ↔ Unmute toggles and relabels, and
+  View → Enter Full Screen works. Each item shows its key (Space, ←, →,
+  J, L, ↓, ↑, Home, End, 0, 9, M, F). Pressing Space in the player
+  toggles once (not twice). Typing in the connection screen's fields
+  still inserts spaces and letters. ⌘C/⌘V in a field copy and paste
+  once. Stash Player → Check for Updates… opens Sparkle.
+- [ ] On GNOME (Flatpak, `nix run .#flatpak`), changing the accent in
+  Settings → Appearance recolours the running app, and changing the
+  interface font changes its text.
+- [ ] On macOS, changing the accent in System Settings recolours the app
+  live, which confirms `NSColor.systemColorsDidChangeNotification`
+  fires.
+- [ ] The macOS build compiles (`just flutter-build` on a Mac) and the
+  app launches.
+- [ ] On Linux, keyboard focus returns to the app after a GTK menu
+  closes: Space still toggles play/pause afterwards.
+- [ ] On Linux, opening a menu prints no `Gtk-WARNING` in the terminal.
+- [ ] On macOS, pressing Space in the player toggles playback exactly
+  once, not twice.
+
 ## 6. Delivery order
 
 Each step leaves the app shippable:

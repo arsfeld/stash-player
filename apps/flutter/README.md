@@ -345,3 +345,5 @@ together, in the same commit as any `flake.lock` bump that changes what
 [`flutter.yml`](../../.github/workflows/flutter.yml) and
 [`macos.yml`](../../.github/workflows/macos.yml), and the Flutter SDK
 archive URL + sha256 in the Flatpak manifest.
+
+Icons: GNOME's [icon-development-kit](https://gitlab.gnome.org/Teams/Design/icon-development-kit) (CC0-1.0) on Linux and [Lucide](https://lucide.dev) (ISC) on macOS; licence texts ship in `apps/flutter/assets/icons/`.
