@@ -9,7 +9,9 @@ import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
+import 'package:stash_player_flutter/features/connection/connection_form.dart';
 import 'package:stash_player_flutter/features/connection/connection_settings_dialog.dart';
+import 'package:stash_player_flutter/features/connection/connection_sheet.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
@@ -128,6 +130,58 @@ void main() {
   });
 
   testWidgets(
+    'first-launch with a native sheet: a non-cancellable sheet connects and '
+    'shows the library',
+    (tester) async {
+      final sheet = FakeConnectionSheet();
+      final container = ProviderContainer(
+        overrides: [
+          connectionSheetProvider.overrideWith(
+            () => FakeConnectionSheetNotifier(sheet),
+          ),
+          connectionStoreProvider.overrideWithValue(FakeConnectionStore()),
+          environmentProvider.overrideWithValue(const {}),
+          stashApiFactoryProvider.overrideWithValue(
+            (config) =>
+                FakeStashApi(versionValue: 'v0.31.0')
+                  ..pages.add(ScenePage(total: 0, scenes: const [])),
+          ),
+          connectionControllerOverride,
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(appControllerProvider.notifier).bootstrap();
+
+      await tester.pumpWidget(_app(container));
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.connection(),
+      );
+      final presented = sheet.presented!;
+      expect(presented.title, 'Connect to Stash');
+      expect(presented.confirmLabel, 'Connect');
+      expect(presented.cancellable, isFalse);
+      expect(find.byType(ConnectionForm), findsNothing);
+
+      sheet.send(
+        const ConnectionSheetSubmitted(
+          ConnectionConfig(serverUrl: 'https://stash.test'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(appControllerProvider),
+        const AppDestination.library(),
+      );
+      expect(find.byType(LibraryScreen), findsOneWidget);
+      expect(sheet.dismissed, isTrue);
+    },
+  );
+
+  testWidgets(
     'settings with a native sheet: presents the sheet, no drawn dialog',
     (tester) async {
       final sheet = FakeConnectionSheet();
@@ -163,6 +217,8 @@ void main() {
       expect(find.byType(ConnectionSettingsDialog), findsNothing);
       expect(find.byType(LibraryScreen), findsOneWidget);
       expect(sheet.presented!.title, 'Connection');
+      expect(sheet.presented!.confirmLabel, 'Save');
+      expect(sheet.presented!.cancellable, isTrue);
     },
   );
 
