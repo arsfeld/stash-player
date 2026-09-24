@@ -102,8 +102,9 @@ small destination union instead.
   scale, component themes, `buildAppTheme`), `icons/` (`AppIcon` → GNOME
   icon-development-kit SVGs on Linux, Lucide on macOS, fetched by
   `tool/fetch_icons.py`, which also rewrites GNOME `url(#gpa:foreground)
-  <fallback>` paint values to the fallback colour — `flutter_svg` would
-  otherwise drop the paint and draw the icon blank; a test guards this),
+  <fallback>` paint values to the fallback colour, since `flutter_svg`
+  would otherwise drop the paint and draw the icon blank; a test guards
+  this),
   `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
   `ChannelNativeMenus`, drawn in tests), `widgets/` (strip controls,
   spinner, toast, tile). `lib/ui/` never imports Riverpod.

@@ -128,9 +128,9 @@ void main() {
     );
     await tester.pump();
     // MaterialApp wraps its child in an AnimatedTheme (200ms default), so
-    // the new accent only reaches Theme.of() once that transition settles
-    // — a bare zero-duration pump leaves Theme.of() reporting the old
-    // colour mid-animation.
+    // the new accent only reaches Theme.of() once that transition settles:
+    // a bare zero-duration pump leaves Theme.of() reporting the old colour
+    // mid-animation.
     await tester.pump(const Duration(milliseconds: 200));
 
     final theme = Theme.of(tester.element(find.text('Connect to Stash')));
