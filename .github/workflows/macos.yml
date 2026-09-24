@@ -281,8 +281,12 @@ jobs:
     # Job-level group serializes all `appcast` jobs across every tag —
     # the workflow-level `macos-${{ github.ref }}` group only covers same-ref
     # cancellations, so two different tags pushed in quick succession would
-    # otherwise race on the `git push gh-pages`. `cancel-in-progress: false`
-    # ensures both tags' appcast updates land in order.
+    # otherwise race on the `git push gh-pages`. GitHub runs at most one job
+    # per group plus at most one pending behind it — even with
+    # `cancel-in-progress: false` a newer pending run supersedes an older
+    # pending one — so runs never overlap, but a queued run for an older tag
+    # can be skipped for a newer one rather than landing in order; either way
+    # gh-pages ends up with the newest tag's state.
     concurrency:
       group: appcast-publish
       cancel-in-progress: false
