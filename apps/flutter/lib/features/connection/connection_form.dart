@@ -7,6 +7,12 @@ import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/app_form.dart';
 import 'connection_controller.dart';
 
+/// What the SOCKS5 proxy field is for, shown under it by the drawn form
+/// and the native macOS sheet alike.
+const connectionProxyHint =
+    'Reach Stash through a SOCKS5 proxy, for a server only routable that '
+    'way. Tailscale in userspace mode listens on 127.0.0.1:1055.';
+
 /// The connection form's text, owned by whichever screen hosts the form
 /// (the first-launch page or the settings dialog) so that host can read
 /// [current] and [canSubmit] for its own submit button.
@@ -188,10 +194,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         const SizedBox(height: AppTokens.space5),
         AppPreferencesGroup(
           title: 'Network',
-          description:
-              'Reach Stash through a SOCKS5 proxy, for a server only '
-              'routable that way. Tailscale in userspace mode listens on '
-              '127.0.0.1:1055.',
+          description: connectionProxyHint,
           children: [
             AppEntryRow(
               fieldKey: const Key('connection-socks-proxy'),

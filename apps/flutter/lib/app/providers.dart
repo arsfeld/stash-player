@@ -10,6 +10,8 @@ import 'package:http/io_client.dart';
 import '../domain/connection.dart';
 import '../domain/system_appearance.dart';
 import '../features/connection/connection_controller.dart';
+import '../features/connection/connection_sheet.dart';
+import '../services/channel_connection_sheet.dart';
 import '../services/channel_native_menus.dart';
 import '../services/channel_native_toolbar.dart';
 import '../services/connection_store.dart';
@@ -184,6 +186,26 @@ final nativeToolbarProvider = Provider<NativeToolbar?>((ref) {
   unawaited(toolbar.reset());
   return toolbar;
 });
+
+/// The native connection sheet: an AppKit sheet on macOS, none elsewhere.
+/// [ConnectionSheetNotifier.disable] drops it for the rest of the session
+/// when it fails to open, and every host falls back to the drawn form.
+final connectionSheetProvider =
+    NotifierProvider<ConnectionSheetNotifier, ConnectionSheet?>(
+      ConnectionSheetNotifier.new,
+    );
+
+class ConnectionSheetNotifier extends Notifier<ConnectionSheet?> {
+  @override
+  ConnectionSheet? build() {
+    if (defaultTargetPlatform != TargetPlatform.macOS) return null;
+    final sheet = ChannelConnectionSheet();
+    unawaited(sheet.reset());
+    return sheet;
+  }
+
+  void disable() => state = null;
+}
 
 /// Asks the macOS runner to run Sparkle's "Check for Updates…" (see
 /// `UpdatesChannel` in `MainFlutterWindow.swift`).
