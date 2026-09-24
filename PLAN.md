@@ -1,3 +1,8 @@
+> **Legacy document.** This plan describes the GTK4/relm4 client in
+> `crates/stash-player-ui`, which is frozen and no longer released. The
+> shipped app is the Flutter client in `apps/flutter/` — see
+> `docs/superpowers/specs/2026-09-23-flutter-first-class-release-design.md`.
+
 # stash-player — Plan
 
 A native Linux desktop client for [Stash](https://github.com/stashapp/stash):

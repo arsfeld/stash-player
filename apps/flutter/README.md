@@ -1,17 +1,17 @@
-# Stash Player (Flutter) — experimental
+# Stash Player (Flutter)
 
-**This is an experimental desktop client.** It is not a replacement for
-either released `stash-player` frontend — the GTK4/libadwaita client
-(`crates/stash-player-ui`) or the SwiftUI/AVKit macOS app
-(`apps/macos/`). Those two remain the supported, released clients; this
-Flutter app is a from-scratch vertical slice (connection → library →
-scene playback) built to evaluate Flutter as a third desktop toolchain,
-kept fully isolated from the Rust/Swift codebases under `apps/flutter/`.
+The Stash Player desktop app for Linux and macOS. Released as a Flatpak
+and a notarized macOS app from `v1.0.0` on. It took over the app
+identities and Sparkle update channel of two earlier, now-frozen clients
+— the GTK4/libadwaita app (`crates/stash-player-ui`) and the SwiftUI/AVKit
+macOS app (`apps/macos/`) — which remain in the repo, buildable, but no
+longer released; see the root [README's "Legacy
+clients"](../../README.md#legacy-clients-frozen-not-released) section.
 
 It targets Linux and macOS desktop — no mobile, no web. Windows is a
 target only in the thin sense that CI compiles one: the `Flutter Windows`
 job in `.github/workflows/flutter.yml` runs `flutter build windows
---release` on every push of the development branch and uploads the result
+--release` on every push to `main` and every PR, and uploads the result
 as a build artifact. Nothing validates that artifact — there is no Windows
 dev shell, no test (unit or integration) runs on Windows, and nobody
 launches the app there. Read a green Windows job as "the embedder and the
@@ -28,7 +28,7 @@ Flutter SDK plus the native libraries `media_kit` needs for
 hardware-accelerated video (see [Troubleshooting](#troubleshooting)
 below). The two shells are split so Rust-only contributors don't pay for
 the multi-GB Flutter closure, and so `clang` (needed to build the Flutter
-Linux embedder) never shadows the released Rust clients' own `cc`/`ld`
+Linux embedder) never shadows the legacy Rust client's own `cc`/`ld`
 inside `nix develop`'s default shell.
 
 ```sh
@@ -120,20 +120,53 @@ STASH_URL=http://127.0.0.1:9999 STASH_API_KEY= flutter run -d linux
 
 ## Cache, settings, and key names
 
-Isolated from both released clients so all three can coexist on one
-machine without colliding:
+This client took over the app id and display name of the two frozen
+clients it replaces, so a packaged install of one supersedes the other —
+that's the point, see "Releasing" below. Everything else — preference
+keys, secure-storage key, and cache directory — stays under the
+`dev.arsfeld.stashplayer.flutter` namespace the app has always used, so a
+locally built dev copy of this app never collides with a `cargo run`
+build of the legacy GTK client on the same machine:
 
 | What | Identifier |
 | --- | --- |
-| Application id (Linux `APPLICATION_ID`, macOS `PRODUCT_BUNDLE_IDENTIFIER`) | `dev.arsfeld.stashplayer.flutter` |
-| Display name (window title / `MaterialApp.title`) | `Stash Player Flutter` |
+| Application id (Linux `APPLICATION_ID`, macOS `PRODUCT_BUNDLE_IDENTIFIER`) | `dev.arsfeld.stash-player` |
+| Display name (window title / `MaterialApp.title`) | `Stash Player` |
 | Server URL preference key (`shared_preferences`) | `dev.arsfeld.stashplayer.flutter.server_url` |
 | API key secure-storage key (`flutter_secure_storage`) | `dev.arsfeld.stashplayer.flutter.api_key` |
+| Legacy import flag (`shared_preferences`) | `dev.arsfeld.stashplayer.flutter.legacy_import_attempted` |
 | Thumbnail disk cache root | `<application-cache>/dev.arsfeld.stashplayer.flutter/thumbnails/` |
 
 (`<application-cache>` is whatever `path_provider`'s
 `getApplicationCacheDirectory()` resolves to per platform — e.g.
 `~/.cache/<app>` on Linux.)
+
+## Upgrading from the legacy clients
+
+On first launch — only when no connection is already stored, and only
+once per install (`legacyImportAttemptedPreferenceKey` above, set before
+the result is used, whatever the outcome) — the app looks for a
+connection saved by the legacy GTK or SwiftUI client and imports it, so a
+user upgraded into this client lands in their library instead of an
+empty connection screen. It reads, never writes:
+
+| | URL + SOCKS proxy (`config.toml`) | API key |
+| --- | --- | --- |
+| Linux | `$XDG_CONFIG_HOME/stash-player/config.toml` (the Flatpak's per-app path), falling back to the host's `~/.config/stash-player/config.toml`, exposed read-only by the manifest | Secret Service item, attributes `application=stash-player`, `key=stash-api-key` (`linux/runner/my_application.cc`) |
+| macOS | `~/Library/Application Support/one.arsfeld.stash-player/config.toml` | Keychain generic password, service `stash-player`, account `stash-api-key` (`macos/Runner/MainFlutterWindow.swift`) |
+
+Only the Stash URL, API key, and SOCKS proxy are imported — nothing else
+(volume, autoplay, etc.) carries over. The proxy's scheme is stripped
+(`socks5h://host:port` → `host:port`); an HTTP proxy or one with
+credentials imports as "no proxy", since this client can't honour those.
+An empty API key is valid (some servers run with auth disabled).
+`STASH_URL` / `STASH_API_KEY` environment overrides still win over
+whatever the import produces. The legacy `config.toml` and keyring/
+Keychain entry are never modified or deleted, so rolling back to an
+older release keeps working. See
+`lib/services/{legacy_config,legacy_secret_reader,legacy_connection_importer,platform_connection_store}.dart`
+and the design doc's [§4](../../docs/superpowers/specs/2026-09-23-flutter-first-class-release-design.md#4-one-time-connection-import)
+for the full flow.
 
 ## Format, analyze, test, build
 
@@ -289,3 +322,27 @@ via `MediaKitPlaybackEngine`, connection/thumbnail storage), and
 connection, library, and the video-first scene experience. `lib/app/`
 wires it all together (`AppRouter`, `AppController`, the provider graph
 in `providers.dart`).
+
+## Releasing
+
+Push a `vX.Y.Z` tag on `main`. That's the whole trigger:
+
+- [`flatpak.yml`](../../.github/workflows/flatpak.yml) builds the manifest
+  in [`build-aux/dev.arsfeld.stash-player.yml`](../../build-aux/dev.arsfeld.stash-player.yml)
+  and attaches `stash-player.flatpak` to the GitHub release.
+- [`macos.yml`](../../.github/workflows/macos.yml) builds `StashPlayer.app`,
+  Developer ID–signs and notarizes it, attaches
+  `StashPlayer-macos-arm64.zip` to the release, and — in its `appcast`
+  job — regenerates and publishes the Sparkle appcast to `gh-pages`, so
+  existing installs pick up the update.
+
+Both workflows also run on every push/PR for build verification; only a
+`v*` tag publishes. `workflow_dispatch`'s `notarize` input on `macos.yml`
+notarizes a non-tag build, for testing a release candidate before tagging.
+
+Bump the pinned Flutter version (currently 3.41.6) in three places
+together, in the same commit as any `flake.lock` bump that changes what
+`nix develop .#flutter` resolves to: the `flutter-version` inputs in
+[`flutter.yml`](../../.github/workflows/flutter.yml) and
+[`macos.yml`](../../.github/workflows/macos.yml), and the Flutter SDK
+archive URL + sha256 in the Flatpak manifest.
