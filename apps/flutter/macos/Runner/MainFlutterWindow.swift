@@ -107,6 +107,7 @@ final class AppearanceStreamHandler: NSObject, FlutterStreamHandler {
     withArguments arguments: Any?,
     eventSink events: @escaping FlutterEventSink
   ) -> FlutterError? {
+    if let observer { NotificationCenter.default.removeObserver(observer) }
     sink = events
     send()
     observer = NotificationCenter.default.addObserver(
@@ -126,13 +127,15 @@ final class AppearanceStreamHandler: NSObject, FlutterStreamHandler {
 
   private func send() {
     guard let color = NSColor.controlAccentColor.usingColorSpace(.sRGB) else {
-      sink?(["accent": NSNull(), "fontName": NSNull()])
+      let event: [String: Any] = ["accent": NSNull(), "fontName": NSNull()]
+      sink?(event)
       return
     }
     func channel(_ value: CGFloat) -> Int { Int((value * 255).rounded()) }
     let argb = (0xFF << 24) | (channel(color.redComponent) << 16)
       | (channel(color.greenComponent) << 8) | channel(color.blueComponent)
-    sink?(["accent": argb, "fontName": NSNull()])
+    let event: [String: Any] = ["accent": argb, "fontName": NSNull()]
+    sink?(event)
   }
 }
 
