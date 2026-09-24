@@ -5,8 +5,8 @@ and a notarized macOS app from `v1.0.0` on. It took over the app
 identities and Sparkle update channel of two earlier, now-frozen clients
 — the GTK4/libadwaita app (`crates/stash-player-ui`) and the SwiftUI/AVKit
 macOS app (`apps/macos/`) — which remain in the repo, buildable, but no
-longer released; see the root [README's "Legacy
-clients"](../../README.md#legacy-clients-frozen-not-released) section.
+longer released; see the root [README's "A note on the older
+versions"](../../README.md#a-note-on-the-older-versions) section.
 
 It targets Linux and macOS desktop — no mobile, no web. Windows is a
 target only in the thin sense that CI compiles one: the `Flutter Windows`
@@ -53,8 +53,8 @@ starts straight into the library on future launches.
 
 ### Pointing at a Stash server
 
-Three options, described in the root README's ["Local development
-backend"](../../README.md#local-development-backend) section (all
+Three options, described in [`tools/dev-stash/README.md`](../../tools/dev-stash/README.md)
+and [`tools/mock-stash/README.md`](../../tools/mock-stash/README.md) (all
 driven from the repository root, not from `apps/flutter/`):
 
 | | `tools/mock-stash/` | `docker compose up -d` | `devenv up` |
@@ -296,8 +296,7 @@ explicitly on a generous timeout instead (see that test's own
 ## Keyboard shortcuts (player)
 
 Same mpv-style bindings as the GTK client — see the root README's
-["Keyboard shortcuts (player)"](../../README.md#keyboard-shortcuts-player)
-section.
+["Keyboard shortcuts"](../../README.md#keyboard-shortcuts) section.
 
 **Fullscreen is not implemented on either platform.** `F` and `Esc` are
 wired to the same `PlayerAction`s as every other shortcut, but

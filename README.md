@@ -1,40 +1,49 @@
 # Stash Player
 
-Desktop client for [Stash](https://github.com/stashapp/stash): browse your
-library and play scenes locally with hardware-accelerated video, with watch
-progress and play counts synced back to Stash. Built with Flutter
-(`apps/flutter/`), shipped as a Linux Flatpak and a notarized, self-updating
-macOS app.
+A desktop player for your [Stash](https://github.com/stashapp/stash) library,
+for Linux and macOS. Browse your scenes, pick one, and it plays right away
+in a native window with hardware-accelerated video, not in a browser tab.
+Your watch progress, play counts and ratings sync back to Stash as you go.
 
-## Features
+![The library: a grid of scenes sorted by rating](docs/screenshots/library.jpg)
 
-- Browse your library with search, sort (title / date / rating / random / …),
-  rating filter, organized filter, and a "hide tracked" switch that defaults to
-  untracked-only so the grid opens to fresh material.
-- "Play random" shortcut from the toolbar.
-- Inline scene player with mpv-style keyboard shortcuts and hardware-accelerated
-  playback via libmpv (VA-API where available).
-- Video-first scene detail pages: the player fills the page, with
-  performers, details, and file info tucked into a slide-over drawer so
-  they never resize the video. "Open in Stash" lives in the header menu.
-- Resume where you left off — watch progress and play counts sync back to Stash
-  automatically (`sceneSaveActivity`), throttled and flushed on pause / seek /
-  close.
-- Prev/next navigation (honouring the library's current filter), a
-  per-scene "O counter" with increment + reset, and the star rating all
-  render right on the player's on-screen controls.
-- API key stored in the system keyring (Secret Service on Linux, Keychain on
-  macOS), with an optional SOCKS proxy for servers reachable only over a
-  tailnet.
-- On first launch, an existing connection saved by an older Stash Player
-  install is imported automatically — see [apps/flutter/README.md](apps/flutter/README.md#upgrading-from-the-legacy-clients).
+![The player: the video fills the window, with on-screen controls at the bottom](docs/screenshots/player.jpg)
+
+![The details drawer slides over the video, showing date, studio, performers and file info](docs/screenshots/scene-details.jpg)
+
+## What it does
+
+- **Browse your library.** Search, sort by date, title, rating, play count,
+  duration and more, filter by minimum rating or organized status, or hit
+  **Play random**.
+- **Show only what you haven't watched.** The "hide played" filter is on by
+  default, so the grid opens on scenes you haven't watched yet. Turn it off
+  to see everything.
+- **The video comes first.** The scene page is all video. Performers,
+  studio, description and file details sit in a drawer you can open over
+  the video, so it never gets resized.
+- **Pick up where you left off.** Resume position and play counts are saved
+  back to Stash automatically, so they carry over to the Stash web UI and
+  your other devices.
+- **Stay in the player.** Previous/next scene (following your current sort
+  and filters), the star rating and the O-counter are all in the on-screen
+  controls.
+- **Playback that just works.** Direct play first, and if the file won't
+  play it falls back to Stash's HLS or MP4 transcodes. You can also pick a
+  stream yourself from the quality menu.
+- **Scan for new files.** Start a library scan from the toolbar and watch
+  Stash's background tasks without opening the web UI.
+- **Remote servers.** Your API key is kept in the system keyring, and an
+  optional SOCKS5 proxy handles servers you can only reach through a
+  tailnet or SSH tunnel.
 
 ## Install
 
 ### Linux (Flatpak)
 
-Download `stash-player.flatpak` from the [latest GitHub
-release](https://github.com/arsfeld/stash-player/releases/latest), then:
+Download `stash-player.flatpak` from the [latest
+release](https://github.com/arsfeld/stash-player/releases/latest) and install
+it:
 
 ```sh
 curl -L -o stash-player.flatpak \
@@ -44,18 +53,20 @@ flatpak install --user stash-player.flatpak
 flatpak run dev.arsfeld.stash-player
 ```
 
-The bundle ships the binary and assets only; the GNOME 50 runtime comes from
-Flathub, so the Flathub remote needs to be configured
-(`flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo`
-if it isn't already — most desktop systems have it out of the box). To
-upgrade later, repeat the download + `flatpak install` step with the new
-bundle.
+The GNOME runtime comes from Flathub, which most desktops already have set
+up. If yours doesn't:
 
-### macOS (Apple Silicon)
+```sh
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+```
 
-Download `StashPlayer-macos-arm64.zip` from the [latest GitHub
+To update, download the new bundle and run `flatpak install` again.
+
+### macOS (Apple Silicon, macOS 14+)
+
+Download `StashPlayer-macos-arm64.zip` from the [latest
 release](https://github.com/arsfeld/stash-player/releases/latest), unzip it,
-and move `StashPlayer.app` to `/Applications`:
+and drag **StashPlayer.app** into Applications. Or from a terminal:
 
 ```sh
 curl -L -o StashPlayer-macos-arm64.zip \
@@ -65,137 +76,85 @@ unzip StashPlayer-macos-arm64.zip -d /Applications
 open /Applications/StashPlayer.app
 ```
 
-It's Developer ID–signed and notarized, so Gatekeeper opens it without a
-warning, and it updates itself through the app menu's "Check for
-Updates…" (Sparkle). Requires macOS 14 (Sonoma) or later on Apple Silicon.
+The app is signed and notarized, so it opens without a Gatekeeper warning.
+It updates itself: use **Stash Player → Check for Updates…**.
 
-## Repository layout
+## Getting started
 
-```
-stash-player/
-├── apps/
-│   ├── flutter/                 # The shipped client (Linux + macOS) — see its own README
-│   └── macos/                   # Legacy SwiftUI app (frozen, not released)
-├── crates/                      # Legacy Rust workspace backing the frozen GTK/SwiftUI clients
-├── data/                        # .desktop, AppStream metainfo, icon
-├── build-aux/                   # Flatpak manifest, macOS xcframework script
-└── flake.nix                    # Nix dev shells
-```
+The first time you open the app, it asks for your Stash server:
 
-## Development
+- **Stash server URL**: the address you use for Stash in a browser, e.g.
+  `http://192.168.1.10:9999` or `https://stash.example.com`.
+- **Stash API key** (optional): only needed if your Stash has a username
+  and password set. Copy it from Stash's *Settings → Security → API Key*.
+- **SOCKS5 proxy** (optional): `host:port`, if your server is only
+  reachable through a proxy.
 
-The shipped app lives in `apps/flutter/`. See
-[`apps/flutter/README.md`](apps/flutter/README.md) for full setup, build,
-and troubleshooting instructions. Quick start:
+Click **Test connection**. Once it connects, your library opens, and next
+time the app goes straight there. To change servers later, use the gear
+icon in the library toolbar.
 
-```sh
-nix develop .#flutter
-just flutter-run      # build + launch, wired to STASH_URL/STASH_API_KEY overrides
-just flutter-check    # format + analyze + test, mirrors CI
-```
+**Upgrading from an older Stash Player?** Your saved server, API key and
+proxy are imported automatically on first launch, so you skip this step.
 
-`just --list` shows every recipe, including the platform-specific ones
-(`flutter-build`, `flutter-launch`, `flutter-env`).
+## Keyboard shortcuts
 
-A local Flatpak build (rather than the prebuilt bundle above) is one
-command via the Nix flake:
-
-```sh
-nix run .#flatpak
-flatpak run dev.arsfeld.stash-player
-```
-
-## Configuration
-
-On first launch, open **Stash server** and enter:
-
-- **URL** — e.g. `https://stash.example.tld`
-- **API key** — optional; copy it from Stash's *Settings → Security → API Key*
-  when auth is enabled
-
-Click **Test connection** to confirm. The URL and any SOCKS proxy persist to
-platform preferences; the API key goes to the system keyring.
-
-## Local development backend
-
-Three options for running the app against something other than your real
-Stash server, all driven by the same `tools/dev-stash/populate.sh`:
-
-| | `tools/mock-stash/` | `compose.yml` | `devenv.nix` |
-| --- | --- | --- | --- |
-| Backend | Python stub | `stashapp/stash` in Docker | Native `pkgs.stash` (Nix) |
-| Video playback | No (404s on `/stream`) | Yes | Yes |
-| Setup | `python3 server.py` | `docker compose up -d` | `devenv up` |
-| State location | none | named Docker volumes | `.devenv/state/stash/` |
-| Reset | restart | `docker compose down -v` | `rm -rf .devenv/state/stash` |
-| Good for | Screenshots, offline UI work | Linux/macOS, no Nix needed | Fastest on Nix dev machines |
-
-### Compose (Docker)
-
-```sh
-docker compose up -d                 # boots Stash at http://127.0.0.1:9999
-tools/dev-stash/populate.sh          # downloads clips + triggers scan
-```
-
-`docker compose down -v` wipes the Stash DB; the gitignored
-`tools/dev-stash/media/` survives so clips don't re-download.
-
-### devenv (native, Nix-based)
-
-```sh
-devenv up                            # boots stash on :9999
-devenv shell                         # in another terminal — sets DEV_STASH_LIBRARY
-tools/dev-stash/populate.sh          # same script, native backend
-```
-
-Stop with Ctrl-C / `devenv processes stop`. State (DB, blobs, generated)
-lives under `.devenv/state/stash/`; remove it to reset.
-
-See [`tools/dev-stash/README.md`](tools/dev-stash/README.md) for details and
-[`tools/dev-stash/ATTRIBUTION.md`](tools/dev-stash/ATTRIBUTION.md) for clip
-sources / licences.
-
-## Keyboard shortcuts (player)
+In the player:
 
 | Key | Action |
 | --- | --- |
-| `Space` / `k` | Play / pause |
-| `←` / `→` | Seek ∓5s |
-| `j` / `l` | Seek ∓10s |
-| `↑` / `↓` | Seek ±60s |
-| `Home` / `End` | Seek to start / end |
-| `9` / `0` | Volume ∓5% |
-| `m` | Mute |
-| `f` | Toggle fullscreen |
-| `Esc` | Exit fullscreen |
+| `Space` / `K` | Play / pause |
+| `←` / `→` | Back / forward 5 seconds |
+| `J` / `L` | Back / forward 10 seconds |
+| `↓` / `↑` | Back / forward 1 minute |
+| `Home` / `End` | Jump to start / end |
+| `9` / `0` | Volume down / up |
+| `M` | Mute |
 
-Fullscreen isn't implemented yet — `f`/`Esc` are wired but currently a
-no-op; see [`apps/flutter/README.md`](apps/flutter/README.md#keyboard-shortcuts-player).
+## Known limitations
 
-## Legacy clients (frozen, not released)
+- **No fullscreen yet.** The `F` key and the fullscreen button don't do
+  anything for now. Maximize the window instead.
+- **macOS builds are Apple Silicon only.** There's no Intel build.
+- **No Windows support.** CI compiles a Windows build, but nobody tests it
+  and it isn't released.
 
-`crates/stash-player-ui` (GTK4 + libadwaita, relm4, GStreamer) and
-`apps/macos` (SwiftUI + AVKit) are the original Linux and macOS clients.
-Both remain buildable but are no longer released or updated — `apps/flutter/`
-has taken over both app identities and their update channel. See
-[`docs/superpowers/specs/2026-09-23-flutter-first-class-release-design.md`](docs/superpowers/specs/2026-09-23-flutter-first-class-release-design.md)
-for why.
+## A note on the older versions
 
-Rust prerequisites and system deps: `nix develop` (pulls Rust + GTK4 +
-libadwaita + the GStreamer plugin set + libsecret), or without Nix, `gtk4`,
-`libadwaita`, `gstreamer1.0` (`base`/`good`/`bad`/`ugly`/`libav` plugins),
-`gst-plugin-gtk4`, `libsecret`, `pkg-config`, `openssl`.
+Stash Player started out as two separate native apps: a Rust + GTK4/libadwaita
+client for Linux and a SwiftUI client for macOS. Keeping two codebases
+feature-matched on two platforms was too much work, so from 1.0 there is one
+Flutter app for both. It installs over the old apps (same app ID and update
+channel) and brings your connection settings with it.
+
+The old code is still in the repo (`crates/` and `apps/macos/`), frozen: no
+new features and no new releases.
+
+## Building from source
+
+The app lives in [`apps/flutter/`](apps/flutter/). With Nix:
 
 ```sh
-# GTK client (Linux)
-nix develop
-cargo run -p stash-player-ui
-
-# SwiftUI app (macOS) — Xcode 16+, xcodegen (brew install xcodegen)
-nix run .#macos               # rust → xcframework → xcodeproj → xcodebuild → launch
-nix run .#macos-build         # same, minus the launch (refreshes Generated/)
+nix develop .#flutter
+just flutter-run      # build and launch
+just flutter-check    # format, analyze and test (what CI runs)
+nix run .#flatpak     # build and install the Flatpak locally
 ```
+
+[`apps/flutter/README.md`](apps/flutter/README.md) covers setup, testing,
+troubleshooting and releasing. For a local Stash to develop against, see
+[`tools/dev-stash/`](tools/dev-stash/README.md), a real Stash in Docker or
+devenv with sample clips. For UI work without video playback, see
+[`tools/mock-stash/`](tools/mock-stash/README.md), a small offline stand-in
+server.
+
+## Credits
+
+The screenshots show clips from the Blender Foundation's open movies [*Big Buck
+Bunny*](https://peach.blender.org/), [*Sintel*](https://durian.blender.org/)
+and [*Tears of Steel*](https://mango.blender.org/). © Blender Foundation,
+[CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
