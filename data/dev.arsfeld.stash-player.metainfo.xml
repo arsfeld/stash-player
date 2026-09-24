@@ -71,6 +71,17 @@
   </branding>
 
   <releases>
+    <release version="1.2.0" date="2026-09-24">
+      <description>
+        <p>
+          Connection settings now open as a dialog over your library.
+        </p>
+        <ul>
+          <li>Open settings from Preferences in the main menu, or with Ctrl+,</li>
+          <li>Scanning your library now generates covers and previews the way the Stash web UI does</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-09-24">
       <description>
         <p>
