@@ -123,22 +123,28 @@ class PlayerTopBar extends StatelessWidget {
   /// held open ([onMenuOpenChanged]) for as long as the menu is up. The
   /// choice is applied only after the menu has closed, so the bar is
   /// released before the stream switch starts, the same order as before.
+  ///
+  /// `onMenuOpenChanged(false)` runs in a `finally` so the bar can't stay
+  /// pinned open forever if `show` throws.
   Future<void> _openQualityMenu(BuildContext anchor) async {
     SceneStream? chosen;
     onMenuOpenChanged(true);
-    await NativeMenusScope.of(anchor).show(
-      anchor,
-      AppMenu([
-        for (final stream in streamOptions)
-          AppMenuAction(
-            label: stream.label,
-            checked: stream == currentStream,
-            onSelected: () => chosen = stream,
-          ),
-      ]),
-      globalRectOf(anchor),
-    );
-    onMenuOpenChanged(false);
+    try {
+      await NativeMenusScope.of(anchor).show(
+        anchor,
+        AppMenu([
+          for (final stream in streamOptions)
+            AppMenuAction(
+              label: stream.label,
+              checked: stream == currentStream,
+              onSelected: () => chosen = stream,
+            ),
+        ]),
+        globalRectOf(anchor),
+      );
+    } finally {
+      onMenuOpenChanged(false);
+    }
     if (chosen case final stream?) onSelectStream(stream);
   }
 }
