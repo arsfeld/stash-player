@@ -86,9 +86,23 @@ class ConnectionController extends ChangeNotifier {
   /// that phase disables the form fields, and this fetch must not block the
   /// user from typing while it's in flight (they may be filling in the form
   /// before the stored/environment values are even read).
+  ///
+  /// If [testAndSave] is itself in flight (`phase` is already
+  /// [ConnectionPhase.loading]) when this resolves, this leaves the state
+  /// alone rather than overwriting it: `testAndSave` owns that phase until
+  /// its own result lands, and clobbering it here would silently re-enable
+  /// Cancel/Esc and the fields while a save is still in progress. This
+  /// controller is shared across dialog opens (it isn't recreated when the
+  /// settings dialog is closed and reopened), so on both success and
+  /// failure this replaces the whole state rather than layering onto it:
+  /// a previous attempt's field errors, failure message, and unsaved
+  /// config must not survive into a fresh load, or a reopened form would
+  /// flash a stale error and could even reseed its fields from an entry
+  /// that was never saved.
   Future<void> load() async {
     try {
       final stored = await _store.load(_environment);
+      if (_state.phase == ConnectionPhase.loading) return;
       _setState(
         ConnectionState(
           config: overlayEnvironment(stored, _environment),
@@ -96,8 +110,9 @@ class ConnectionController extends ChangeNotifier {
         ),
       );
     } catch (_) {
+      if (_state.phase == ConnectionPhase.loading) return;
       _setState(
-        _state.copyWith(
+        const ConnectionState(
           phase: ConnectionPhase.failed,
           failure: 'Could not load saved connection settings.',
         ),

@@ -1,0 +1,25 @@
+{"data": {"configuration": {
+  "ui": {
+    "taskDefaults": {
+      "scan": {
+        "scanGenerateCovers": true,
+        "scanGeneratePreviews": true,
+        "scanGenerateSprites": true,
+        "scanGeneratePhashes": true,
+        "rescan": false,
+        "paths": ["/media"]
+      },
+      "autoTag": {"performers": ["*"]}
+    },
+    "frontPageContent": []
+  },
+  "defaults": {"scan": {
+    "scanGenerateCovers": false,
+    "scanGeneratePreviews": false,
+    "scanGenerateImagePreviews": false,
+    "scanGenerateSprites": false,
+    "scanGeneratePhashes": false,
+    "scanGenerateThumbnails": true,
+    "scanGenerateClipPreviews": false
+  }}
+}}}

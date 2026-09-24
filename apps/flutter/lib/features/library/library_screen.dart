@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_controller.dart';
@@ -8,6 +9,7 @@ import '../../domain/browse_context.dart';
 import '../../domain/failure.dart';
 import '../../services/thumbnail_repository.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../../ui/theme/platform_dialect.dart';
 import '../../ui/widgets/status_views.dart';
 import 'library_controller.dart';
 import 'library_state.dart';
@@ -20,15 +22,11 @@ import 'tasks_popover.dart';
 /// [libraryControllerProvider]'s [LibraryState], plus [tasksControllerProvider]
 /// for the toolbar's Scan button and Tasks popover.
 ///
-/// Consumes [AppController.openScene] directly (via [ref] — a card tap or
-/// a resolved "play random" both navigate the same way) since that
-/// destination is owned by [AppController] itself. Settings has no such
-/// owner — Task 4 made it a router-owned modal push — so [onOpenSettings]
-/// is threaded in from the router instead of duplicated here.
+/// Consumes [AppController.openScene] and [AppController.openSettings]
+/// directly (via [ref]), since both destinations are owned by
+/// [AppController] itself.
 class LibraryScreen extends ConsumerStatefulWidget {
-  const LibraryScreen({required this.onOpenSettings, super.key});
-
-  final VoidCallback onOpenSettings;
+  const LibraryScreen({super.key});
 
   @override
   ConsumerState<LibraryScreen> createState() => _LibraryScreenState();
@@ -38,7 +36,42 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKey);
     _scheduleLoadInitial();
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  /// Ctrl+, opens Preferences, GNOME's shortcut for it.
+  ///
+  /// A global handler rather than a `Shortcuts` widget, so it works
+  /// whatever has focus, including nothing. It acts only while the library
+  /// is the top route, so the player (which keeps this screen mounted
+  /// underneath) and the open dialog ignore it. macOS gets ⌘, from its
+  /// menu bar item instead.
+  bool _handleKey(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.comma) {
+      return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isShiftPressed) {
+      return false;
+    }
+    if (!mounted ||
+        PlatformDialect.of(context) == PlatformDialect.macos ||
+        !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return false;
+    }
+    ref.read(appControllerProvider.notifier).openSettings();
+    return true;
   }
 
   // Unlike `ConnectionScreen`'s `load()`, `loadInitial` mutates state
@@ -149,7 +182,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             tasksActive: tasks.hasActiveWork,
             onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
             onOpenTasks: showTasksPopover,
-            onOpenSettings: widget.onOpenSettings,
+            onOpenSettings: () =>
+                ref.read(appControllerProvider.notifier).openSettings(),
           ),
           Expanded(
             child: _LibraryBody(

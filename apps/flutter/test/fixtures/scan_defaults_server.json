@@ -1,0 +1,12 @@
+{"data": {"configuration": {
+  "ui": {"frontPageContent": []},
+  "defaults": {"scan": {
+    "scanGenerateCovers": true,
+    "scanGeneratePreviews": false,
+    "scanGenerateImagePreviews": false,
+    "scanGenerateSprites": false,
+    "scanGeneratePhashes": false,
+    "scanGenerateThumbnails": true,
+    "scanGenerateClipPreviews": false
+  }}
+}}}

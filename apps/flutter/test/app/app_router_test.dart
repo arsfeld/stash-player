@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stash_player_flutter/app/app_controller.dart';
@@ -8,6 +9,7 @@ import 'package:stash_player_flutter/domain/browse_context.dart';
 import 'package:stash_player_flutter/domain/connection.dart';
 import 'package:stash_player_flutter/domain/scene.dart';
 import 'package:stash_player_flutter/domain/scene_filter.dart';
+import 'package:stash_player_flutter/features/connection/connection_settings_dialog.dart';
 import 'package:stash_player_flutter/features/library/library_screen.dart';
 import 'package:stash_player_flutter/features/player/activity_sync.dart';
 import 'package:stash_player_flutter/features/player/playback_controller.dart';
@@ -35,7 +37,11 @@ void main() {
         find.byKey(const Key('connection-server-url')),
         'https://stash.test',
       );
-      await tester.tap(find.text('Test connection'));
+      // enterText doesn't rebuild the tree, and Connect's enabled state is
+      // rebuilt through a ListenableBuilder, so pump once before tapping or
+      // this hits the still-disabled button.
+      await tester.pump();
+      await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
 
       expect(
@@ -51,8 +57,8 @@ void main() {
   );
 
   testWidgets(
-    'settings: a successful reconnect dismisses the modal and lands back '
-    'on the library',
+    'settings: a successful save closes the dialog and reconnects the '
+    'library',
     (tester) async {
       final container = _container(
         saved: const ConnectionConfig(serverUrl: 'https://old.test'),
@@ -62,14 +68,12 @@ void main() {
 
       await tester.pumpWidget(_app(container));
       await tester.pumpAndSettle();
-      // The library screen no longer renders a title anywhere (the
-      // redesign dropped its `AppBar`), so the widget type is what proves
-      // we landed there, not a word it used to show.
-      expect(find.byType(LibraryScreen), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Connection settings'));
+      container.read(appControllerProvider.notifier).openSettings();
       await tester.pumpAndSettle();
-      expect(find.text('Connection settings'), findsOneWidget);
+      expect(find.byType(ConnectionSettingsDialog), findsOneWidget);
+      // The dialog floats over the library rather than replacing it.
+      expect(find.byType(LibraryScreen), findsOneWidget);
 
       final generationBefore = container.read(connectionGenerationProvider);
 
@@ -77,17 +81,14 @@ void main() {
         find.byKey(const Key('connection-server-url')),
         'https://new.test',
       );
-      await tester.tap(find.text('Test connection'));
+      // enterText doesn't rebuild the tree, and Save's enabled state is
+      // rebuilt through a ListenableBuilder, so pump once before tapping or
+      // this hits the still-disabled button.
+      await tester.pump();
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
-      // The modal is gone — this is the actual regression guard for
-      // carried-forward item 2 (dismiss promptly on success rather than
-      // leaving the settings screen mounted).
-      expect(find.text('Connection settings'), findsNothing);
-      // The library screen no longer renders a title anywhere (the
-      // redesign dropped its `AppBar`), so the widget type is what proves
-      // we landed there, not a word it used to show.
-      expect(find.byType(LibraryScreen), findsOneWidget);
+      expect(find.byType(ConnectionSettingsDialog), findsNothing);
       expect(
         container.read(appControllerProvider),
         const AppDestination.library(),
@@ -98,6 +99,32 @@ void main() {
       );
     },
   );
+
+  testWidgets('settings: Escape closes the dialog without reconnecting', (
+    tester,
+  ) async {
+    final container = _container(
+      saved: const ConnectionConfig(serverUrl: 'https://old.test'),
+    );
+    addTearDown(container.dispose);
+    await container.read(appControllerProvider.notifier).bootstrap();
+
+    await tester.pumpWidget(_app(container));
+    await tester.pumpAndSettle();
+    container.read(appControllerProvider.notifier).openSettings();
+    await tester.pumpAndSettle();
+    final generationBefore = container.read(connectionGenerationProvider);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectionSettingsDialog), findsNothing);
+    expect(
+      container.read(appControllerProvider),
+      const AppDestination.library(),
+    );
+    expect(container.read(connectionGenerationProvider), generationBefore);
+  });
 
   testWidgets('popping the scene page returns to the library', (tester) async {
     // Task 11 wired the real `SceneScreen` into the `scene(sceneId)`

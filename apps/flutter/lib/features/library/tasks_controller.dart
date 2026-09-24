@@ -7,6 +7,7 @@ import '../../app/deferred_stash_api.dart';
 import '../../app/notices.dart';
 import '../../app/providers.dart';
 import '../../domain/job.dart';
+import '../../domain/scan_options.dart';
 import '../../services/stash_api.dart';
 import 'library_controller.dart';
 
@@ -147,7 +148,7 @@ class TasksController extends ChangeNotifier {
 
   /// Asks Stash to scan and follows the job it queues. Does nothing while
   /// work is already active, which is also when the Scan button is
-  /// disabled. Rethrows whatever the mutation threw, for the caller to
+  /// disabled. Rethrows whatever the scan mutation threw, for the caller to
   /// surface; no row is left behind.
   Future<void> startScan() async {
     if (_disposed || hasActiveWork) return;
@@ -157,9 +158,22 @@ class TasksController extends ChangeNotifier {
     _scan = _ScanRequesting(token);
     notifyListeners();
 
+    final options = await _scanOptions();
+    // The defaults lookup is its own async gap, on top of the mutation's:
+    // a reconnect can have disposed this controller by now, or a failure
+    // streak (or a newer startScan) can already have moved this scan
+    // aside. Bail before sending a mutation that would otherwise land on
+    // a disposed controller or queue a second scan.
+    final requesting = _scan;
+    if (_disposed ||
+        requesting is! _ScanRequesting ||
+        requesting.token != token) {
+      return;
+    }
+
     final String jobId;
     try {
-      jobId = await _api.metadataScan();
+      jobId = await _api.metadataScan(options);
     } catch (_) {
       // Only clear `_scan` back to idle if it is still this scan: a
       // failure streak, or a newer startScan replacing this one, must not
@@ -183,6 +197,17 @@ class TasksController extends ChangeNotifier {
     _scan = _ScanFollowing(jobId, judgeAfter: _fetchSerial);
     notifyListeners();
     await _fetch();
+  }
+
+  /// The options Stash's web UI would scan with. A failed lookup falls
+  /// back to covers only rather than failing the scan: a settings read is
+  /// no reason to leave new files without thumbnails.
+  Future<ScanOptions> _scanOptions() async {
+    try {
+      return await _api.scanDefaults();
+    } catch (_) {
+      return ScanOptions.builtIn;
+    }
   }
 
   @override
