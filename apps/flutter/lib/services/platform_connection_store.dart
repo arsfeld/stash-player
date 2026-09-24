@@ -36,6 +36,15 @@ class PlatformConnectionStore implements ConnectionStore {
   final FlutterSecureStorage _secureStorage;
   final LegacyConnectionImporter? _legacyImporter;
 
+  /// Set for the duration of one [_importLegacy] run, so
+  /// `AppController.bootstrap()` and `ConnectionController.load()` calling
+  /// `load()` concurrently on first launch share it rather than both
+  /// reading [legacyImportAttemptedPreferenceKey] as unset and running the
+  /// import twice. Cleared once that run resolves — [legacyImportAttemptedPreferenceKey]
+  /// stays the source of truth for "already attempted" across separate
+  /// calls, this only closes the race within one.
+  Future<ConnectionConfig?>? _legacyImport;
+
   static Future<PlatformConnectionStore> create() async =>
       PlatformConnectionStore(
         preferences: SharedPreferencesAsync(),
@@ -65,7 +74,9 @@ class PlatformConnectionStore implements ConnectionStore {
   Future<ConnectionConfig> loadStored() async {
     final stored = await _readStored();
     if (stored.serverUrl.isNotEmpty) return stored;
-    return await _importLegacy() ?? stored;
+    final imported = await (_legacyImport ??= _importLegacy());
+    _legacyImport = null;
+    return imported ?? stored;
   }
 
   Future<ConnectionConfig> _readStored() async {

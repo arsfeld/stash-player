@@ -145,6 +145,24 @@ void main() {
         expect(loaded.apiKey, 'legacy-key');
       },
     );
+
+    test('concurrent loads share a single import', () async {
+      final secrets = _StubSecrets('legacy-key');
+      final store = buildImportingStore(secrets);
+      const expected = ConnectionConfig(
+        serverUrl: 'https://legacy.lan',
+        apiKey: 'legacy-key',
+        socksProxy: '127.0.0.1:1055',
+      );
+
+      final results = await Future.wait([
+        store.load(const {}),
+        store.load(const {}),
+      ]);
+
+      expect(results, [expected, expected]);
+      expect(secrets.reads, 1);
+    });
   });
 }
 
