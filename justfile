@@ -191,6 +191,13 @@ flutter-launch:
     exec env -i "${launch_env[@]}" \
       "{{ app_bundle }}/Contents/MacOS/StashPlayer"
 
+# ----------------------------------------------------------------- flatpak
+
+# End-to-end test of the Flatpak repo scripts in build-aux/flatpak-repo/
+# (throwaway signing key, real release bundles; Linux only).
+flatpak-repo-test:
+    nix shell nixpkgs#ostree nixpkgs#gnupg --command build-aux/flatpak-repo/test.sh
+
 # -------------------------------------------------------------------- rust
 
 test:

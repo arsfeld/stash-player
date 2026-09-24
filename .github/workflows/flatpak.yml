@@ -52,3 +52,113 @@ jobs:
         with:
           files: stash-player.flatpak
           generate_release_notes: true
+
+  repo-scripts:
+    name: Test Flatpak repo scripts
+    runs-on: ubuntu-latest
+    # Same image as publish-repo, so a missing tool shows up here first.
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - name: Install tools
+        run: &install-tools |
+          missing=
+          for tool in git ostree gpg curl; do command -v "$tool" >/dev/null || missing=1; done
+          if [ -n "$missing" ]; then
+            if command -v dnf >/dev/null; then dnf -y install git ostree gnupg2 curl
+            else apt-get update && apt-get -y install git ostree gnupg curl; fi
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: build-aux/flatpak-repo/test.sh
+
+  publish-repo:
+    name: Publish Flatpak repository
+    needs: [build, release]
+    # Stable tags only, like the Sparkle appcast.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    permissions:
+      contents: write
+    # Shared with macos.yml's `appcast` job: both rewrite gh-pages, and this
+    # one force-pushes it. GitHub runs at most one job per concurrency group
+    # plus at most one pending behind it, so the two never run at once — but
+    # a queued run can be superseded by a newer one instead of running in
+    # order; either way gh-pages ends up with the newest tag's state.
+    concurrency:
+      group: appcast-publish
+      cancel-in-progress: false
+    steps:
+      - name: Install tools
+        run: *install-tools
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 1
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: stash-player-x86_64.flatpak
+          path: bundle
+
+      - name: Import signing key
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ]; then
+            echo "::error::FLATPAK_GPG_PRIVATE_KEY is not set"
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m700 "$GNUPGHOME"
+          printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')" >> "$GITHUB_ENV"
+
+      - name: Publish repo
+        # verify.sh (run by publish.sh) fails the job before anything is
+        # pushed if the repo, its signature, or the rendered key is wrong.
+        run: |
+          set -euo pipefail
+          src/build-aux/flatpak-repo/publish.sh \
+            bundle/stash-player.flatpak gh-pages "$KEY_ID" \
+            src/build-aux/flatpak-repo/stash-player.gpg stash-player.flatpak
+          cp src/build-aux/flatpak-repo/index.html gh-pages/index.html
+
+      - name: Push gh-pages
+        # One orphan commit per publish, so OSTree objects never pile up in
+        # git history. Carries appcast.xml and .nojekyll forward.
+        working-directory: gh-pages
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan next
+          git add -A
+          git commit -q -m "flatpak: ${GITHUB_REF_NAME}"
+          git push --force origin next:gh-pages
+
+      - name: Replace release bundle
+        # The re-export carries the repo as its origin, so installing the
+        # bundle also subscribes to updates.
+        uses: softprops/action-gh-release@v2
+        with:
+          files: stash-player.flatpak
