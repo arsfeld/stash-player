@@ -100,6 +100,8 @@ small destination union instead.
   (decode + disk cache, namespaced under
   `dev.arsfeld.stashplayer.flutter`), `authenticated_url.dart`,
   `channel_native_toolbar.dart` (`stash_player/toolbar` method channel
+  implementation, serving both the macOS and Linux runners),
+  `channel_window_frame.dart` (`stash_player/window` method channel
   implementation), `channel_connection_sheet.dart` (`stash_player/connection_sheet`
   method channel implementation).
 - **`lib/ui/`**: the drawn widget layer, per `PlatformDialect` (`adwaita`
@@ -113,8 +115,11 @@ small destination union instead.
   `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
   `ChannelNativeMenus`, drawn in tests), `toolbar/` (the `AppToolbar` spec
   of menu, toggle, action, search, group and space items; `NativeToolbar`
-  port that macOS fills as an `NSToolbar` over a method channel),
-  `widgets/` (strip controls,
+  port that macOS fills as an `NSToolbar` and Linux as the `GtkHeaderBar`,
+  over a method channel; on Linux `LibraryToolbar` draws no strip while it
+  is in use and adds a `main-menu` item), `window/` (the `WindowFrame`
+  port: hidden titlebar and overlaid window buttons for the player on
+  Linux), `widgets/` (strip controls,
   spinner, toast, tile, `AppDialog`/`AppDialogPage`, and the
   `AppPreferencesGroup`/`AppEntryRow` form rows). `lib/ui/` never imports
   Riverpod.
@@ -130,8 +135,15 @@ small destination union instead.
   `native_menu_channel.cc` on Linux, which also answers `popup-failed`
   when a GTK popup's grab fails, so `ChannelNativeMenus` falls back to
   `DrawnMenus`), `stash_player/appearance` (OS accent colour, plus
-  GNOME's UI font via the settings portal; `appearance_channel.cc`), and
-  on macOS `stash_player/updates` (Sparkle), `stash_player/toolbar`
+  GNOME's UI font via the settings portal; `appearance_channel.cc`), on
+  Linux `stash_player/toolbar` (`native_toolbar_channel.cc`, the library's
+  controls as GTK widgets in the header bar, icons painted from the
+  bundled GNOME SVGs, keyboard focus handed back to the Flutter view) and
+  `stash_player/window` (`window_channel.cc`: while a scene is open the
+  titlebar is hidden and a background-less header bar in a `GtkOverlay`
+  draws the window buttons over the video; on X11 under a non-GNOME window
+  manager both channels answer `unavailable` and the drawn strip and WM
+  title bar are used), and on macOS `stash_player/updates` (Sparkle), `stash_player/toolbar`
   (`NativeToolbarChannel.swift`, the library's controls as an `NSToolbar`),
   and `stash_player/connection_sheet` (`ConnectionSheetChannel.swift`, the
   connection form as an AppKit sheet with rules kept in Dart by

@@ -265,4 +265,23 @@ Both channels are constructed in `my_application_activate` and freed in
 
 ## Spike outcome
 
-To be filled in at the manual gate.
+The manual gate and the manual checklist were not run before merge, at
+the owner's direction, because the implementation session had no display.
+The runner code was compiled under `-Wall -Werror` and reviewed, but it
+has never been executed. Nothing here was verified on screen.
+
+What therefore remains unverified at runtime:
+
+- (a) Hiding the titlebar keeps the window's shadows and resize edges.
+- (b) The overlaid header bar passes clicks through to Flutter except on
+  its buttons.
+- (c) `startDrag` moves the window, and Flutter recovers its pointer state
+  afterwards.
+- (d) Window-button legibility over video, in light and dark themes.
+- (e) The native toolbar's widgets, icons, menus, search entry and the
+  keyboard-focus hand-back to the Flutter view.
+- (f) Non-default button layouts, the Yaru theme, X11 sessions, and the
+  Flatpak build.
+
+If any of these fail, the fallbacks listed under "Implementation order"
+remain available.

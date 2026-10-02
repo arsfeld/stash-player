@@ -293,6 +293,15 @@ pump loop that polls for the widget you actually expect and fails
 explicitly on a generous timeout instead (see that test's own
 `_pumpUntilFound` helper).
 
+## Linux window chrome
+
+In the library the window has one GTK header bar carrying the toolbar's
+controls as native widgets (`stash_player/toolbar`). The player hides that
+bar and overlays only GTK's window buttons on the video
+(`stash_player/window`), following the desktop's button layout. On X11
+under a non-GNOME window manager both channels answer `unavailable`: the
+WM keeps its title bar and the Flutter-drawn strip is used, as before.
+
 ## Keyboard shortcuts (player)
 
 Same mpv-style bindings as the GTK client — see the root README's
