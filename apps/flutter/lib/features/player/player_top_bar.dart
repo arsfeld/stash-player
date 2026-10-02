@@ -6,6 +6,7 @@ import '../../ui/menu/app_menu.dart';
 import '../../ui/menu/native_menus.dart';
 import '../../ui/theme/app_tokens.dart';
 import '../../ui/widgets/window_chrome.dart';
+import '../../ui/window/window_frame.dart';
 import 'player_icon_button.dart';
 
 /// The scene screen's top chrome: back, title, the quality menu, and the
@@ -28,6 +29,11 @@ import 'player_icon_button.dart';
 ///
 /// The gradient scrim runs past the band's bottom edge so the title fades
 /// out over the picture instead of ending on a hard line.
+///
+/// On Linux the window's own header bar is hidden while a scene is open
+/// and GTK draws the window buttons over this bar (`window_channel.cc`).
+/// [windowInsets] keeps the bar's controls clear of them, and the title
+/// doubles as the handle that moves the window ([onStartDrag]).
 class PlayerTopBar extends StatelessWidget {
   const PlayerTopBar({
     required this.title,
@@ -38,6 +44,8 @@ class PlayerTopBar extends StatelessWidget {
     required this.currentStream,
     required this.onSelectStream,
     required this.onMenuOpenChanged,
+    this.windowInsets = WindowButtonInsets.zero,
+    this.onStartDrag,
     super.key,
   });
 
@@ -60,6 +68,15 @@ class PlayerTopBar extends StatelessWidget {
   /// while a menu anchored to this bar is still on screen.
   final ValueChanged<bool> onMenuOpenChanged;
 
+  /// Room taken by window buttons the platform draws over this bar
+  /// (Linux, while the titlebar is hidden). Zero elsewhere: macOS's
+  /// traffic lights are already covered by [AppWindowChrome]'s inset.
+  final WindowButtonInsets windowInsets;
+
+  /// Starts moving the window. Called when the title is dragged; null
+  /// where the platform's own titlebar handles that.
+  final VoidCallback? onStartDrag;
+
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: const BoxDecoration(
@@ -73,8 +90,10 @@ class PlayerTopBar extends StatelessWidget {
       bottom: false,
       child: Padding(
         padding: EdgeInsets.only(
-          left: AppWindowChrome.leadingInsetFor(Theme.of(context).platform),
-          right: AppTokens.space3,
+          left:
+              AppWindowChrome.leadingInsetFor(Theme.of(context).platform) +
+              windowInsets.leading,
+          right: AppTokens.space3 + windowInsets.trailing,
           bottom: AppTokens.space5,
         ),
         child: SizedBox(
@@ -88,14 +107,23 @@ class PlayerTopBar extends StatelessWidget {
               ),
               const SizedBox(width: AppTokens.space2),
               Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTokens.playerText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: onStartDrag == null
+                      ? null
+                      : (_) => onStartDrag!(),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppTokens.playerText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ),

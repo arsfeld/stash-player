@@ -6,13 +6,17 @@ import '../shared/diagnostics.dart';
 import '../ui/toolbar/app_toolbar.dart';
 import '../ui/toolbar/native_toolbar.dart';
 
-/// Shows [AppToolbar]s as the window's `NSToolbar` over the
-/// `stash_player/toolbar` channel (`NativeToolbarChannel.swift`).
+/// Shows [AppToolbar]s as the window's own toolbar over the
+/// `stash_player/toolbar` channel: an `NSToolbar` on macOS
+/// (`NativeToolbarChannel.swift`), the `GtkHeaderBar` on Linux
+/// (`native_toolbar_channel.cc`).
 ///
-/// Only ids, labels, symbols and state cross the channel. Callbacks stay
-/// here in an id → item table that each [set] replaces, so an event for
-/// an item that has since gone runs nothing. A spec identical to the last
-/// one sent is dropped, which lets a caller publish after every build.
+/// Only ids, labels, icon names and state cross the channel (`symbol` is
+/// the SF Symbol macOS draws, `icon` the bundled GNOME SVG Linux draws).
+/// Callbacks stay here in an id → item table that each [set] replaces, so an
+/// event for an item that has since gone runs nothing. A spec identical to
+/// the last one sent is dropped, which lets a caller publish after every
+/// build.
 ///
 /// If the native side is missing or fails, [set] reports false from then
 /// on and logs once, and the caller draws its own controls.
@@ -87,12 +91,14 @@ class ChannelNativeToolbar implements NativeToolbar {
         'type': 'toggle',
         ...base,
         'symbol': item.icon.sfSymbol,
+        'icon': item.icon.gnome,
         'selected': item.selected,
       },
       AppToolbarAction() => {
         'type': 'action',
         ...base,
         'symbol': item.icon.sfSymbol,
+        'icon': item.icon.gnome,
         'enabled': item.onPressed != null,
         'badge': item.badge,
       },

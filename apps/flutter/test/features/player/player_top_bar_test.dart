@@ -8,6 +8,7 @@ import 'package:stash_player_flutter/ui/menu/native_menus.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
 import 'package:stash_player_flutter/ui/widgets/window_chrome.dart';
+import 'package:stash_player_flutter/ui/window/window_frame.dart';
 
 import '../../support/recording_menus.dart';
 
@@ -66,6 +67,65 @@ Future<void> _pumpQualityMenu(
 );
 
 void main() {
+  group('window buttons drawn over the bar', () {
+    PlayerTopBar bar({
+      WindowButtonInsets insets = WindowButtonInsets.zero,
+      VoidCallback? onStartDrag,
+    }) => PlayerTopBar(
+      title: 'Scene 42',
+      metadataOpen: false,
+      onBack: _noop,
+      onToggleMetadata: _noop,
+      streamOptions: const [],
+      currentStream: null,
+      onSelectStream: _noopSelectStream,
+      onMenuOpenChanged: _noopMenuOpenChanged,
+      windowInsets: insets,
+      onStartDrag: onStartDrag,
+    );
+
+    testWidgets('their insets pad both ends of the bar', (tester) async {
+      await _pump(
+        tester,
+        TargetPlatform.linux,
+        bar(insets: const WindowButtonInsets(leading: 40, trailing: 90)),
+      );
+
+      final width = tester.getSize(find.byType(PlayerTopBar)).width;
+      expect(tester.getTopLeft(_backButton).dx, AppTokens.stripInset + 40);
+      expect(
+        tester.getTopRight(find.byTooltip('Show details')).dx,
+        width - AppTokens.space3 - 90,
+      );
+    });
+
+    testWidgets('dragging the title starts a window drag', (tester) async {
+      var drags = 0;
+      await _pump(
+        tester,
+        TargetPlatform.linux,
+        bar(onStartDrag: () => drags++),
+      );
+
+      await tester.drag(find.text('Scene 42'), const Offset(60, 0));
+
+      expect(drags, 1);
+    });
+
+    testWidgets('dragging a button does not', (tester) async {
+      var drags = 0;
+      await _pump(
+        tester,
+        TargetPlatform.linux,
+        bar(onStartDrag: () => drags++),
+      );
+
+      await tester.drag(_backButton, const Offset(60, 0));
+
+      expect(drags, 0);
+    });
+  });
+
   // The macOS titlebar is transparent and full-size-content, which is a
   // *window*-level setting: the Flutter view extends under the system
   // traffic lights on every screen, not only the ones that use

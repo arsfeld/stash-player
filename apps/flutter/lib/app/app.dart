@@ -5,6 +5,7 @@ import '../domain/system_appearance.dart';
 import '../ui/menu/native_menus.dart';
 import '../ui/theme/app_theme.dart';
 import '../ui/toolbar/native_toolbar.dart';
+import '../ui/window/window_frame.dart';
 import 'app_controller.dart';
 import 'app_menu_bar.dart';
 import 'app_router.dart';
@@ -36,6 +37,7 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
         SystemAppearance.none;
     final nativeMenus = ref.watch(nativeMenusProvider);
     final nativeToolbar = ref.watch(nativeToolbarProvider);
+    final windowFrame = ref.watch(windowFrameProvider);
     ThemeData themeFor(Brightness brightness) => buildAppTheme(
       brightness,
       accent: appearance.accent,
@@ -54,9 +56,12 @@ class _StashPlayerAppState extends ConsumerState<StashPlayerApp> {
             menus: nativeMenus,
             child: ToastHost(child: child!),
           );
-          return nativeToolbar == null
+          final withToolbar = nativeToolbar == null
               ? content
               : NativeToolbarScope(toolbar: nativeToolbar, child: content);
+          return windowFrame == null
+              ? withToolbar
+              : WindowFrameScope(frame: windowFrame, child: withToolbar);
         },
         home: const AppRouter(),
       ),

@@ -101,11 +101,13 @@ void main() {
       'label': 'Hide played',
       'tooltip': 'Hide played',
       'symbol': 'eye.slash',
+      'icon': 'eye-crossed',
       'selected': true,
     });
     expect(items[2], containsPair('placeholder', 'Search scenes'));
     expect(items[3], containsPair('badge', true));
     expect(items[3], containsPair('symbol', 'list.bullet.rectangle'));
+    expect(items[3], containsPair('icon', 'list'));
     expect(items[4], containsPair('enabled', false));
   });
 

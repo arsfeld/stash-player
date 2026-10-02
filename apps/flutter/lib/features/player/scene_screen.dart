@@ -11,6 +11,8 @@ import '../../domain/scene.dart';
 import '../../services/external_url_launcher.dart';
 import '../../ui/icons/app_icons.dart';
 import '../../ui/widgets/app_spinner.dart';
+import '../../ui/widgets/window_chrome.dart';
+import '../../ui/window/window_frame.dart';
 import 'loading_overlay.dart';
 import 'playback_controller.dart';
 import 'playback_state.dart';
@@ -68,6 +70,15 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   /// top bar, so the bar fading out from under it would leave the menu
   /// floating over nothing.
   bool _menuOpen = false;
+
+  /// The window's own chrome where the platform draws its buttons over
+  /// the video (Linux). Null elsewhere.
+  WindowFrame? _windowFrame;
+
+  /// Kept apart from [_hoveringControls]: the pointer leaving Flutter's
+  /// bar for a GTK window button reports "left" and "entered" from two
+  /// different sources, in no guaranteed order.
+  bool _hoveringWindowButtons = false;
 
   /// The top bar and the player bar live in different `Positioned`
   /// subtrees (the failure banner has to sit between them in the top
@@ -158,7 +169,35 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_windowFrame != null) return;
+    final frame = WindowFrameScope.maybeOf(context);
+    if (frame == null) return;
+    _windowFrame = frame;
+    frame.insets.addListener(_onWindowInsetsChanged);
+    frame.controlsHovered.addListener(_onWindowButtonsHovered);
+    unawaited(frame.setImmersive(true));
+  }
+
+  void _onWindowInsetsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onWindowButtonsHovered() {
+    if (!mounted) return;
+    _hoveringWindowButtons = _windowFrame!.controlsHovered.value;
+    _registerActivity(ref.read(playbackControllerProvider).state);
+  }
+
+  @override
   void dispose() {
+    final frame = _windowFrame;
+    if (frame != null) {
+      frame.insets.removeListener(_onWindowInsetsChanged);
+      frame.controlsHovered.removeListener(_onWindowButtonsHovered);
+      unawaited(frame.setImmersive(false));
+    }
     _lifecycleListener.dispose();
     _controlsFadeController.dispose();
     _hideTimer?.cancel();
@@ -195,6 +234,7 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
       !playback.playing ||
       playback.buffering ||
       _hoveringControls ||
+      _hoveringWindowButtons ||
       _controlsFocused ||
       _metadataOpen ||
       _menuOpen;
@@ -225,6 +265,7 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
   void _setControlsVisible(bool value) {
     if (_controlsVisible == value) return;
     setState(() => _controlsVisible = value);
+    unawaited(_windowFrame?.setControlsVisible(value));
     if (value) {
       _controlsFadeController.forward();
     } else {
@@ -618,6 +659,14 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
                                       playbackController.selectStream,
                                   onMenuOpenChanged: (open) =>
                                       _setMenuOpen(open, playback),
+                                  windowInsets:
+                                      _windowFrame?.insets.value ??
+                                      WindowButtonInsets.zero,
+                                  onStartDrag: _windowFrame == null
+                                      ? null
+                                      : () => unawaited(
+                                          _windowFrame!.startDrag(),
+                                        ),
                                 ),
                               ),
                             ),
@@ -737,7 +786,11 @@ class _SceneScreenState extends ConsumerState<SceneScreen>
             // see this method's own top-level comment for why leaving
             // `width` unset here does not.
             Positioned(
-              top: 0,
+              // Below the window buttons GTK draws over the top edge,
+              // when there are any.
+              top: (_windowFrame?.insets.value.isZero ?? true)
+                  ? 0
+                  : AppWindowChrome.stripHeightFor(Theme.of(context).platform),
               right: 0,
               bottom: 0,
               width: math.min(
