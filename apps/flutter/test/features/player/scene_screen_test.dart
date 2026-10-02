@@ -20,6 +20,7 @@ import 'package:stash_player_flutter/features/player/loading_overlay.dart';
 import 'package:stash_player_flutter/features/player/playback_engine.dart';
 import 'package:stash_player_flutter/features/player/player_bar.dart';
 import 'package:stash_player_flutter/features/player/player_icon_button.dart';
+import 'package:stash_player_flutter/features/player/player_top_bar.dart';
 import 'package:stash_player_flutter/features/player/scene_controller.dart';
 import 'package:stash_player_flutter/features/player/scene_metadata_drawer.dart';
 import 'package:stash_player_flutter/features/player/scene_screen.dart';
@@ -28,10 +29,12 @@ import 'package:stash_player_flutter/services/stash_api.dart';
 import 'package:stash_player_flutter/ui/icons/app_icons.dart';
 import 'package:stash_player_flutter/ui/theme/app_theme.dart';
 import 'package:stash_player_flutter/ui/theme/app_tokens.dart';
+import 'package:stash_player_flutter/ui/window/window_frame.dart';
 
 import '../../support/contrast.dart';
 import '../../support/fake_playback_engine.dart';
 import '../../support/fakes.dart';
+import '../../support/recording_window_frame.dart';
 
 const _connection = ConnectionConfig(
   serverUrl: 'https://stash.test',
@@ -323,10 +326,13 @@ Widget _app(
   ProviderContainer container,
   String sceneId, {
   BrowseContext? browse,
+  WindowFrame? frame,
 }) => UncontrolledProviderScope(
   container: container,
   child: MaterialApp(
     theme: buildAppTheme(Brightness.light),
+    builder: (context, child) =>
+        frame == null ? child! : WindowFrameScope(frame: frame, child: child!),
     home: SceneScreen(sceneId: sceneId, browse: browse),
   ),
 );
@@ -337,8 +343,11 @@ Future<void> _pumpReadyScene(
   Scene scene, {
   bool play = true,
   BrowseContext? browse,
+  WindowFrame? frame,
 }) async {
-  await tester.pumpWidget(_app(harness.container, scene.id, browse: browse));
+  await tester.pumpWidget(
+    _app(harness.container, scene.id, browse: browse, frame: frame),
+  );
   await tester.pump();
   harness.api.calls.single.completer.complete(scene);
   await tester.pumpAndSettle();
@@ -2646,6 +2655,103 @@ void main() {
       // never reaches the engine while a text field is focused.
       expect(harness.engine.commands.whereType<PlayCommand>(), isEmpty);
       expect(harness.engine.commands.whereType<PauseCommand>(), isEmpty);
+    });
+  });
+
+  group('window frame', () {
+    testWidgets('goes immersive while mounted and back on teardown', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final frame = RecordingWindowFrame();
+      await _pumpReadyScene(tester, harness, _scene(), frame: frame);
+
+      expect(frame.calls.first, 'setImmersive true');
+      expect(frame.calls, isNot(contains('setImmersive false')));
+
+      await _tearDownScene(tester, harness);
+      expect(frame.calls.last, 'setImmersive false');
+    });
+
+    testWidgets('the window buttons hide and show with the controls', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final frame = RecordingWindowFrame();
+      await _pumpReadyScene(tester, harness, _scene(), frame: frame);
+
+      await tester.pump(const Duration(seconds: 4));
+      expect(frame.calls.last, 'setControlsVisible false');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(frame.calls.last, 'setControlsVisible true');
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('hovering a window button holds the auto-hide timer', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final frame = RecordingWindowFrame();
+      await _pumpReadyScene(tester, harness, _scene(), frame: frame);
+
+      frame.controlsHovered.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsOpacity(tester), 1.0);
+
+      frame.controlsHovered.value = false;
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsOpacity(tester), 0.0);
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('insets pad the top bar and drop the drawer below it', (
+      tester,
+    ) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final frame = RecordingWindowFrame();
+      await _pumpReadyScene(tester, harness, _scene(), frame: frame);
+      expect(tester.getTopLeft(find.byType(SceneMetadataDrawer)).dy, 0);
+
+      frame.insets.value = const WindowButtonInsets(trailing: 100);
+      await tester.pump();
+
+      final width = tester.getSize(find.byType(SceneScreen)).width;
+      expect(
+        tester.getTopRight(find.byTooltip('Show details')).dx,
+        width - AppTokens.space3 - 100,
+      );
+      expect(
+        tester.getTopLeft(find.byType(SceneMetadataDrawer)).dy,
+        AppTokens.stripHeight,
+      );
+      await _tearDownScene(tester, harness);
+    });
+
+    testWidgets('dragging the title asks the window to move', (tester) async {
+      final harness = _harness();
+      addTearDown(harness.container.dispose);
+      final frame = RecordingWindowFrame();
+      final scene = _scene();
+      await _pumpReadyScene(tester, harness, scene, frame: frame);
+
+      await tester.drag(
+        find.descendant(
+          of: find.byType(PlayerTopBar),
+          matching: find.text(scene.displayTitle),
+        ),
+        const Offset(60, 0),
+      );
+
+      expect(frame.calls, contains('startDrag'));
+      await _tearDownScene(tester, harness);
     });
   });
 }

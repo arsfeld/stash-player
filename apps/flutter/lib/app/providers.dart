@@ -14,6 +14,7 @@ import '../features/connection/connection_sheet.dart';
 import '../services/channel_connection_sheet.dart';
 import '../services/channel_native_menus.dart';
 import '../services/channel_native_toolbar.dart';
+import '../services/channel_window_frame.dart';
 import '../services/connection_store.dart';
 import '../services/disk_thumbnail_repository.dart';
 import '../services/http_stash_api.dart';
@@ -25,6 +26,7 @@ import '../shared/diagnostics.dart';
 import '../ui/menu/drawn_menus.dart';
 import '../ui/menu/native_menus.dart';
 import '../ui/toolbar/native_toolbar.dart';
+import '../ui/window/window_frame.dart';
 
 /// The process environment consulted for `STASH_URL` / `STASH_API_KEY`
 /// overrides. Real runs read [Platform.environment] directly; tests
@@ -185,6 +187,16 @@ final nativeToolbarProvider = Provider<NativeToolbar?>((ref) {
   final toolbar = ChannelNativeToolbar();
   unawaited(toolbar.reset());
   return toolbar;
+});
+
+/// The window chrome the scene screen drives: the Linux runner's hidden
+/// titlebar and overlaid window buttons, none elsewhere (macOS's
+/// titlebar is already transparent, and tests run as Android).
+final windowFrameProvider = Provider<WindowFrame?>((ref) {
+  if (defaultTargetPlatform != TargetPlatform.linux) return null;
+  final frame = ChannelWindowFrame();
+  unawaited(frame.reset());
+  return frame;
 });
 
 /// The native connection sheet: an AppKit sheet on macOS, none elsewhere.
