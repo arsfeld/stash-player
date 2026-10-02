@@ -232,6 +232,11 @@ class PlaybackController extends ChangeNotifier {
   /// `ActivitySync.replaceScene`'s own doc for what it does with that.
   bool _positionEstablished = false;
 
+  /// How many [seekAbsolute] calls have published their target but not
+  /// yet finished moving the engine there. A count rather than a flag,
+  /// because a held key issues the next seek before the last one settles.
+  int _seeksInFlight = 0;
+
   /// Whether the current rung has already had one automatic decision
   /// made against it, by either [_onStallDeadline] or
   /// [_handleStreamError]: an advance to the next rung, or (once the
@@ -794,6 +799,40 @@ class PlaybackController extends ChangeNotifier {
     final generation = _state.generation;
     final clamped = _clamp(target);
 
+    // The target is published before anything is awaited, not once the
+    // engine confirms it. The flush below is a network write, and for as
+    // long as it took the transport kept showing the position being left:
+    // the scrubber's thumb snapped back on release, and every press of a
+    // held key computed its target from that same stale position, so a
+    // burst of presses moved as far as one. [_seeksInFlight] keeps the
+    // engine's own position events, which still describe the old place,
+    // from overwriting it in the meantime.
+    final previous = _state.position;
+    _seeksInFlight++;
+    _state = _state.copyWith(position: clamped);
+    _positionEstablished = true;
+    notifyListeners();
+    var moved = false;
+    try {
+      moved = await _seekEngineTo(clamped, generation);
+    } finally {
+      _seeksInFlight--;
+    }
+
+    // A seek the engine refused never moved playback, so the target is
+    // taken back. Only when nothing else is pending: a later seek has
+    // already published a target of its own.
+    if (moved || _seeksInFlight > 0) return;
+    if (_disposed || generation != _state.generation) return;
+    _state = _state.copyWith(position: previous);
+    notifyListeners();
+  }
+
+  /// Whether playback ended up somewhere other than where it was: `false`
+  /// only for an engine seek that failed. A superseded call and a reopen
+  /// both report `true`, since each has already settled the position
+  /// itself.
+  Future<bool> _seekEngineTo(Duration clamped, int generation) async {
     try {
       await _activitySync.flush();
     } catch (_) {
@@ -804,7 +843,7 @@ class PlaybackController extends ChangeNotifier {
       // The seek below still runs regardless of whether the flush
       // succeeded.
     }
-    if (_disposed || generation != _state.generation) return;
+    if (_disposed || generation != _state.generation) return true;
 
     // A progressive transcode has nothing to seek within: Stash generates
     // it as it sends it, so asking the engine to seek fails and surfaces
@@ -813,17 +852,13 @@ class PlaybackController extends ChangeNotifier {
     final selection = _state.streams;
     if (selection != null && !selection.current.kind.hasRealTimeline) {
       await _reopenAt(clamped, generation);
-      return;
+      return true;
     }
 
-    final succeeded = await _runEngineCommand(
+    return _runEngineCommand(
       () => _engine.seek(clamped),
       generation: generation,
     );
-    if (!succeeded || _disposed || generation != _state.generation) return;
-
-    _state = _state.copyWith(position: clamped);
-    notifyListeners();
   }
 
   /// Seeks by [delta] relative to this controller's own accepted
@@ -1062,6 +1097,9 @@ class PlaybackController extends ChangeNotifier {
       // Once the stream has advanced, a zero is genuine again (a seek
       // back to the start, or a loop) and applies normally.
       if (!advanced && !_currentStreamAdvanced) return;
+
+      // Still describing where playback was: see [seekAbsolute].
+      if (_seeksInFlight > 0) return;
 
       _state = _state.copyWith(position: _streamStartOffset + value);
       _positionEstablished = true;

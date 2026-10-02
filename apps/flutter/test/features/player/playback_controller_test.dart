@@ -831,6 +831,39 @@ void main() {
       },
     );
 
+    test('presses made while an earlier seek is still flushing accumulate '
+        'rather than all landing on the same target', () async {
+      final engine = FakePlaybackEngine();
+      final flushGate = Completer<void>();
+      final controller = _buildController(
+        engine: engine,
+        saveActivity:
+            ({required id, required resumeTime, required playDuration}) =>
+                flushGate.future,
+      );
+      await controller.loadScene(_sceneWith(duration: 2000));
+      engine.commands.clear();
+
+      // Key repeat: neither press waits for the one before it.
+      final first = controller.seekRelative(const Duration(seconds: 10));
+      final second = controller.seekRelative(const Duration(seconds: 10));
+
+      expect(
+        controller.state.position,
+        const Duration(seconds: 20),
+        reason: 'the transport must show the target while the seek is pending',
+      );
+
+      flushGate.complete();
+      await Future.wait([first, second]);
+
+      expect(
+        engine.commands.whereType<SeekCommand>().last.position,
+        const Duration(seconds: 20),
+      );
+      expect(controller.state.position, const Duration(seconds: 20));
+    });
+
     test('clamps at zero', () async {
       final engine = FakePlaybackEngine();
       final controller = _buildController(engine: engine);
