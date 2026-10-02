@@ -47,10 +47,10 @@ curl -X POST http://127.0.0.1:9999/__test__/reset
 
 ```sh
 # 1. Start the mock (Python 3 stdlib only)
-python3 tools/mock-stash/server.py
+just mock        # or: python3 tools/mock-stash/server.py
 # [mock] listening on http://127.0.0.1:9999
 
-# 2. In another shell, point the UI at it. Move .env aside first if
+# 2. In another shell, point the app at it. Move .env aside first if
 #    it's pinning you to a real instance — dotenv won't override an
 #    already-set var, but a stale .env will pre-populate the wrong URL
 #    if you launch without env overrides:
@@ -58,7 +58,7 @@ mv .env .env.disabled  # only if .env points elsewhere
 
 STASH_URL=http://127.0.0.1:9999 \
 STASH_API_KEY=mocktoken \
-cargo run -p stash-player-ui
+just run
 ```
 
 The UI hits the mock just like a real Stash; thumbnails come from
@@ -87,17 +87,11 @@ CI runners don't hit this — nothing else is listening on a fresh
 runner — so every committed default (this file, `apps/flutter/README.md`,
 `.github/workflows/flutter.yml`) keeps using `9999` unchanged.
 
-### Isolate from your real config
+### Your saved connection is safe
 
-If you don't want the mock URL to overwrite your normal
-`~/.config/stash-player/config.toml`:
-
-```sh
-XDG_CONFIG_HOME=/tmp/mock-config \
-XDG_CACHE_HOME=/tmp/mock-cache \
-STASH_URL=http://127.0.0.1:9999 STASH_API_KEY=mocktoken \
-cargo run -p stash-player-ui
-```
+`STASH_URL` / `STASH_API_KEY` only override the connection for the
+running process; the app never writes them back, so pointing it at the
+mock leaves your saved server and key untouched.
 
 ## Files
 

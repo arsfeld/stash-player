@@ -1,4 +1,4 @@
-# Stash Player (Flutter)
+# Stash Player
 
 The Stash Player desktop app for Linux and macOS. Released as a Flatpak
 and a notarized macOS app from `v1.0.0` on. It took over the app
@@ -19,26 +19,29 @@ native plugins still link", not as support.
 
 ## Prerequisites
 
-Flutter only exists inside the pinned Nix dev shell (`nix develop .#flutter`
-at the repository root); there is no supported "without Nix" path for this
-app, unlike the Rust clients. That shell — separate from the repository's
-`default` shell, which skips the Flutter SDK but still carries the same
-shared GTK3/mpv (and `mpv.pc` shim) runtime libs — provides the pinned
-Flutter SDK plus the native libraries `media_kit` needs for
-hardware-accelerated video (see [Troubleshooting](#troubleshooting)
-below). The two shells are split so Rust-only contributors don't pay for
-the multi-GB Flutter closure, and so `clang` (needed to build the Flutter
-Linux embedder) never shadows the legacy Rust client's own `cc`/`ld`
-inside `nix develop`'s default shell.
+Flutter only exists inside the pinned Nix dev shell (`nix develop` at the
+repository root, or direnv, which loads the same shell); there is no
+supported "without Nix" path. That shell provides the pinned Flutter SDK
+plus the native libraries `media_kit` needs for hardware-accelerated
+video (see [Troubleshooting](#troubleshooting) below). The frozen Rust
+clients have their own shell, `nix develop .#legacy`: it carries the same
+GTK3/mpv (and `mpv.pc` shim) runtime libs, and is kept separate so `clang`
+(needed to build the Flutter Linux embedder) never shadows the Rust
+build's own `cc`/`ld`.
 
 ```sh
 # from the repository root
-nix develop .#flutter
+nix develop
 cd apps/flutter
 flutter pub get
 ```
 
 ## Run
+
+From the repository root, `just run` builds the debug binary and launches
+it against `STASH_URL` (the mock server by default); `just --list` shows
+the rest (`build`, `launch`, `check`, `fmt`, `env`). Or drive Flutter
+directly, for hot reload:
 
 ```sh
 flutter run -d linux    # Linux
@@ -125,8 +128,8 @@ clients it replaces, so a packaged install of one supersedes the other —
 that's the point, see "Releasing" below. Everything else — preference
 keys, secure-storage key, and cache directory — stays under the
 `dev.arsfeld.stashplayer.flutter` namespace the app has always used, so a
-locally built dev copy of this app never collides with a `cargo run`
-build of the legacy GTK client on the same machine:
+locally built dev copy of this app never collides with a `just
+legacy-run` build of the legacy GTK client on the same machine:
 
 | What | Identifier |
 | --- | --- |
@@ -170,7 +173,9 @@ for the full flow.
 
 ## Format, analyze, test, build
 
-Mirrors what CI (`.github/workflows/flutter.yml`) runs, in this order:
+`just check` (from the repository root) runs the first four of these;
+together they mirror what CI (`.github/workflows/flutter.yml`) runs, in
+this order:
 
 ```sh
 flutter pub get
@@ -250,14 +255,14 @@ secret-tool clear test-attr probe-value
 **`media_kit` native libraries.** Real playback needs `media_kit`'s
 native decode/render libraries (`libmpv` and friends on Linux,
 `media_kit_libs_video`'s bundled frameworks on macOS). The pinned Nix
-dev shell (`nix develop .#flutter`) provides these on Linux; running
+dev shell (`nix develop`) provides these on Linux; running
 outside that shell (or outside the pub packages' bundled macOS
 frameworks) is unsupported and will fail to open any stream, mock or
 real. If `flutter run`/`flutter test -d linux` reports it can't find
-`libmpv` or similar, you are almost certainly outside `nix develop
-.#flutter`.
+`libmpv` or similar, you are almost certainly outside `nix develop`
+(or inside `nix develop .#legacy`).
 
-**`flutter build macos` fails inside `nix develop .#flutter`.** It dies
+**`flutter build macos` fails inside `nix develop`.** It dies
 in `debug_unpack_macos`/`release_unpack_macos` with `Failed to extract
 architectures "arm64"` and, underneath it, `lipo: can't create temporary
 output file: …/FlutterMacOS.lipo (Permission denied)`. nixpkgs assembles
@@ -304,7 +309,7 @@ WM keeps its title bar and the Flutter-drawn strip is used, as before.
 
 ## Keyboard shortcuts (player)
 
-Same mpv-style bindings as the GTK client — see the root README's
+mpv-style bindings — see the root README's
 ["Keyboard shortcuts"](../../README.md#keyboard-shortcuts) section.
 
 **Fullscreen is not implemented on either platform.** `F` and `Esc` are
@@ -356,7 +361,7 @@ notarizes a non-tag build, for testing a release candidate before tagging.
 
 Bump the pinned Flutter version (currently 3.41.6) in three places
 together, in the same commit as any `flake.lock` bump that changes what
-`nix develop .#flutter` resolves to: the `flutter-version` inputs in
+`nix develop` resolves to: the `flutter-version` inputs in
 [`flutter.yml`](../../.github/workflows/flutter.yml) and
 [`macos.yml`](../../.github/workflows/macos.yml), and the Flutter SDK
 archive URL + sha256 in the Flatpak manifest.

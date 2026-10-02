@@ -3,15 +3,15 @@
 # Two macOS environment traps are baked into the recipes here, because both
 # cost real debugging time to find:
 #
-#   1. This repo auto-loads `nix develop` through direnv. That shell puts
-#      clang-wrapper's `ld` and xcbuild's `xcrun` ahead of Xcode's and exports
+#   1. This repo auto-loads `nix develop` through direnv. A Nix shell can put
+#      clang-wrapper's `ld` and xcbuild's `xcrun` ahead of Xcode's and export
 #      CC/LD/SDKROOT/NIX_LDFLAGS, which makes xcodebuild reject `-Xlinker`
 #      flags and SPM resolution die on `arch: xcrun: Bad CPU type`. Clearing
-#      PATH is not enough; the Flutter macOS recipes use `env -i`.
+#      PATH is not enough; the macOS recipes use `env -i`.
 #   2. `STASH_URL` / `STASH_API_KEY` are read from the app's own process
 #      environment. Launching through `open` (or the Finder) goes via
 #      LaunchServices, which inherits no shell environment, so the app falls
-#      back to its connection screen. `flutter-launch` execs the binary.
+#      back to its connection screen. `launch` execs the binary.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -25,11 +25,11 @@ linux_bundle := flutter_dir / "build/linux" / linux_arch / "debug/bundle/stash-p
 flutter_bin := `command -v flutter 2>/dev/null || true`
 pod_bin := `command -v pod 2>/dev/null || true`
 
-# Check if CMake and Ninja are present (i.e. already inside `nix develop .#flutter`).
-_in_flutter_shell := `if command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then echo 1; else echo 0; fi`
-_nix_flutter := if _in_flutter_shell == "1" { "" } else { "nix develop " + justfile_directory() + "/.#flutter --command " }
+# Check if CMake and Ninja are present (i.e. already inside `nix develop`).
+_in_dev_shell := `if command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then echo 1; else echo 0; fi`
+_nix_develop := if _in_dev_shell == "1" { "" } else { "nix develop " + justfile_directory() + " --command " }
 
-# Where the Flutter client should look for Stash. Defaults to the mock.
+# Where the app should look for Stash. Defaults to the mock.
 stash_url := env("STASH_URL", "http://127.0.0.1:9999")
 
 
@@ -51,19 +51,19 @@ stash-up:
 stash-down:
     docker compose down
 
-# ----------------------------------------------------------------- flutter
+# --------------------------------------------------------------------- app
 
-# Show which toolchain the Flutter recipes will actually use.
+# Show which toolchain the recipes will actually use.
 [linux]
-flutter-env:
+env:
     @echo "flutter : {{ if flutter_bin == "" { "NOT FOUND" } else { flutter_bin } }}"
-    @echo "in nix  : {{ if _in_flutter_shell == "1" { "yes" } else { "no (recipes will wrap in nix develop .#flutter)" } }}"
+    @echo "in nix  : {{ if _in_dev_shell == "1" { "yes" } else { "no (recipes will wrap in nix develop)" } }}"
     @echo "bundle  : {{ linux_bundle }}"
     @echo "stash   : {{ stash_url }}"
     @echo "socks   : ${STASH_SOCKS_PROXY-(app setting)}"
 
 [macos]
-flutter-env:
+env:
     @echo "flutter : {{ if flutter_bin == "" { "NOT FOUND" } else { flutter_bin } }}"
     @echo "pod     : {{ if pod_bin == "" { "NOT FOUND" } else { pod_bin } }}"
     @{{ _clean }} sh -c 'echo "xcrun   : $(command -v xcrun) ($(xcrun --version | head -1))"'
@@ -73,48 +73,48 @@ flutter-env:
 
 # Everything CI checks, in CI's order.
 [linux]
-flutter-check:
-    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze --fatal-infos --fatal-warnings && flutter test"
+check:
+    {{ _nix_develop }}bash -c "cd {{ flutter_dir }} && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze --fatal-infos --fatal-warnings && flutter test"
 
 [macos]
-flutter-check: _needs-flutter
+check: _needs-flutter
     cd {{ flutter_dir }} && {{ _flutter }} pub get
     cd {{ flutter_dir }} && {{ _dart }} format --output=none --set-exit-if-changed .
     cd {{ flutter_dir }} && {{ _flutter }} analyze --fatal-infos --fatal-warnings
     cd {{ flutter_dir }} && {{ _flutter }} test
 
 [linux]
-flutter-fmt:
-    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && dart format ."
+fmt:
+    {{ _nix_develop }}bash -c "cd {{ flutter_dir }} && dart format ."
 
 [macos]
-flutter-fmt: _needs-flutter
+fmt: _needs-flutter
     cd {{ flutter_dir }} && {{ _dart }} format .
 
 # Build the debug binary.
 [linux]
-flutter-build:
-    {{ _nix_flutter }}bash -c "cd {{ flutter_dir }} && flutter build linux --debug"
+build:
+    {{ _nix_develop }}bash -c "cd {{ flutter_dir }} && flutter build linux --debug"
 
 [macos]
-flutter-build: _needs-flutter
+build: _needs-flutter
     cd {{ flutter_dir }} && {{ _flutter }} build macos --debug
 
 # Build, then launch with the environment overrides actually applied.
 [linux]
-flutter-run: flutter-build flutter-launch
+run: build launch
 
 [macos]
-flutter-run: flutter-build flutter-launch
+run: build launch
 
-# Launch the already-built binary. Rebuild with `flutter-build` after Dart edits.
+# Launch the already-built binary. Rebuild with `build` after Dart edits.
 # Single shell (shebang recipe) because the key lookup has to reach the exec.
 [linux]
-flutter-launch:
+launch:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ ! -f "{{ linux_bundle }}" ]; then
-      echo "No build at {{ linux_bundle }} — run: just flutter-build" >&2
+      echo "No build at {{ linux_bundle }} — run: just build" >&2
       exit 2
     fi
 
@@ -141,14 +141,14 @@ flutter-launch:
       echo "         or point STASH_URL at a real server (see .env)." >&2
     fi
     echo "launching against {{ stash_url }}$route"
-    exec {{ _nix_flutter }}"{{ linux_bundle }}"
+    exec {{ _nix_develop }}"{{ linux_bundle }}"
 
 [macos]
-flutter-launch:
+launch:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ ! -d "{{ app_bundle }}" ]; then
-      echo "No build at {{ app_bundle }} — run: just flutter-build" >&2
+      echo "No build at {{ app_bundle }} — run: just build" >&2
       exit 2
     fi
 
@@ -198,15 +198,16 @@ flutter-launch:
 flatpak-repo-test:
     nix shell nixpkgs#ostree nixpkgs#gnupg --command build-aux/flatpak-repo/test.sh
 
-# -------------------------------------------------------------------- rust
+# ------------------------------------------------- legacy rust (frozen)
 
-test:
+legacy-test:
     cargo test -p stash-api -p stash-player-core
 
-lint:
+legacy-lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
-run:
+# The frozen GTK client. Needs the Rust shell: `nix develop .#legacy`.
+legacy-run:
     cargo run -p stash-player-ui
 
 # ----------------------------------------------------------------- helpers
@@ -214,7 +215,7 @@ run:
 [private]
 _needs-flutter:
     @if [ -z "{{ flutter_bin }}" ]; then \
-      echo "flutter not on PATH — try: nix develop .#flutter" >&2; \
+      echo "flutter not on PATH — try: nix develop" >&2; \
       exit 2; \
     fi
 
