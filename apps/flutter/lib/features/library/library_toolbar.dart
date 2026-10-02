@@ -58,11 +58,12 @@ bool? cycleOrganized(bool? current) => switch (current) {
 /// values below pin the required Tab sequence regardless of which
 /// visual row a control currently renders in.
 ///
-/// On macOS, where the app provides a [NativeToolbarScope], the controls
-/// are published to the window's `NSToolbar` instead of being drawn: the
-/// strip keeps only its empty titlebar band, and AppKit's own overflow
-/// menu replaces the narrow layout. If the native side reports itself
-/// unavailable, the drawn strip comes back.
+/// Where the app provides a [NativeToolbarScope], the controls are
+/// published to the window's own toolbar instead of being drawn: an
+/// `NSToolbar` on macOS, where the strip keeps only its empty titlebar
+/// band, and the `GtkHeaderBar` on Linux, where the strip is not drawn
+/// at all. If the native side reports itself unavailable, the drawn
+/// strip comes back.
 class LibraryToolbar extends StatefulWidget {
   const LibraryToolbar({
     required this.filter,
@@ -248,9 +249,12 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
     builder: (context, constraints) {
       if (_usesNative) {
         _schedulePublish();
-        // The titlebar band stays Flutter's (it also moves the window);
-        // the controls in it are AppKit's.
-        return const AppWindowChrome(children: []);
+        // On macOS the toolbar floats over the Flutter view, so the
+        // titlebar band stays Flutter's (it also moves the window). On
+        // Linux the header bar sits above the view: nothing to draw.
+        return Theme.of(context).platform == TargetPlatform.linux
+            ? const SizedBox.shrink()
+            : const AppWindowChrome(children: []);
       }
       final wide = constraints.maxWidth >= libraryToolbarWideBreakpoint;
       return FocusTraversalGroup(
@@ -509,7 +513,8 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
 
   /// This toolbar as native items: the filter controls as one group,
   /// then Play random, search pushed to the trailing side, Scan and
-  /// Tasks. No main menu: on macOS, Settings… is in the app menu.
+  /// Tasks. The main menu follows on GNOME; on macOS, Settings… is in the
+  /// app menu.
   AppToolbar _nativeSpec() {
     final filter = widget.filter;
     final ascending = filter.direction == SortDirection.ascending;
@@ -613,6 +618,24 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
         onPressed: (anchor) =>
             widget.onOpenTasks(context, anchor ?? _trailingAnchor()),
       ),
+      if (_showsMainMenu)
+        AppToolbarAction(
+          id: 'main-menu',
+          label: 'Main Menu',
+          icon: AppIcon.mainMenu,
+          onPressed: (anchor) => unawaited(
+            NativeMenusScope.of(context).show(
+              context,
+              AppMenu([
+                AppMenuAction(
+                  label: 'Preferences',
+                  onSelected: widget.onOpenSettings,
+                ),
+              ]),
+              anchor ?? _trailingAnchor(),
+            ),
+          ),
+        ),
     ]);
   }
 
@@ -625,7 +648,9 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
       width - AppTokens.stripInset - AppTokens.controlBandHeight,
       0,
       AppTokens.controlBandHeight,
-      AppWindowChrome.stripHeightFor(TargetPlatform.macOS),
+      Theme.of(context).platform == TargetPlatform.linux
+          ? 0
+          : AppWindowChrome.stripHeightFor(TargetPlatform.macOS),
     );
   }
 

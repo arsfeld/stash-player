@@ -180,10 +180,13 @@ final nativeMenusProvider = Provider<NativeMenus>(
 );
 
 /// The window toolbar the library publishes its controls to: the real
-/// `NSToolbar` on macOS, none elsewhere (Linux draws its own strip, and
-/// tests run as Android).
+/// `NSToolbar` on macOS and the `GtkHeaderBar` on Linux. None elsewhere
+/// (tests run as Android).
 final nativeToolbarProvider = Provider<NativeToolbar?>((ref) {
-  if (defaultTargetPlatform != TargetPlatform.macOS) return null;
+  if (defaultTargetPlatform != TargetPlatform.macOS &&
+      defaultTargetPlatform != TargetPlatform.linux) {
+    return null;
+  }
   final toolbar = ChannelNativeToolbar();
   unawaited(toolbar.reset());
   return toolbar;

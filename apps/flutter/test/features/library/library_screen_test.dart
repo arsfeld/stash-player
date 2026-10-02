@@ -29,6 +29,7 @@ import 'package:stash_player_flutter/ui/toolbar/native_toolbar.dart';
 import 'package:stash_player_flutter/ui/widgets/app_spinner.dart';
 import 'package:stash_player_flutter/ui/widgets/filter_controls.dart';
 import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
+import 'package:stash_player_flutter/ui/widgets/window_chrome.dart';
 
 import '../../support/app_icons.dart';
 import '../../support/fakes.dart';
@@ -1572,28 +1573,31 @@ void main() {
   });
 
   group('native toolbar (macOS)', () {
-    testWidgets('publishes the controls and draws none of its own', (
-      tester,
-    ) async {
-      final toolbar = RecordingToolbar();
-      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
-      await tester.pump();
+    testWidgets(
+      'publishes the controls and draws none of its own',
+      (tester) async {
+        final toolbar = RecordingToolbar();
+        await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+        await tester.pump();
 
-      expect(toolbar.last.items.map((item) => item.id), [
-        'filters',
-        'play-random',
-        'flexible-space',
-        'search',
-        'scan',
-        'tasks',
-      ]);
-      expect(
-        toolbar.item<AppToolbarGroup>('filters').children.map((i) => i.id),
-        ['sort', 'direction', 'minimum-rating', 'organized', 'hide-tracked'],
-      );
-      expect(find.byType(AppMenuButton<SceneSort>), findsNothing);
-      expect(find.byKey(const Key('library-search')), findsNothing);
-    });
+        expect(toolbar.last.items.map((item) => item.id), [
+          'filters',
+          'play-random',
+          'flexible-space',
+          'search',
+          'scan',
+          'tasks',
+        ]);
+        expect(
+          toolbar.item<AppToolbarGroup>('filters').children.map((i) => i.id),
+          ['sort', 'direction', 'minimum-rating', 'organized', 'hide-tracked'],
+        );
+        expect(find.byType(AppMenuButton<SceneSort>), findsNothing);
+        expect(find.byKey(const Key('library-search')), findsNothing);
+        expect(find.byType(AppWindowChrome), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
 
     testWidgets('routes toolbar events to the library controller', (
       tester,
@@ -1753,6 +1757,69 @@ void main() {
 
       expect(toolbar.last.items, isEmpty);
     });
+  });
+
+  group('native toolbar (Linux)', () {
+    testWidgets(
+      'draws no strip of its own and adds the main menu',
+      (tester) async {
+        final toolbar = RecordingToolbar();
+        await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+        await tester.pump();
+
+        expect(find.byType(AppWindowChrome), findsNothing);
+        expect(toolbar.last.items.map((item) => item.id), [
+          'filters',
+          'play-random',
+          'flexible-space',
+          'search',
+          'scan',
+          'tasks',
+          'main-menu',
+        ]);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+
+    testWidgets(
+      'the main menu offers Preferences under its button',
+      (tester) async {
+        final toolbar = RecordingToolbar();
+        final menus = RecordingMenus(choose: 'Preferences');
+        final harness = await _pumpLibrary(
+          tester,
+          api: _pagedApi(),
+          toolbar: toolbar,
+          menus: menus,
+          overrides: [
+            appControllerProvider.overrideWith(_LibraryAppController.new),
+          ],
+        );
+        await tester.pump();
+
+        const anchor = Rect.fromLTWH(1100, 0, 34, 0);
+        toolbar.item<AppToolbarAction>('main-menu').onPressed!(anchor);
+        await tester.pump();
+
+        expect(menus.anchors.single, anchor);
+        expect(
+          harness.container.read(appControllerProvider),
+          const LibraryDestination(settingsOpen: true),
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+
+    testWidgets('falls back to the drawn strip when the native side is '
+        'missing', (tester) async {
+      final toolbar = RecordingToolbar(available: false);
+      await _pumpLibrary(tester, api: _pagedApi(), toolbar: toolbar);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(AppWindowChrome), findsOneWidget);
+      expect(find.byKey(const Key('library-search')), findsOneWidget);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
   });
 }
 

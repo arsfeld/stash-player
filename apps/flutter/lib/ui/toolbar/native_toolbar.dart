@@ -13,7 +13,7 @@ abstract interface class NativeToolbar {
 }
 
 /// Provides the app's [NativeToolbar] to `lib/ui/` and feature widgets
-/// without Riverpod. With no scope (Linux, and most widget tests)
+/// without Riverpod. With no scope (most widget tests)
 /// [maybeOf] is null and the toolbar is drawn in Flutter.
 class NativeToolbarScope extends InheritedWidget {
   const NativeToolbarScope({
