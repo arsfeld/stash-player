@@ -11,7 +11,9 @@ struct _WindowChannel {
   gboolean controls_visible;
   gint leading;
   gint trailing;
-  gint hovered_buttons;
+  // The window button the pointer is over, or null. Not owned: cleared
+  // when that button is unmapped or destroyed.
+  GtkWidget* hovered_button;
   // Fade: opacity runs from fade_from to the target over kFadeMicros.
   guint fade_tick;
   gint64 fade_start;
@@ -50,25 +52,37 @@ static void set_insets(WindowChannel* self, gint leading, gint trailing) {
 }
 
 static void send_hovered(WindowChannel* self) {
-  g_autoptr(FlValue) value = fl_value_new_bool(self->hovered_buttons > 0);
+  g_autoptr(FlValue) value = fl_value_new_bool(self->hovered_button != nullptr);
   fl_method_channel_invoke_method(self->channel, "controlsHovered", value,
                                   nullptr, nullptr, nullptr);
+}
+
+static void clear_hovered(WindowChannel* self, GtkWidget* button) {
+  if (self->hovered_button != button) return;
+  self->hovered_button = nullptr;
+  send_hovered(self);
 }
 
 static gboolean button_enter_cb(GtkWidget* widget, GdkEventCrossing* event,
                                 gpointer user_data) {
   WindowChannel* self = static_cast<WindowChannel*>(user_data);
-  if (self->hovered_buttons++ == 0) send_hovered(self);
+  gboolean was_hovered = self->hovered_button != nullptr;
+  self->hovered_button = widget;
+  if (!was_hovered) send_hovered(self);
   return GDK_EVENT_PROPAGATE;
 }
 
 static gboolean button_leave_cb(GtkWidget* widget, GdkEventCrossing* event,
                                 gpointer user_data) {
   WindowChannel* self = static_cast<WindowChannel*>(user_data);
-  if (self->hovered_buttons > 0 && --self->hovered_buttons == 0) {
-    send_hovered(self);
-  }
+  clear_hovered(self, widget);
   return GDK_EVENT_PROPAGATE;
+}
+
+// A hovered button that goes away (GtkHeaderBar rebuilds its button boxes,
+// or the bar is hidden) gets no leave event.
+static void button_gone_cb(GtkWidget* widget, gpointer user_data) {
+  clear_hovered(static_cast<WindowChannel*>(user_data), widget);
 }
 
 static void connect_hover_cb(GtkWidget* button, gpointer user_data) {
@@ -81,6 +95,8 @@ static void connect_hover_cb(GtkWidget* button, gpointer user_data) {
                    user_data);
   g_signal_connect(button, "leave-notify-event", G_CALLBACK(button_leave_cb),
                    user_data);
+  g_signal_connect(button, "unmap", G_CALLBACK(button_gone_cb), user_data);
+  g_signal_connect(button, "destroy", G_CALLBACK(button_gone_cb), user_data);
 }
 
 typedef struct {
@@ -184,8 +200,8 @@ static void set_immersive(WindowChannel* self, gboolean immersive) {
     gtk_widget_hide(self->controls);
     gtk_widget_show(self->titlebar);
     set_insets(self, 0, 0);
-    if (self->hovered_buttons != 0) {
-      self->hovered_buttons = 0;
+    if (self->hovered_button != nullptr) {
+      self->hovered_button = nullptr;
       send_hovered(self);
     }
   }
@@ -251,6 +267,9 @@ static GtkWidget* build_controls(WindowChannel* self, GtkOverlay* overlay) {
   gtk_style_context_add_provider(context, GTK_STYLE_PROVIDER(css),
                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
+  // The channel keeps its own reference: the window (and so the overlay)
+  // is destroyed before the application disposes of the channel.
+  g_object_ref_sink(controls);
   gtk_overlay_add_overlay(overlay, controls);
   // Clicks anywhere on the bar except its buttons (which have their own
   // input windows) go to the Flutter view underneath.
@@ -280,6 +299,10 @@ void window_channel_free(WindowChannel* self) {
   if (self->controls != nullptr) {
     stop_fade(self);
     g_signal_handlers_disconnect_by_data(self->controls, self);
+    // Destroying the bar destroys its buttons, which carry handlers with
+    // `self` as data; they must be gone before `self` is.
+    gtk_widget_destroy(self->controls);
+    g_clear_object(&self->controls);
   }
   g_clear_object(&self->channel);
   g_free(self);
