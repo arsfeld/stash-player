@@ -76,8 +76,10 @@ bar, Flutter draws its strip, and both new channels report
   for the task switcher and overview.
 - The overlay holds the window-buttons bar: a `GtkHeaderBar` with
   `show-close-button`, no title, a transparent background (application
-  CSS), top-aligned, inside a `GtkRevealer` using a crossfade
-  transition. It is hidden in the library state.
+  CSS) and the `osd` style class, top-aligned. It is hidden in the
+  library state and fades with its own opacity animation (200 ms,
+  matching the OSD). It is not wrapped in a `GtkRevealer`, whose own
+  input windows would block the pass-through below.
 - The overlay bar passes pointer input through to the Flutter view
   everywhere except on its buttons.
 
@@ -104,9 +106,11 @@ protocol as `NativeToolbarChannel.swift`: methods `setItems` and
   accessible name.
 - Icons: toggles and actions carry an `icon` field, the `AppIcon.gnome`
   file name. The runner loads
-  `flutter_assets/assets/icons/gnome/<icon>.svg` from the bundle as a
-  symbolic icon, so GTK recolours it for the theme. These are the same
-  files Flutter draws.
+  `flutter_assets/assets/icons/gnome/<icon>.svg` from the bundle and
+  paints its alpha in the widget's foreground colour, so it follows the
+  theme and the insensitive state. (The files are not named
+  `*-symbolic.svg`, so GTK would not recolour them itself.) These are
+  the same files Flutter draws.
 - `activated` for an action carries `rect`: the button's frame in the
   Flutter view's logical coordinates. The header bar is above the view,
   so `y` is clamped to 0 and the height to 0; a popover anchored to it
@@ -145,6 +149,10 @@ Both channels are constructed in `my_application_activate` and freed in
   view); Linux renders nothing (its header bar is outside the view).
   The existing `_nativeFailed` fallback draws the strip when `set`
   returns false, which covers WM-title-bar mode.
+- The native spec gains a trailing `main-menu` action on the Adwaita
+  dialect (GNOME's primary menu, holding Preferences), which the drawn
+  strip already has and the macOS spec omits. It opens through
+  `NativeMenus` at the button's anchor.
 - Screens that publish no toolbar (the connection screen, the settings
   dialog) show the bare header bar with the window title.
 
@@ -235,20 +243,26 @@ Both channels are constructed in `my_application_activate` and freed in
 
 ## Implementation order
 
-1. **Spike** on Wayland and X11, before anything else, since the design
-   depends on all three:
+1. The window slice: `WindowFrame` port and channel implementation,
+   runner window structure and `window_channel`, player screen changes.
+2. **Manual gate** on Wayland and X11, standing in for a spike, before
+   the larger toolbar work. The design depends on all three:
    1. Hiding the titlebar on a live window keeps shadows and resize
       edges, and showing it again restores the header bar.
    2. The overlaid header bar lets clicks through to Flutter everywhere
       except on its buttons.
    3. `startDrag` from a Flutter pointer-down moves the window.
 
-   If (2) fails, fall back to end-aligning a bar only as wide as its
-   buttons, one per side. If (1) fails, fall back to swapping the
-   titlebar widget for an empty one. Record the outcome in this spec.
-2. Window structure and `window_channel` in the runner; `WindowFrame`
-   port, channel implementation, and player screen changes.
-3. `native_toolbar_channel` in the runner; provider and
-   `LibraryToolbar` changes.
+   If (1) fails, fall back to swapping the titlebar widget for an empty
+   one. If (2) fails, fall back to two end-aligned bars, each only as
+   wide as its buttons. If (3) fails, drop dragging from the top bar.
+   The channel protocol and the Dart side are the same under every
+   fallback.
+3. Toolbar: `icon` field, provider and `LibraryToolbar` changes, then
+   `native_toolbar_channel` in the runner.
 4. Manual checklist; update `CLAUDE.md` and `apps/flutter/README.md`
    for the new channels and files.
+
+## Spike outcome
+
+To be filled in at the manual gate.
