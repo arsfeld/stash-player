@@ -87,6 +87,7 @@
         cairo
         pango
         gdk-pixbuf
+        librsvg
 
         gst_all_1.gstreamer
         gst_all_1.gst-plugins-base
@@ -119,6 +120,10 @@
           pkgs.gst_all_1.gst-plugins-rs
         ]}"
         export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
+        # gdk-pixbuf's own loaders.cache has no SVG loader, and the Linux
+        # header bar rasterises its icons from the bundled GNOME SVGs.
+        # librsvg's cache lists the built-in formats plus SVG.
+        export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
       '';
 
       linuxDevShell = system:
