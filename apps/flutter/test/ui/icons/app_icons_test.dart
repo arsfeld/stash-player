@@ -152,7 +152,7 @@ void main() {
     final svg = await pumpIcon(tester, TargetPlatform.linux);
     expect(
       (svg.bytesLoader as SvgAssetLoader).assetName,
-      'assets/icons/gnome/media-playback-start.svg',
+      'assets/icons/gnome/media-playback-start-symbolic.svg',
     );
   });
 
@@ -199,7 +199,7 @@ void main() {
     expect(find.text('10'), findsOneWidget);
   });
 
-  testWidgets('Adwaita has a real 10s glyph and no badge', (tester) async {
+  testWidgets('Adwaita has a real seek glyph and no badge', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(Brightness.dark, platform: TargetPlatform.linux),

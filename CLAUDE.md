@@ -107,11 +107,8 @@ small destination union instead.
 - **`lib/ui/`**: the drawn widget layer, per `PlatformDialect` (`adwaita`
   | `macos`, from `Theme.of(context).platform`): `theme/` (palettes, type
   scale, component themes, `buildAppTheme`), `icons/` (`AppIcon` → GNOME
-  icon-development-kit SVGs on Linux, Lucide on macOS, fetched by
-  `tool/fetch_icons.py`, which also rewrites GNOME `url(#gpa:foreground)
-  <fallback>` paint values to the fallback colour, since `flutter_svg`
-  would otherwise drop the paint and draw the icon blank; a test guards
-  this),
+  adwaita-icon-theme SVGs on Linux, Lucide on macOS, fetched by
+  `tool/fetch_icons.py`),
   `menu/` (`AppMenu` specs; `NativeMenus` shows them natively via
   `ChannelNativeMenus`, drawn in tests), `toolbar/` (the `AppToolbar` spec
   of menu, toggle, action, search, group and space items; `NativeToolbar`

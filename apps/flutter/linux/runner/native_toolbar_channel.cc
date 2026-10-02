@@ -110,7 +110,9 @@ static void send(NativeToolbarChannel* self, const gchar* method,
 // ---- icons -----------------------------------------------------------
 
 // Rasterises the icon the widget is set to at the widget's current scale
-// factor, and remembers that scale so a later change is noticed.
+// factor, and remembers that scale so a later change is noticed. Queries
+// the active GtkIconTheme first so icons respect the user's GTK theme,
+// falling back to the bundled SVG asset if unavailable.
 static void icon_load(NativeToolbarChannel* self, GtkWidget* area) {
   const gchar* name =
       static_cast<const gchar*>(g_object_get_data(G_OBJECT(area), kIconNameKey));
@@ -119,14 +121,41 @@ static void icon_load(NativeToolbarChannel* self, GtkWidget* area) {
   g_object_set_data(G_OBJECT(area), kPixbufKey, nullptr);
   if (name == nullptr) return;
   gint size = kIconSize * scale;
-  g_autofree gchar* file = g_strdup_printf("%s.svg", name);
-  g_autofree gchar* path = g_build_filename(self->icons_dir, file, nullptr);
-  g_autoptr(GError) error = nullptr;
-  GdkPixbuf* pixbuf =
-      gdk_pixbuf_new_from_file_at_size(path, size, size, &error);
+
+  GdkPixbuf* pixbuf = nullptr;
+  GdkScreen* screen = gtk_widget_get_screen(area);
+  GtkIconTheme* theme = screen != nullptr ? gtk_icon_theme_get_for_screen(screen)
+                                          : gtk_icon_theme_get_default();
+  if (theme != nullptr) {
+    if (gtk_icon_theme_has_icon(theme, name)) {
+      pixbuf = gtk_icon_theme_load_icon_for_scale(
+          theme, name, kIconSize, scale,
+          static_cast<GtkIconLookupFlags>(GTK_ICON_LOOKUP_FORCE_SIZE |
+                                          GTK_ICON_LOOKUP_FORCE_SYMBOLIC),
+          nullptr);
+    } else if (!g_str_has_suffix(name, "-symbolic")) {
+      g_autofree gchar* sym_name = g_strdup_printf("%s-symbolic", name);
+      if (gtk_icon_theme_has_icon(theme, sym_name)) {
+        pixbuf = gtk_icon_theme_load_icon_for_scale(
+            theme, sym_name, kIconSize, scale,
+            static_cast<GtkIconLookupFlags>(GTK_ICON_LOOKUP_FORCE_SIZE |
+                                            GTK_ICON_LOOKUP_FORCE_SYMBOLIC),
+            nullptr);
+      }
+    }
+  }
+
   if (pixbuf == nullptr) {
-    g_warning("Toolbar icon %s: %s", path, error->message);
-  } else {
+    g_autofree gchar* file = g_strdup_printf("%s.svg", name);
+    g_autofree gchar* path = g_build_filename(self->icons_dir, file, nullptr);
+    g_autoptr(GError) error = nullptr;
+    pixbuf = gdk_pixbuf_new_from_file_at_size(path, size, size, &error);
+    if (pixbuf == nullptr) {
+      g_warning("Toolbar icon %s: %s", path, error->message);
+    }
+  }
+
+  if (pixbuf != nullptr) {
     g_object_set_data_full(G_OBJECT(area), kPixbufKey, pixbuf, g_object_unref);
   }
 }
@@ -164,12 +193,19 @@ static gboolean icon_draw_cb(GtkWidget* area, cairo_t* cr, gpointer data) {
   return FALSE;
 }
 
+static void icon_style_updated_cb(GtkWidget* area, gpointer user_data) {
+  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
+  icon_load(self, area);
+  gtk_widget_queue_draw(area);
+}
+
 static GtkWidget* icon_new(NativeToolbarChannel* self) {
   GtkWidget* area = gtk_drawing_area_new();
   gtk_widget_set_size_request(area, kIconSize, kIconSize);
   gtk_widget_set_halign(area, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(area, GTK_ALIGN_CENTER);
   g_signal_connect(area, "draw", G_CALLBACK(icon_draw_cb), self);
+  g_signal_connect(area, "style-updated", G_CALLBACK(icon_style_updated_cb), self);
   gtk_widget_show(area);
   return area;
 }
