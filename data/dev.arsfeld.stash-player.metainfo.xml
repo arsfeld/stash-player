@@ -71,6 +71,17 @@
   </branding>
 
   <releases>
+    <release version="1.5.0" date="2026-10-02">
+      <description>
+        <p>
+          Native GNOME Adwaita symbolic icons and thumbnail display improvements.
+        </p>
+        <ul>
+          <li>On Linux, icons now use official GNOME Adwaita symbolic silhouettes that adapt to the active desktop theme</li>
+          <li>Thumbnails now center-crop to preserve video aspect ratio instead of distorting</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-10-02">
       <description>
         <p>
