@@ -52,14 +52,14 @@ typedef ThumbnailResizer =
 /// - A failed fetch, decode, or cache write is never left on disk — a
 ///   transient server or filesystem error is retried on the next call
 ///   rather than remembered forever ("negative caching").
-/// - The cache key is `sha256("$source\n${width}x$height")`, i.e. it
-///   covers the source URL exactly as given plus both dimensions, but
-///   deliberately *not* the configured API key. The key's image bytes
-///   don't depend on which valid key fetched them, so hashing the key in
-///   too would bust every cached thumbnail on a routine key rotation for
-///   no benefit; if [source] itself already carries its own `apikey`
-///   query value (as some Stash-issued URLs do), that value is part of
-///   [source] and so is naturally covered already.
+/// - The cache key is `sha256("$source\n${width}x$height\nv2")`, i.e. it
+///   covers the source URL exactly as given, both dimensions, and the
+///   cache version tag, but deliberately *not* the configured API key. The
+///   key's image bytes don't depend on which valid key fetched them, so
+///   hashing the key in too would bust every cached thumbnail on a routine
+///   key rotation for no benefit; if [source] itself already carries its
+///   own `apikey` query value (as some Stash-issued URLs do), that value is
+///   part of [source] and so is naturally covered already.
 class DiskThumbnailRepository implements ThumbnailRepository {
   DiskThumbnailRepository({
     required this.baseUri,
@@ -191,7 +191,7 @@ class DiskThumbnailRepository implements ThumbnailRepository {
 
   File _cacheFile(String source, int width, int height) {
     final key = sha256
-        .convert(utf8.encode('$source\n${width}x$height'))
+        .convert(utf8.encode('$source\n${width}x$height\nv2'))
         .toString();
     return File(
       p.join(
@@ -223,37 +223,81 @@ int _tempFileSequence = 0;
 String _nextTempFileSuffix() =>
     '${DateTime.now().microsecondsSinceEpoch}-${_tempFileSequence++}';
 
-/// The real thumbnail decode/encode pipeline: decode [bytes] scaled to
-/// [width]x[height] via Skia, then re-encode the first (only) frame as
-/// PNG.
+/// The real thumbnail decode/encode pipeline: decode [bytes] via Skia,
+/// center-crop to preserve the source aspect ratio within [width]x[height]
+/// (preventing stretched vertical or ultrawide artwork), then re-encode
+/// as PNG at [width]x[height].
 ///
-/// Both the [ui.Codec] and the decoded [ui.Image] hold native (Skia-side)
-/// memory that Dart's own GC has no visibility into, so both are disposed
-/// unconditionally — on the success path and on any early exit (a `null`
-/// [ui.ImageByteFormat.png] encode) — rather than left for a GC pass that
-/// may not run promptly under native memory pressure alone. At library-grid
-/// scale (dozens of thumbnails per page, continuous scrolling) leaving
-/// these undisposed accumulates native bitmap memory quickly.
+/// Both the [ui.Codec] and all decoded/rendered [ui.Image] and [ui.Picture]
+/// objects hold native (Skia-side) memory that Dart's own GC has no
+/// visibility into, so all are disposed unconditionally in finally blocks
+/// — on the success path and on any early exit — rather than left for a GC
+/// pass that may not run promptly under native memory pressure alone. At
+/// library-grid scale (dozens of thumbnails per page, continuous scrolling)
+/// leaving these undisposed accumulates native bitmap memory quickly.
 Future<Uint8List> defaultThumbnailResizer(
   Uint8List bytes,
   int width,
   int height,
 ) async {
-  final codec = await ui.instantiateImageCodec(
-    bytes,
-    targetWidth: width,
-    targetHeight: height,
-  );
+  final codec = await ui.instantiateImageCodec(bytes);
   try {
     final frame = await codec.getNextFrame();
+    final sourceImage = frame.image;
     try {
-      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-      if (data == null) {
-        throw const FormatException('Failed to encode thumbnail as PNG.');
+      final srcW = sourceImage.width.toDouble();
+      final srcH = sourceImage.height.toDouble();
+      final targetAspect = width / height;
+      final srcAspect = srcW / srcH;
+
+      final ui.Rect srcRect;
+      if (srcAspect > targetAspect) {
+        // Source is wider than target — crop sides symmetrically.
+        final cropWidth = srcH * targetAspect;
+        final cropX = (srcW - cropWidth) / 2;
+        srcRect = ui.Rect.fromLTWH(cropX, 0, cropWidth, srcH);
+      } else if (srcAspect < targetAspect) {
+        // Source is taller than target (e.g. vertical video) — crop top/bottom symmetrically.
+        final cropHeight = srcW / targetAspect;
+        final cropY = (srcH - cropHeight) / 2;
+        srcRect = ui.Rect.fromLTWH(0, cropY, srcW, cropHeight);
+      } else {
+        srcRect = ui.Rect.fromLTWH(0, 0, srcW, srcH);
       }
-      return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+
+      final dstRect = ui.Rect.fromLTWH(
+        0,
+        0,
+        width.toDouble(),
+        height.toDouble(),
+      );
+
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      final paint = ui.Paint()..filterQuality = ui.FilterQuality.medium;
+      canvas.drawImageRect(sourceImage, srcRect, dstRect, paint);
+      final picture = recorder.endRecording();
+      try {
+        final croppedImage = await picture.toImage(width, height);
+        try {
+          final data = await croppedImage.toByteData(
+            format: ui.ImageByteFormat.png,
+          );
+          if (data == null) {
+            throw const FormatException('Failed to encode thumbnail as PNG.');
+          }
+          return data.buffer.asUint8List(
+            data.offsetInBytes,
+            data.lengthInBytes,
+          );
+        } finally {
+          croppedImage.dispose();
+        }
+      } finally {
+        picture.dispose();
+      }
     } finally {
-      frame.image.dispose();
+      sourceImage.dispose();
     }
   } finally {
     codec.dispose();
