@@ -70,7 +70,7 @@ Future<void> waitForCalls(FakeFetcher fetcher, int count) async {
 
 File cacheFilePath(Directory cacheRoot, String source, int width, int height) {
   final key = sha256
-      .convert(utf8.encode('$source\n${width}x$height'))
+      .convert(utf8.encode('$source\n${width}x$height\nv2'))
       .toString();
   return File(
     p.join(
@@ -487,7 +487,150 @@ void main() {
     final bytes = await defaultThumbnailResizer(_onePixelPng, 1, 1);
 
     expect(bytes, isNotEmpty);
-    expect(created, hasLength(1));
-    expect(disposed, contains(created.single));
+    expect(created, isNotEmpty);
+    expect(disposed, containsAll(created));
+    expect(disposed.length, equals(created.length));
   });
+
+  test(
+    'the default resizer center-crops a vertical (taller than target) image to '
+    'preserve aspect ratio without stretching',
+    () async {
+      // 100 wide x 200 high source:
+      // - top 75px: red
+      // - middle 50px (y=75..124): green
+      // - bottom 75px (y=125..199): blue
+      final verticalPng = await _createImagePng(
+        width: 100,
+        height: 200,
+        draw: (canvas) {
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(0, 0, 100, 75),
+            ui.Paint()..color = const ui.Color(0xFFFF0000),
+          );
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(0, 75, 100, 50),
+            ui.Paint()..color = const ui.Color(0xFF00FF00),
+          );
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(0, 125, 100, 75),
+            ui.Paint()..color = const ui.Color(0xFF0000FF),
+          );
+        },
+      );
+
+      // Target size 100x50 has aspect ratio 2.0.
+      // Center-cropping a 100x200 (aspect 0.5) image to 2.0 should keep the
+      // full 100px width and crop the middle 50px (y=75..124), discarding
+      // the red top and blue bottom bands entirely.
+      final resizedBytes = await defaultThumbnailResizer(verticalPng, 100, 50);
+
+      final (topR, topG, topB, _) = await _readPixelRgba(resizedBytes, 50, 5);
+      final (bottomR, bottomG, bottomB, _) = await _readPixelRgba(
+        resizedBytes,
+        50,
+        45,
+      );
+
+      // Both top and bottom of the cropped image must be green.
+      expect(topG, greaterThan(200));
+      expect(topR, lessThan(50));
+      expect(topB, lessThan(50));
+
+      expect(bottomG, greaterThan(200));
+      expect(bottomR, lessThan(50));
+      expect(bottomB, lessThan(50));
+    },
+  );
+
+  test(
+    'the default resizer center-crops an ultrawide (wider than target) image to '
+    'preserve aspect ratio without stretching',
+    () async {
+      // 200 wide x 100 high source:
+      // - left 75px: red
+      // - middle 50px (x=75..124): green
+      // - right 75px (x=125..199): blue
+      final widePng = await _createImagePng(
+        width: 200,
+        height: 100,
+        draw: (canvas) {
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(0, 0, 75, 100),
+            ui.Paint()..color = const ui.Color(0xFFFF0000),
+          );
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(75, 0, 50, 100),
+            ui.Paint()..color = const ui.Color(0xFF00FF00),
+          );
+          canvas.drawRect(
+            const ui.Rect.fromLTWH(125, 0, 75, 100),
+            ui.Paint()..color = const ui.Color(0xFF0000FF),
+          );
+        },
+      );
+
+      // Target size 50x100 has aspect ratio 0.5.
+      // Center-cropping a 200x100 (aspect 2.0) image to 0.5 should keep the
+      // full 100px height and crop the middle 50px (x=75..124), discarding
+      // the red left and blue right bands entirely.
+      final resizedBytes = await defaultThumbnailResizer(widePng, 50, 100);
+
+      final (leftR, leftG, leftB, _) = await _readPixelRgba(
+        resizedBytes,
+        5,
+        50,
+      );
+      final (rightR, rightG, rightB, _) = await _readPixelRgba(
+        resizedBytes,
+        45,
+        50,
+      );
+
+      // Both left and right of the cropped image must be green.
+      expect(leftG, greaterThan(200));
+      expect(leftR, lessThan(50));
+      expect(leftB, lessThan(50));
+
+      expect(rightG, greaterThan(200));
+      expect(rightR, lessThan(50));
+      expect(rightB, lessThan(50));
+    },
+  );
+}
+
+Future<Uint8List> _createImagePng({
+  required int width,
+  required int height,
+  required void Function(ui.Canvas canvas) draw,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  draw(canvas);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(width, height);
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+  picture.dispose();
+  image.dispose();
+  return byteData!.buffer.asUint8List();
+}
+
+Future<(int r, int g, int b, int a)> _readPixelRgba(
+  Uint8List pngBytes,
+  int x,
+  int y,
+) async {
+  final codec = await ui.instantiateImageCodec(pngBytes);
+  final frame = await codec.getNextFrame();
+  final byteData = await frame.image.toByteData(
+    format: ui.ImageByteFormat.rawRgba,
+  );
+  final offset = (y * frame.image.width + x) * 4;
+  final r = byteData!.getUint8(offset);
+  final g = byteData.getUint8(offset + 1);
+  final b = byteData.getUint8(offset + 2);
+  final a = byteData.getUint8(offset + 3);
+  frame.image.dispose();
+  codec.dispose();
+  return (r, g, b, a);
 }
