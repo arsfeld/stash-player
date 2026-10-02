@@ -13,6 +13,8 @@ struct _NativeToolbarChannel {
   // Set while a spec is being applied, so the state changes it makes
   // aren't reported back to Dart as user input.
   gboolean applying;
+  // Hands keyboard focus back to the view on a press in it. Owned here.
+  GtkGesture* press_gesture;
 };
 
 static const gint kIconSize = 16;
@@ -225,6 +227,8 @@ static void flush_search(NativeToolbarChannel* self, GtkWidget* entry) {
   const gchar* text = gtk_entry_get_text(GTK_ENTRY(entry));
   if (g_strcmp0(known_text(entry), text) == 0) return;
   g_object_set_data_full(G_OBJECT(entry), kTextKey, g_strdup(text), g_free);
+  // What Dart last published is older than what it is now being sent.
+  g_object_set_data(G_OBJECT(entry), kPendingKey, nullptr);
   g_autoptr(FlValue) args = event_for(G_OBJECT(entry));
   fl_value_set_string_take(args, "text", fl_value_new_string(text));
   send(self, "searchChanged", args);
@@ -279,18 +283,19 @@ static gboolean search_focus_out_cb(GtkWidget* entry, GdkEventFocus* event,
 
 // The entry is the one header-bar widget that keeps focus when clicked. A
 // press in the Flutter view takes it back, since FlView only receives keys
-// while it has GTK focus.
-static gboolean view_pressed_cb(GtkWidget* view, GdkEventButton* event,
-                                gpointer user_data) {
+// while it has GTK focus. FlView's internal event box consumes the button
+// events, so this is a capture-phase gesture on the view, which sees the
+// press first and doesn't claim it.
+static void view_pressed_cb(GtkGestureMultiPress* gesture, gint n_press,
+                            gdouble x, gdouble y, gpointer user_data) {
   NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
-  GtkWidget* toplevel = gtk_widget_get_toplevel(view);
+  GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(self->view));
   GtkWidget* focus =
       GTK_IS_WINDOW(toplevel) ? gtk_window_get_focus(GTK_WINDOW(toplevel))
                               : nullptr;
   if (focus != nullptr && gtk_widget_is_ancestor(focus, GTK_WIDGET(self->bar))) {
-    gtk_widget_grab_focus(view);
+    gtk_widget_grab_focus(GTK_WIDGET(self->view));
   }
-  return FALSE;
 }
 
 // ---- building --------------------------------------------------------
@@ -571,16 +576,24 @@ NativeToolbarChannel* native_toolbar_channel_new(FlView* view,
       "stash_player/toolbar", FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(self->channel, method_cb, self,
                                             nullptr);
-  // The view is destroyed with the window, before this struct is freed, so
-  // the handler can't run with a freed `self`.
   if (bar != nullptr) {
-    g_signal_connect(view, "button-press-event", G_CALLBACK(view_pressed_cb),
-                     self);
+    self->press_gesture = gtk_gesture_multi_press_new(GTK_WIDGET(view));
+    gtk_event_controller_set_propagation_phase(
+        GTK_EVENT_CONTROLLER(self->press_gesture), GTK_PHASE_CAPTURE);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(self->press_gesture), 0);
+    g_signal_connect(self->press_gesture, "pressed",
+                     G_CALLBACK(view_pressed_cb), self);
   }
   return self;
 }
 
 void native_toolbar_channel_free(NativeToolbarChannel* self) {
+  // The gesture is ours to release; the view it is attached to may already
+  // be destroyed, so only the gesture itself is touched.
+  if (self->press_gesture != nullptr) {
+    g_signal_handlers_disconnect_by_data(self->press_gesture, self);
+    g_clear_object(&self->press_gesture);
+  }
   g_clear_object(&self->channel);
   g_clear_pointer(&self->widgets, g_hash_table_unref);
   g_clear_pointer(&self->signature, g_free);
