@@ -71,6 +71,18 @@
   </branding>
 
   <releases>
+    <release version="1.4.0" date="2026-10-02">
+      <description>
+        <p>
+          Native GTK window chrome on Linux and an immersive video player.
+        </p>
+        <ul>
+          <li>On Linux, the library toolbar is now integrated into the native GTK header bar with Adwaita icons</li>
+          <li>Playing a video hides the Linux title bar and overlays floating window controls directly over the video</li>
+          <li>Seeking now responds immediately, showing pending position and smoothly handling repeated keypresses</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-09-24">
       <description>
         <p>
