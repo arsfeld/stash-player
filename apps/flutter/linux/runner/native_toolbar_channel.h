@@ -17,7 +17,7 @@
 // [assets_path]/assets/icons/gnome, painted in the theme's foreground
 // colour.
 //
-// With a null [bar] (the window manager draws the title bar) `setItems`
+// With a null [bar] (the window manager draws the title bar) every method
 // answers the `unavailable` error and Dart draws its own strip.
 typedef struct _NativeToolbarChannel NativeToolbarChannel;
 

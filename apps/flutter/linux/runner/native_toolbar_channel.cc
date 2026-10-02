@@ -26,6 +26,8 @@ static const gchar* kPixbufKey = "stash-player-toolbar-pixbuf";
 static const gchar* kIconNameKey = "stash-player-toolbar-icon-name";
 static const gchar* kBadgeKey = "stash-player-toolbar-badge";
 static const gchar* kTextKey = "stash-player-toolbar-text";
+// Dart text that arrived while the user was editing the search entry.
+static const gchar* kPendingKey = "stash-player-toolbar-pending";
 
 // ---- reading the spec ------------------------------------------------
 
@@ -212,19 +214,29 @@ static void menu_item_toggled_cb(GtkCheckMenuItem* item, gpointer user_data) {
   send(self, "menuSelected", args);
 }
 
-static void search_changed_cb(GtkSearchEntry* entry, gpointer user_data) {
-  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
-  if (self->applying) return;
-  // search-changed fires from a timeout, after `applying` is back to false,
-  // so a text Dart itself set would echo back. Skip text we already know.
-  const gchar* text = gtk_entry_get_text(GTK_ENTRY(entry));
+static const gchar* known_text(GtkWidget* entry) {
   const gchar* known =
       static_cast<const gchar*>(g_object_get_data(G_OBJECT(entry), kTextKey));
-  if (g_strcmp0(known != nullptr ? known : "", text) == 0) return;
+  return known != nullptr ? known : "";
+}
+
+// Sends the entry's text to Dart now, if Dart doesn't know it yet.
+static void flush_search(NativeToolbarChannel* self, GtkWidget* entry) {
+  const gchar* text = gtk_entry_get_text(GTK_ENTRY(entry));
+  if (g_strcmp0(known_text(entry), text) == 0) return;
   g_object_set_data_full(G_OBJECT(entry), kTextKey, g_strdup(text), g_free);
   g_autoptr(FlValue) args = event_for(G_OBJECT(entry));
   fl_value_set_string_take(args, "text", fl_value_new_string(text));
   send(self, "searchChanged", args);
+}
+
+static void search_changed_cb(GtkSearchEntry* entry, gpointer user_data) {
+  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
+  if (self->applying) return;
+  // search-changed fires from a timeout, after `applying` is back to false,
+  // so a text Dart itself set would echo back; flush_search skips text Dart
+  // already knows.
+  flush_search(self, GTK_WIDGET(entry));
 }
 
 // Escape clears the search and gives the keyboard back to the Flutter
@@ -235,9 +247,50 @@ static void search_stopped_cb(GtkSearchEntry* entry, gpointer user_data) {
   gtk_widget_grab_focus(GTK_WIDGET(self->view));
 }
 
+// The pending search-changed timer would fire after focus has left, and a
+// republish of older text could overwrite the entry first, so send now.
 static void search_activated_cb(GtkEntry* entry, gpointer user_data) {
   NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
+  flush_search(self, GTK_WIDGET(entry));
   gtk_widget_grab_focus(GTK_WIDGET(self->view));
+}
+
+// Focus leaving the entry (click elsewhere, or the window deactivating):
+// send any unsent edit, or else catch up with the text Dart published while
+// the entry was being edited.
+static gboolean search_focus_out_cb(GtkWidget* entry, GdkEventFocus* event,
+                                    gpointer user_data) {
+  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
+  const gchar* pending =
+      static_cast<const gchar*>(g_object_get_data(G_OBJECT(entry), kPendingKey));
+  if (g_strcmp0(known_text(entry), gtk_entry_get_text(GTK_ENTRY(entry))) != 0) {
+    flush_search(self, entry);
+  } else if (pending != nullptr) {
+    g_autofree gchar* text = g_strdup(pending);
+    gboolean was_applying = self->applying;
+    self->applying = TRUE;
+    gtk_entry_set_text(GTK_ENTRY(entry), text);
+    self->applying = was_applying;
+    g_object_set_data_full(G_OBJECT(entry), kTextKey, g_strdup(text), g_free);
+  }
+  g_object_set_data(G_OBJECT(entry), kPendingKey, nullptr);
+  return FALSE;
+}
+
+// The entry is the one header-bar widget that keeps focus when clicked. A
+// press in the Flutter view takes it back, since FlView only receives keys
+// while it has GTK focus.
+static gboolean view_pressed_cb(GtkWidget* view, GdkEventButton* event,
+                                gpointer user_data) {
+  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
+  GtkWidget* toplevel = gtk_widget_get_toplevel(view);
+  GtkWidget* focus =
+      GTK_IS_WINDOW(toplevel) ? gtk_window_get_focus(GTK_WINDOW(toplevel))
+                              : nullptr;
+  if (focus != nullptr && gtk_widget_is_ancestor(focus, GTK_WIDGET(self->bar))) {
+    gtk_widget_grab_focus(view);
+  }
+  return FALSE;
 }
 
 // ---- building --------------------------------------------------------
@@ -256,6 +309,7 @@ static GtkWidget* build_icon_button(GtkWidget* button) {
 
 static GtkWidget* build_menu(NativeToolbarChannel* self, FlValue* item) {
   GtkWidget* button = gtk_menu_button_new();
+  gtk_widget_set_focus_on_click(button, FALSE);
   GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   GtkWidget* label = gtk_label_new("");
   gtk_container_add(GTK_CONTAINER(box), label);
@@ -297,6 +351,8 @@ static GtkWidget* build_search(NativeToolbarChannel* self) {
                    self);
   g_signal_connect(entry, "stop-search", G_CALLBACK(search_stopped_cb), self);
   g_signal_connect(entry, "activate", G_CALLBACK(search_activated_cb), self);
+  g_signal_connect(entry, "focus-out-event", G_CALLBACK(search_focus_out_cb),
+                   self);
   return entry;
 }
 
@@ -320,11 +376,13 @@ static GtkWidget* build_item(NativeToolbarChannel* self, FlValue* item) {
     widget = build_menu(self, item);
   } else if (is_type(item, "toggle")) {
     widget = build_icon_button(gtk_toggle_button_new());
+    gtk_widget_set_focus_on_click(widget, FALSE);
     g_signal_connect(widget, "toggled", G_CALLBACK(toggle_toggled_cb), self);
   } else if (is_type(item, "search")) {
     widget = build_search(self);
   } else {
     widget = build_icon_button(gtk_button_new());
+    gtk_widget_set_focus_on_click(widget, FALSE);
     g_signal_connect(widget, "clicked", G_CALLBACK(action_clicked_cb), self);
   }
   tag(widget, item);
@@ -333,19 +391,22 @@ static GtkWidget* build_item(NativeToolbarChannel* self, FlValue* item) {
   return widget;
 }
 
-static void destroy_cb(GtkWidget* widget, gpointer data) {
-  gtk_widget_destroy(widget);
-}
-
 static void clear(NativeToolbarChannel* self) {
+  // Don't leave GTK focus on a widget about to be destroyed.
+  GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(self->view));
+  GtkWidget* focus =
+      GTK_IS_WINDOW(toplevel) ? gtk_window_get_focus(GTK_WINDOW(toplevel))
+                              : nullptr;
+  if (focus != nullptr && gtk_widget_is_ancestor(focus, GTK_WIDGET(self->bar))) {
+    gtk_widget_grab_focus(GTK_WIDGET(self->view));
+  }
   g_hash_table_remove_all(self->widgets);
   g_clear_pointer(&self->signature, g_free);
   // The custom title first: with none, the bar shows the window title.
   gtk_header_bar_set_custom_title(self->bar, nullptr);
   // Destroy from a copy of the child list, not while iterating the bar.
   GList* children = gtk_container_get_children(GTK_CONTAINER(self->bar));
-  g_list_foreach(children, reinterpret_cast<GFunc>(destroy_cb), nullptr);
-  g_list_free(children);
+  g_list_free_full(children, reinterpret_cast<GDestroyNotify>(gtk_widget_destroy));
 }
 
 static void rebuild(NativeToolbarChannel* self, FlValue* items) {
@@ -381,9 +442,12 @@ static void update_menu(GtkWidget* button, FlValue* item) {
   FlValue* options = list_of(item, "options");
   if (options != nullptr && selected >= 0 &&
       static_cast<size_t>(selected) < fl_value_get_length(options)) {
+    FlValue* option = fl_value_get_list_value(options, selected);
     gtk_label_set_text(
         GTK_LABEL(g_object_get_data(G_OBJECT(button), kLabelKey)),
-        fl_value_get_string(fl_value_get_list_value(options, selected)));
+        fl_value_get_type(option) == FL_VALUE_TYPE_STRING
+            ? fl_value_get_string(option)
+            : "");
   }
   GtkWidget* menu =
       GTK_WIDGET(g_object_get_data(G_OBJECT(button), kMenuKey));
@@ -428,14 +492,20 @@ static void update_item(NativeToolbarChannel* self, FlValue* item) {
   } else if (is_type(item, "search")) {
     gtk_entry_set_placeholder_text(GTK_ENTRY(widget),
                                    text_of(item, "placeholder"));
-    // Only while the user isn't typing, so a republish can't overwrite a
-    // newer keystroke.
-    if (!gtk_widget_has_focus(widget) &&
-        g_strcmp0(gtk_entry_get_text(GTK_ENTRY(widget)),
-                  text_of(item, "text")) != 0) {
-      gtk_entry_set_text(GTK_ENTRY(widget), text_of(item, "text"));
-      g_object_set_data_full(G_OBJECT(widget), kTextKey,
-                             g_strdup(text_of(item, "text")), g_free);
+    // Only while the user isn't editing, so a republish can't overwrite a
+    // newer keystroke; the text is kept and applied when focus leaves.
+    const gchar* text = text_of(item, "text");
+    if (gtk_widget_is_focus(widget)) {
+      if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(widget)), text) == 0) {
+        g_object_set_data(G_OBJECT(widget), kPendingKey, nullptr);
+      } else {
+        g_object_set_data_full(G_OBJECT(widget), kPendingKey, g_strdup(text),
+                               g_free);
+      }
+    } else if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(widget)), text) != 0) {
+      gtk_entry_set_text(GTK_ENTRY(widget), text);
+      g_object_set_data_full(G_OBJECT(widget), kTextKey, g_strdup(text),
+                             g_free);
     }
   }
 }
@@ -501,6 +571,12 @@ NativeToolbarChannel* native_toolbar_channel_new(FlView* view,
       "stash_player/toolbar", FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(self->channel, method_cb, self,
                                             nullptr);
+  // The view is destroyed with the window, before this struct is freed, so
+  // the handler can't run with a freed `self`.
+  if (bar != nullptr) {
+    g_signal_connect(view, "button-press-event", G_CALLBACK(view_pressed_cb),
+                     self);
+  }
   return self;
 }
 
