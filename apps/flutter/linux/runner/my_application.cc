@@ -9,6 +9,7 @@
 #include "appearance_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "native_menu_channel.h"
+#include "native_toolbar_channel.h"
 #include "window_channel.h"
 
 struct _MyApplication {
@@ -18,6 +19,7 @@ struct _MyApplication {
   AppearanceChannel* appearance_channel;
   NativeMenuChannel* native_menus;
   WindowChannel* window_channel;
+  NativeToolbarChannel* native_toolbar;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -180,6 +182,9 @@ static void my_application_activate(GApplication* application) {
       view, window, header_bar != nullptr ? GTK_WIDGET(header_bar) : nullptr,
       GTK_OVERLAY(overlay));
 
+  self->native_toolbar = native_toolbar_channel_new(
+      view, header_bar, fl_dart_project_get_assets_path(project));
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -230,6 +235,7 @@ static void my_application_dispose(GObject* object) {
   g_clear_pointer(&self->appearance_channel, appearance_channel_free);
   g_clear_pointer(&self->native_menus, native_menu_channel_free);
   g_clear_pointer(&self->window_channel, window_channel_free);
+  g_clear_pointer(&self->native_toolbar, native_toolbar_channel_free);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
