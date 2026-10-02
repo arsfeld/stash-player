@@ -14,7 +14,7 @@
 #   devenv up                              # boots stash on :9999
 #   # in another shell, with devenv active:
 #   tools/dev-stash/populate.sh            # downloads clips + scans
-#   STASH_URL=http://127.0.0.1:9999 cargo run -p stash-player-ui
+#   STASH_URL=http://127.0.0.1:9999 just run
 #
 # Reset: stop `devenv up`, then `rm -rf .devenv/state/stash`. Clips in
 # tools/dev-stash/media/ survive (gitignored, host-visible).

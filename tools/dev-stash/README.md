@@ -29,8 +29,7 @@ native binary on a Nix dev box. `populate.sh` works against either.
 docker compose up -d                     # boots Stash on :9999
 tools/dev-stash/populate.sh              # downloads clips + scans
 
-STASH_URL=http://127.0.0.1:9999 \
-  cargo run -p stash-player-ui           # point the app at it
+STASH_URL=http://127.0.0.1:9999 just run # point the app at it
 ```
 
 Stop:
@@ -48,8 +47,7 @@ devenv up                                # boots stash on :9999 (foreground)
 devenv shell                             # sets DEV_STASH_LIBRARY
 tools/dev-stash/populate.sh              # same script, native backend
 
-STASH_URL=http://127.0.0.1:9999 \
-  cargo run -p stash-player-ui
+STASH_URL=http://127.0.0.1:9999 just run
 ```
 
 Stop with Ctrl-C in the `devenv up` shell (or `devenv processes stop`).

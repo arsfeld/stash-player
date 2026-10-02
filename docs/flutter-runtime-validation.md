@@ -75,7 +75,8 @@ until every row on both platforms is genuinely executed.
    should cover both; confirm with the file info panel in the
    metadata drawer (video codec is shown there) if in doubt.
 3. Launch the client per `apps/flutter/README.md`
-   (`flutter run -d linux` / `-d macos`), pointed at that real instance.
+   (`just run`, or `flutter run -d linux` / `-d macos`), pointed at that
+   real instance.
 4. Work through every row below in order, recording:
    - **Date** the row was actually executed.
    - **Commit SHA** (`git rev-parse HEAD`) the build under test was

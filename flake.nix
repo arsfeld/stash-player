@@ -1,5 +1,5 @@
 {
-  description = "stash-player — native desktop client for Stash (Linux + macOS)";
+  description = "stash-player — Flutter desktop client for Stash (Linux + macOS)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -35,7 +35,8 @@
         };
 
       # ------------------------------------------------------------------
-      # Linux: legacy GTK dev shell (frozen) + Flatpak builder app.
+      # Linux: the app's dev shell, the Flatpak builder app, and the legacy
+      # GTK client's Rust shell (frozen).
       # ------------------------------------------------------------------
 
       manifest = "build-aux/dev.arsfeld.stash-player.yml";
@@ -75,9 +76,10 @@
         Cflags: -I${pkgs.lib.getDev pkgs.mpv}/include
       '';
 
-      # GTK4/libadwaita/GStreamer for the Rust relm4 client, plus GTK3/mpv for
-      # the Flutter Linux embedder + media_kit. Shared between `default` and
-      # `flutter` dev shells so both keep the exact same runtime libraries.
+      # GTK3/mpv for the Flutter Linux embedder + media_kit, plus
+      # GTK4/libadwaita/GStreamer for the legacy Rust relm4 client. Shared
+      # between the `default` and `legacy` dev shells so both keep the exact
+      # same runtime libraries.
       linuxRuntimeLibs = pkgs: mpvPkgConfig: with pkgs; [
         glib
         gtk3
@@ -127,7 +129,7 @@
         export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
       '';
 
-      linuxDevShell = system:
+      linuxLegacyDevShell = system:
         let
           pkgs = pkgsFor system;
           rustToolchain = rustFor system;
@@ -136,7 +138,7 @@
         pkgs.mkShell {
           # Rust + the legacy GTK client only (frozen, no longer released).
           # `flutter`, `cmake`, `ninja`, and `clang` live in
-          # `devShells.flutter` instead — clang-wrapper's
+          # `devShells.default` instead — clang-wrapper's
           # cc/ld/ar otherwise precede gcc-wrapper's on PATH and silently
           # change the compiler/linker `cargo build` picks up for every
           # `cc`-crate build script (glib-sys, openssl-sys, …).
@@ -152,12 +154,12 @@
           shellHook = linuxShellEnv pkgs mpvPkgConfig;
         };
 
-      # Flutter-only toolchain (`flutter`, `cmake`, `ninja`, `clang`), kept out
-      # of the default shell so Rust-only contributors don't pay for the
-      # multi-GB Flutter closure or a shifted C compiler/linker. Shares the
-      # same runtime libraries as `default` since the Flutter Linux embedder
-      # (GTK3) and media_kit (libmpv) need them too.
-      linuxFlutterDevShell = system:
+      # The default shell: the app's toolchain (`flutter`, `cmake`, `ninja`,
+      # `clang`). The Rust toolchain stays out of it, in `legacy`, so neither
+      # side shifts the other's C compiler/linker. Shares the same runtime
+      # libraries as `legacy` since the Flutter Linux embedder (GTK3) and
+      # media_kit (libmpv) need them too.
+      linuxDevShell = system:
         let
           pkgs = pkgsFor system;
           mpvPkgConfig = mkMpvPkgConfig pkgs;
@@ -179,8 +181,8 @@
         };
 
       # ------------------------------------------------------------------
-      # macOS: the legacy SwiftUI app (frozen, no longer released), driven
-      # by stash-player-ffi.
+      # macOS: the app's dev shell, plus the legacy SwiftUI app (frozen, no
+      # longer released), driven by stash-player-ffi.
       #
       # Xcode itself isn't in nixpkgs — `xcodebuild`, `xcrun`, `lipo`, and
       # `open` come from Xcode / Command Line Tools on the host. Nix
@@ -188,7 +190,7 @@
       # writeShellApplication) supplies the Apple toolchain.
       # ------------------------------------------------------------------
 
-      darwinDevShell = system:
+      darwinLegacyDevShell = system:
         let
           pkgs = pkgsFor system;
           rustToolchain = rustFor system;
@@ -196,11 +198,12 @@
         pkgs.mkShell {
           # Rust + xcodegen for the legacy SwiftUI client only (frozen, no
           # longer released). `flutter`, `cmake`, `ninja`, and `cocoapods`
-          # live in `devShells.flutter` instead — see the Linux shell's comment for why an explicit
-          # `clang` is a hazard for the Rust build (and on Darwin it
-          # compounds the documented `nix develop` + xcodebuild linker
-          # conflict). No shell on this platform ships one: the Flutter
-          # shell is `mkShellNoCC` for its own Apple-toolchain reason.
+          # live in `devShells.default` instead — see the Linux shell's
+          # comment for why an explicit `clang` is a hazard for the Rust
+          # build (and on Darwin it compounds the documented `nix develop`
+          # + xcodebuild linker conflict). No shell on this platform ships
+          # one: the default shell is `mkShellNoCC` for its own
+          # Apple-toolchain reason.
           nativeBuildInputs = with pkgs; [
             rustToolchain
             pkg-config
@@ -213,8 +216,8 @@
           '';
         };
 
-      # Flutter-only toolchain, kept out of the default shell for the same
-      # reasons as the Linux split above.
+      # The default shell: the app's toolchain, split from `legacy` for the
+      # same reasons as on Linux.
       #
       # `mkShellNoCC`, and no `clang` in the inputs, because on Darwin every
       # compile this shell drives has to be Xcode's. `flutter test` builds
@@ -226,7 +229,7 @@
       # cc-wrapper on PATH even with `clang` dropped. Nothing here wants it:
       # `flutter build macos` and the pods go through xcodebuild, which has
       # its own reason to keep nixpkgs' wrapper away (see `macosRunFor`).
-      darwinFlutterDevShell = system:
+      darwinDevShell = system:
         let pkgs = pkgsFor system; in
         pkgs.mkShellNoCC {
           nativeBuildInputs = with pkgs; [
@@ -304,11 +307,11 @@
         if pkgs.stdenv.isDarwin
         then {
           default = darwinDevShell system;
-          flutter = darwinFlutterDevShell system;
+          legacy = darwinLegacyDevShell system;
         }
         else {
           default = linuxDevShell system;
-          flutter = linuxFlutterDevShell system;
+          legacy = linuxLegacyDevShell system;
         }
       );
 

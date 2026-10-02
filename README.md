@@ -134,10 +134,10 @@ new features and no new releases.
 The app lives in [`apps/flutter/`](apps/flutter/). With Nix:
 
 ```sh
-nix develop .#flutter
-just flutter-run      # build and launch
-just flutter-check    # format, analyze and test (what CI runs)
-nix run .#flatpak     # build and install the Flatpak locally
+nix develop          # the dev shell (direnv loads it for you)
+just run             # build and launch
+just check           # format, analyze and test (what CI runs)
+nix run .#flatpak    # build and install the Flatpak locally
 ```
 
 [`apps/flutter/README.md`](apps/flutter/README.md) covers setup, testing,
