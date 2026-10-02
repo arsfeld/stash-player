@@ -106,6 +106,7 @@
 
         desktop-file-utils
         shared-mime-info
+        adwaita-icon-theme
       ];
 
       linuxShellEnv = pkgs: mpvPkgConfig: ''
@@ -119,7 +120,7 @@
           pkgs.gst_all_1.gst-libav
           pkgs.gst_all_1.gst-plugins-rs
         ]}"
-        export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
+        export XDG_DATA_DIRS="${pkgs.adwaita-icon-theme}/share:${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
         # gdk-pixbuf's own loaders.cache has no SVG loader, and the Linux
         # header bar rasterises its icons from the bundled GNOME SVGs.
         # librsvg's cache lists the built-in formats plus SVG.
