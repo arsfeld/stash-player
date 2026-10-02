@@ -32,6 +32,7 @@ import 'package:stash_player_flutter/ui/widgets/scene_tile.dart';
 import 'package:stash_player_flutter/ui/widgets/window_chrome.dart';
 
 import '../../support/app_icons.dart';
+import '../../support/fake_connection_sheet.dart';
 import '../../support/fakes.dart';
 import '../../support/recording_menus.dart';
 import '../../support/recording_toolbar.dart';
@@ -1806,6 +1807,64 @@ void main() {
           harness.container.read(appControllerProvider),
           const LibraryDestination(settingsOpen: true),
         );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+
+    testWidgets('the drawn settings dialog leaves the bare header bar, and the '
+        'controls return when it closes', (tester) async {
+      final toolbar = RecordingToolbar();
+      final harness = await _pumpLibrary(
+        tester,
+        api: _pagedApi(),
+        toolbar: toolbar,
+        overrides: [
+          appControllerProvider.overrideWith(_LibraryAppController.new),
+        ],
+      );
+      await tester.pump();
+      expect(toolbar.last.items, isNotEmpty);
+
+      harness.container.read(appControllerProvider.notifier).openSettings();
+      await tester.pump();
+      await tester.pump();
+      expect(toolbar.last.items, isEmpty);
+
+      harness.container.read(appControllerProvider.notifier).closeSettings();
+      await tester.pump();
+      await tester.pump();
+      expect(toolbar.last.items, isNotEmpty);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets(
+      'keeps the controls while a native connection sheet is in use',
+      (tester) async {
+        final toolbar = RecordingToolbar();
+        final harness = await _pumpLibrary(
+          tester,
+          api: _pagedApi(),
+          toolbar: toolbar,
+          overrides: [
+            appControllerProvider.overrideWith(_LibraryAppController.new),
+            connectionSheetProvider.overrideWith(
+              () => FakeConnectionSheetNotifier(FakeConnectionSheet()),
+            ),
+            // Opening the sheet loads through the connection controller.
+            connectionStoreProvider.overrideWithValue(FakeConnectionStore()),
+            environmentProvider.overrideWithValue(const {}),
+            stashApiFactoryProvider.overrideWithValue(
+              (_) => FakeStashApi(versionValue: 'v0.31.0'),
+            ),
+            connectionControllerOverride,
+          ],
+        );
+        await tester.pump();
+
+        harness.container.read(appControllerProvider.notifier).openSettings();
+        await tester.pump();
+        await tester.pump();
+
+        expect(toolbar.last.items, isNotEmpty);
       },
       variant: TargetPlatformVariant.only(TargetPlatform.linux),
     );

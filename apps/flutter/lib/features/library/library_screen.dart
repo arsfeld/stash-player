@@ -162,6 +162,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     ref.listen<int>(connectionGenerationProvider, (previous, next) {
       if (previous != next) _scheduleLoadInitial();
     });
+    final hasNativeSheet = ref.watch(connectionSheetProvider) != null;
     final controller = ref.watch(libraryControllerProvider);
     final state = controller.state;
     final tasks = ref.watch(tasksControllerProvider);
@@ -198,8 +199,18 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               onPlayRandom: () => _handlePlayRandom(controller),
               tasksActive: tasks.hasActiveWork,
               onScan: tasks.hasActiveWork ? null : () => _handleScan(tasks),
+              // The empty toolbar (the bare header bar) while a scene is open,
+              // and while the drawn settings dialog is: its modal barrier
+              // can't reach the header bar's controls. The native sheet
+              // blocks them itself.
               publishNative: ref.watch(
-                appControllerProvider.select((d) => d is! SceneDestination),
+                appControllerProvider.select(
+                  (d) =>
+                      d is! SceneDestination &&
+                      !(d is LibraryDestination &&
+                          d.settingsOpen &&
+                          !hasNativeSheet),
+                ),
               ),
               onOpenTasks: showTasksPopoverAt,
               onOpenSettings: () =>

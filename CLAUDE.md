@@ -143,9 +143,9 @@ small destination union instead.
   titlebar is hidden and a background-less header bar in a `GtkOverlay`
   draws the window buttons over the video; on X11 under a non-GNOME window
   manager both channels answer `unavailable` and the drawn strip and WM
-  title bar are used), and on macOS `stash_player/updates` (Sparkle), `stash_player/toolbar`
-  (`NativeToolbarChannel.swift`, the library's controls as an `NSToolbar`),
-  and `stash_player/connection_sheet` (`ConnectionSheetChannel.swift`, the
+  title bar are used), and on macOS `stash_player/updates` (Sparkle),
+  `stash_player/toolbar` (`NativeToolbarChannel.swift`, the library's
+  controls as an `NSToolbar`), and `stash_player/connection_sheet` (`ConnectionSheetChannel.swift`, the
   connection form as an AppKit sheet with rules kept in Dart by
   `ConnectionSheetPresenter`). New Swift files need entries in
   `Runner.xcodeproj/project.pbxproj`. The macOS menu bar is built

@@ -12,10 +12,11 @@ import '../ui/toolbar/native_toolbar.dart';
 /// (`native_toolbar_channel.cc`).
 ///
 /// Only ids, labels, icon names and state cross the channel (`symbol` is
-/// the SF Symbol macOS draws, `icon` the bundled GNOME SVG Linux draws). Callbacks stay
-/// here in an id → item table that each [set] replaces, so an event for
-/// an item that has since gone runs nothing. A spec identical to the last
-/// one sent is dropped, which lets a caller publish after every build.
+/// the SF Symbol macOS draws, `icon` the bundled GNOME SVG Linux draws).
+/// Callbacks stay here in an id → item table that each [set] replaces, so an
+/// event for an item that has since gone runs nothing. A spec identical to
+/// the last one sent is dropped, which lets a caller publish after every
+/// build.
 ///
 /// If the native side is missing or fails, [set] reports false from then
 /// on and logs once, and the caller draws its own controls.

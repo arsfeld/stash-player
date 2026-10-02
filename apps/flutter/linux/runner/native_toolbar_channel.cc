@@ -26,6 +26,8 @@ static const gchar* kLabelKey = "stash-player-toolbar-label";
 static const gchar* kMenuKey = "stash-player-toolbar-menu";
 static const gchar* kPixbufKey = "stash-player-toolbar-pixbuf";
 static const gchar* kIconNameKey = "stash-player-toolbar-icon-name";
+// The scale factor the icon's pixbuf was rasterised at.
+static const gchar* kIconScaleKey = "stash-player-toolbar-icon-scale";
 static const gchar* kBadgeKey = "stash-player-toolbar-badge";
 static const gchar* kTextKey = "stash-player-toolbar-text";
 // Dart text that arrived while the user was editing the search entry.
@@ -107,7 +109,36 @@ static void send(NativeToolbarChannel* self, const gchar* method,
 
 // ---- icons -----------------------------------------------------------
 
+// Rasterises the icon the widget is set to at the widget's current scale
+// factor, and remembers that scale so a later change is noticed.
+static void icon_load(NativeToolbarChannel* self, GtkWidget* area) {
+  const gchar* name =
+      static_cast<const gchar*>(g_object_get_data(G_OBJECT(area), kIconNameKey));
+  gint scale = gtk_widget_get_scale_factor(area);
+  g_object_set_data(G_OBJECT(area), kIconScaleKey, GINT_TO_POINTER(scale));
+  g_object_set_data(G_OBJECT(area), kPixbufKey, nullptr);
+  if (name == nullptr) return;
+  gint size = kIconSize * scale;
+  g_autofree gchar* file = g_strdup_printf("%s.svg", name);
+  g_autofree gchar* path = g_build_filename(self->icons_dir, file, nullptr);
+  g_autoptr(GError) error = nullptr;
+  GdkPixbuf* pixbuf =
+      gdk_pixbuf_new_from_file_at_size(path, size, size, &error);
+  if (pixbuf == nullptr) {
+    g_warning("Toolbar icon %s: %s", path, error->message);
+  } else {
+    g_object_set_data_full(G_OBJECT(area), kPixbufKey, pixbuf, g_object_unref);
+  }
+}
+
 static gboolean icon_draw_cb(GtkWidget* area, cairo_t* cr, gpointer data) {
+  NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(data);
+  // The pixbuf is wrapped at the scale the widget has now, so one made at
+  // another scale (a window moved between monitors) is redone first.
+  if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(area), kIconScaleKey)) !=
+      gtk_widget_get_scale_factor(area)) {
+    icon_load(self, area);
+  }
   GdkPixbuf* pixbuf =
       GDK_PIXBUF(g_object_get_data(G_OBJECT(area), kPixbufKey));
   GtkStyleContext* context = gtk_widget_get_style_context(area);
@@ -133,12 +164,12 @@ static gboolean icon_draw_cb(GtkWidget* area, cairo_t* cr, gpointer data) {
   return FALSE;
 }
 
-static GtkWidget* icon_new() {
+static GtkWidget* icon_new(NativeToolbarChannel* self) {
   GtkWidget* area = gtk_drawing_area_new();
   gtk_widget_set_size_request(area, kIconSize, kIconSize);
   gtk_widget_set_halign(area, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(area, GTK_ALIGN_CENTER);
-  g_signal_connect(area, "draw", G_CALLBACK(icon_draw_cb), nullptr);
+  g_signal_connect(area, "draw", G_CALLBACK(icon_draw_cb), self);
   gtk_widget_show(area);
   return area;
 }
@@ -149,22 +180,9 @@ static void icon_set(NativeToolbarChannel* self, GtkWidget* area,
   const gchar* current =
       static_cast<const gchar*>(g_object_get_data(G_OBJECT(area), kIconNameKey));
   if (g_strcmp0(current, name) != 0) {
-    gint size = kIconSize * gtk_widget_get_scale_factor(area);
-    g_autofree gchar* file = g_strdup_printf("%s.svg", name);
-    g_autofree gchar* path =
-        g_build_filename(self->icons_dir, file, nullptr);
-    g_autoptr(GError) error = nullptr;
-    GdkPixbuf* pixbuf =
-        gdk_pixbuf_new_from_file_at_size(path, size, size, &error);
-    if (pixbuf == nullptr) {
-      g_warning("Toolbar icon %s: %s", path, error->message);
-      g_object_set_data(G_OBJECT(area), kPixbufKey, nullptr);
-    } else {
-      g_object_set_data_full(G_OBJECT(area), kPixbufKey, pixbuf,
-                             g_object_unref);
-    }
     g_object_set_data_full(G_OBJECT(area), kIconNameKey, g_strdup(name),
                            g_free);
+    icon_load(self, area);
   }
   gtk_widget_queue_draw(area);
 }
@@ -281,19 +299,17 @@ static gboolean search_focus_out_cb(GtkWidget* entry, GdkEventFocus* event,
   return FALSE;
 }
 
-// The entry is the one header-bar widget that keeps focus when clicked. A
-// press in the Flutter view takes it back, since FlView only receives keys
-// while it has GTK focus. FlView's internal event box consumes the button
-// events, so this is a capture-phase gesture on the view, which sees the
-// press first and doesn't claim it.
+// The entry is the one header-bar widget that keeps focus when clicked, and
+// GTK drops focus altogether when the bar holding it is hidden (the player
+// hides the bar). A press in the Flutter view takes focus back whenever the
+// view doesn't have it, since FlView only receives keys while it has GTK
+// focus. FlView's internal event box consumes the button events, so this is
+// a capture-phase gesture on the view, which sees the press first and
+// doesn't claim it.
 static void view_pressed_cb(GtkGestureMultiPress* gesture, gint n_press,
                             gdouble x, gdouble y, gpointer user_data) {
   NativeToolbarChannel* self = static_cast<NativeToolbarChannel*>(user_data);
-  GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(self->view));
-  GtkWidget* focus =
-      GTK_IS_WINDOW(toplevel) ? gtk_window_get_focus(GTK_WINDOW(toplevel))
-                              : nullptr;
-  if (focus != nullptr && gtk_widget_is_ancestor(focus, GTK_WIDGET(self->bar))) {
+  if (!gtk_widget_is_focus(GTK_WIDGET(self->view))) {
     gtk_widget_grab_focus(GTK_WIDGET(self->view));
   }
 }
@@ -305,8 +321,9 @@ static void tag(GtkWidget* widget, FlValue* item) {
                          g_strdup(text_of(item, "id")), g_free);
 }
 
-static GtkWidget* build_icon_button(GtkWidget* button) {
-  GtkWidget* icon = icon_new();
+static GtkWidget* build_icon_button(NativeToolbarChannel* self,
+                                    GtkWidget* button) {
+  GtkWidget* icon = icon_new(self);
   gtk_container_add(GTK_CONTAINER(button), icon);
   g_object_set_data(G_OBJECT(button), kIconKey, icon);
   return button;
@@ -380,13 +397,13 @@ static GtkWidget* build_item(NativeToolbarChannel* self, FlValue* item) {
   if (is_type(item, "menu")) {
     widget = build_menu(self, item);
   } else if (is_type(item, "toggle")) {
-    widget = build_icon_button(gtk_toggle_button_new());
+    widget = build_icon_button(self, gtk_toggle_button_new());
     gtk_widget_set_focus_on_click(widget, FALSE);
     g_signal_connect(widget, "toggled", G_CALLBACK(toggle_toggled_cb), self);
   } else if (is_type(item, "search")) {
     widget = build_search(self);
   } else {
-    widget = build_icon_button(gtk_button_new());
+    widget = build_icon_button(self, gtk_button_new());
     gtk_widget_set_focus_on_click(widget, FALSE);
     g_signal_connect(widget, "clicked", G_CALLBACK(action_clicked_cb), self);
   }

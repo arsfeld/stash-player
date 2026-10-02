@@ -2,6 +2,8 @@
 
 struct _WindowChannel {
   FlMethodChannel* channel;
+  // Borrowed: only used from method handlers, while the window is alive.
+  FlView* view;
   GtkWindow* window;
   // Null when the window manager draws the title bar.
   GtkWidget* titlebar;
@@ -192,6 +194,9 @@ static void set_immersive(WindowChannel* self, gboolean immersive) {
   self->controls_visible = TRUE;
   gtk_widget_set_opacity(self->controls, 1);
   if (immersive) {
+    // Hiding a bar that holds GTK focus (the search entry) leaves the window
+    // with none, and the Flutter view only gets keys while it is focused.
+    gtk_widget_grab_focus(GTK_WIDGET(self->view));
     // A hidden titlebar takes no height, and GTK keeps the window
     // client-side decorated: shadows and resize edges stay.
     gtk_widget_hide(self->titlebar);
@@ -282,6 +287,7 @@ static GtkWidget* build_controls(WindowChannel* self, GtkOverlay* overlay) {
 WindowChannel* window_channel_new(FlView* view, GtkWindow* window,
                                   GtkWidget* titlebar, GtkOverlay* overlay) {
   WindowChannel* self = g_new0(WindowChannel, 1);
+  self->view = view;
   self->window = window;
   self->titlebar = titlebar;
   self->controls_visible = TRUE;

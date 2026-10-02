@@ -108,7 +108,8 @@ class LibraryToolbar extends StatefulWidget {
 
   /// Whether this toolbar's controls should be in the native window
   /// toolbar right now. False while a scene covers the library, which
-  /// keeps the library page mounted underneath. Ignored when there's no
+  /// keeps the library page mounted underneath, and while the drawn
+  /// settings dialog is open (on Linux). Ignored when there's no
   /// `NativeToolbarScope`.
   final bool publishNative;
 
@@ -139,7 +140,7 @@ class _LibraryToolbarState extends State<LibraryToolbar> {
   final _mainMenuFocusNode = FocusNode(debugLabel: 'library-main-menu');
   final _filtersFocusNode = FocusNode(debugLabel: 'library-filters');
 
-  /// The native window toolbar, when the app has one (macOS).
+  /// The native window toolbar, when the app has one (macOS, Linux).
   NativeToolbar? _native;
 
   /// Set once the native toolbar reports itself unavailable. The strip
