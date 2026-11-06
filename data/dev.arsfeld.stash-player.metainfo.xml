@@ -71,6 +71,16 @@
   </branding>
 
   <releases>
+    <release version="1.5.1" date="2026-11-06">
+      <description>
+        <p>
+          Fixes playback freezing on Linux.
+        </p>
+        <ul>
+          <li>Playback no longer gets stuck buffering forever after skipping around or opening several scenes</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-10-02">
       <description>
         <p>
