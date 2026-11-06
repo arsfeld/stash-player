@@ -176,7 +176,7 @@
           buildInputs = linuxRuntimeLibs pkgs mpvPkgConfig;
 
           shellHook = ''
-            flutter --version
+            flutter --version </dev/null  # direnv runs this on the tty; Dart leaves a tty stdin in canonical mode, so the shell never sees Enter
           '' + linuxShellEnv pkgs mpvPkgConfig;
         };
 
@@ -239,7 +239,7 @@
             cocoapods
           ];
           shellHook = ''
-            flutter --version
+            flutter --version </dev/null  # direnv runs this on the tty; Dart leaves a tty stdin in canonical mode, so the shell never sees Enter
             export MACOSX_DEPLOYMENT_TARGET=14.0
           '';
         };
