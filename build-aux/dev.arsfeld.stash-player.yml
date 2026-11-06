@@ -87,6 +87,13 @@ modules:
       - -Djavascript=disabled
       - -Dmanpage-build=disabled
       - -Dvulkan=disabled
+      # The sandbox grants only the PulseAudio socket, so ao_pipewire can
+      # never connect here. Worse, its failed init deadlocks at random in
+      # pw_thread_loop_stop during uninit, and media_kit's observer on
+      # `audio-device-list` re-runs that probe (via ao_hotplug) over and
+      # over: playback froze for good after a few seeks or scene opens.
+      # Without the backend, mpv goes straight to pulse.
+      - -Dpipewire=disabled
     sources:
       - type: git
         url: https://github.com/mpv-player/mpv.git
